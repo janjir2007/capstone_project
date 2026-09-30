@@ -7,3 +7,7 @@ pytest==9.1.1
 
 # --- Database driver (tests/test_schema.py; later also SQLAlchemy's driver)
 psycopg[binary]==3.3.6
+
+# --- Data (src/data/profile_records.py)
+pandas==3.0.6
+openpyxl==3.1.5  # not imported directly; pandas.read_excel needs it for .xlsx
