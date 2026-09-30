@@ -1,9 +1,9 @@
 # PROJECT_STATE — Capstone "Oil Change Predictor" (Geo-Expert LLC)
 
-- **Version:** 0.4
+- **Version:** 0.5
 - **Last updated:** 2026-09-30
 - **Deadline (defense day):** ❓ NOT SET — plan below assumes 4 weeks (defense ≈ 2026-10-28). Replace when known.
-- **Current phase:** P0 — Setup & decisions
+- **Current phase:** P1 — Data foundation
 - **Overall health:** 🟡 Yellow — scope is clear, but 3 requirement gaps and 2 data-collection dependencies are open.
 
 ---
@@ -81,9 +81,10 @@ Status: ✅ covered by plan · 🟡 covered but at risk · 🔴 gap — action n
 | 0.1 | Set deadline, get instructor answer on synthetic training | Ari | TODO |
 | 0.2 | Start collecting truck photos (target 300+, min ~150, different trucks, angles, light, dirt) | Ari | TODO |
 | 0.3 | Gather existing real service records in whatever form exists (notebook, Excel, Viber) | Ari | TODO |
-| 0.4 | Create GitHub repo with agreed structure (§8) | Backend Eng | 🟡 CODE ACCEPTED — waiting for Ari: repo pushed + CI green on GitHub |
-| 0.5 | Add CLAUDE.md + .claude/settings.json to repo root, commit | Ari | TODO |
-| 1.1 | PostgreSQL schema + data dictionary | Data Eng | TODO |
+| 0.4 | Create GitHub repo with agreed structure (§8) | Backend Eng | ✅ DONE (private, CI green) |
+| 0.5 | Add CLAUDE.md + .claude/settings.json to repo root, commit | Ari | ✅ DONE |
+| 0.6 | Local Python 3.11 venv; fix settings.json (.env.example readable); fill .env.example DB vars | Claude Code | TODO |
+| 1.1 | PostgreSQL schema + data dictionary | Data Eng | ✅ DONE (26 tests pass; DB tests skip in CI until 6.2) |
 | 1.2 | Synthetic rules draft → Ari confirms numbers | Data Eng + Ari | TODO |
 | 1.3 | Synthetic generator with noise injection | Data Eng | TODO |
 | 1.4 | Real record intake template + cleaning script | Data Eng | TODO |
@@ -105,7 +106,7 @@ Status: ✅ covered by plan · 🟡 covered but at risk · 🔴 gap — action n
 | 5.3 | Lookup + vehicle card | Frontend | TODO |
 | 5.4 | Dashboard (segments, due list, reminders) | Frontend | TODO |
 | 6.1 | Docker + compose | Backend Eng | TODO |
-| 6.2 | CI/CD GitHub Actions | Backend Eng | TODO |
+| 6.2 | CI/CD GitHub Actions (+ Postgres service so DB tests run in CI) | Backend Eng | TODO |
 | 6.3 | Cloud deploy + public URL (Supabase DB + backend host + Vercel) | Backend Eng | TODO |
 | 6.4 | Load test (P50/P95/P99) | Backend Eng | TODO |
 | 6.5 | TCO 3 tiers + ROI | PM + Ari | TODO |
@@ -135,6 +136,9 @@ Status: ✅ covered by plan · 🟡 covered but at risk · 🔴 gap — action n
 | D-015 | 2026-09-30 | Repo privacy rules: data/**, models/**, .env, all photo types, *.csv/*.xlsx ignored everywhere; only docs/figures/*.png allowed. If tests need small sample CSVs later, add exception `!tests/fixtures/**` with SYNTHETIC data only | Protect real driver/plate data (RISK-06) | APPROVED (verified by PM test) |
 | D-016 | 2026-09-30 | PROJECT_STATE.md lives in 2 places: Claude Project files + repo docs/. On every new version, replace both (commit message: `docs: PROJECT_STATE vX.Y`) | Roles read Project files; repo is the portfolio | APPROVED |
 | D-017 | 2026-09-30 | Claude Code usage: web role chats plan/explain; Claude Code may execute tasks inside the repo. Context comes from repo files only: CLAUDE.md (auto-read) + docs/PROJECT_STATE.md. `.claude/settings.json` denies reading .env and data/raw/**. Real data: Claude Code writes/tests cleaning scripts on synthetic or masked data; Ari runs them on real data and shares summaries only | Claude Code cannot see claude.ai chats or Project files; protect personal data | APPROVED |
+| D-018 | 2026-09-30 | Workflow: PM chat writes short briefs → one NEW Claude Code session per task (role line + brief) → handoff back to PM. Claude Code commits + pushes after Ari's OK (routine in CLAUDE.md). Web role chats = optional tutors | Less copy-paste; repo files carry context | APPROVED |
+| D-019 | 2026-09-30 | Schema (task 1.1): phone = 8 digits, no +976; private owner stored as a company row; oil_grade/vehicle_model free text; route nullable; TEXT+CHECK not ENUM; segments via vehicle_segments(as_of, grace_days); days_left/status computed at read time; names in docs/data_dictionary.md are the contract | Reviewed by PM | APPROVED |
+| D-020 | 2026-09-30 | Python 3.11 is the project version (local venv, CI, Docker) even though Mac has 3.14 | ML/CV libraries (torch, ultralytics) are safest on 3.11 | APPROVED |
 
 ---
 
