@@ -52,3 +52,9 @@ CONTRACT CHANGES:
 SLIDE MATERIAL:
 NEXT STEP:
 ```
+## Git at the end of every task
+1. Run `pytest -v`. All tests must pass.
+2. Show me `git status` and a short list of what changed.
+3. Wait for my OK.
+4. Commit with the message: `task <ID>: <short description>` (e.g. `task 1.1: database schema`).
+5. Push to GitHub, then tell me to check the Actions tab.
