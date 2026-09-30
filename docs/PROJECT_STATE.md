@@ -1,10 +1,10 @@
 # PROJECT_STATE — Capstone "Oil Change Predictor" (Geo-Expert LLC)
 
-- **Version:** 0.5
+- **Version:** 0.6
 - **Last updated:** 2026-09-30
-- **Deadline (defense day):** ❓ NOT SET — plan below assumes 4 weeks (defense ≈ 2026-10-28). Replace when known.
+- **Deadline (defense day):** 2026-10-20 (20 days from 2026-09-30)
 - **Current phase:** P1 — Data foundation
-- **Overall health:** 🟡 Yellow — scope is clear, but 3 requirement gaps and 2 data-collection dependencies are open.
+- **Overall health:** 🟡 Yellow — instructor approved synthetic data; 200 truck photos + real Excel records available. Main risk: only 20 days for 1 person.
 
 ---
 
@@ -37,7 +37,7 @@ Status: ✅ covered by plan · 🟡 covered but at risk · 🔴 gap — action n
 
 | # | Requirement (source) | Maps to | Status | Notes / action |
 |---|---|---|---|---|
-| R1 | Real, uncleaned data; API / web scraping (slide "Хичээлийн даалгавар vs Capstone") | F1 records, F2 test set | 🔴 | Training is synthetic. Need: (a) real messy Geo-Expert records as test set, (b) at least one real external API, (c) **instructor confirmation that synthetic training is acceptable**. |
+| R1 | Real, uncleaned data; API / web scraping (slide "Хичээлийн даалгавар vs Capstone") | F1 records, F2 test set | 🟡 | Training is synthetic. Need: (a) real messy Geo-Expert records as test set, (b) at least one real external API, (c) ✅ instructor confirmed synthetic training is OK. Real Excel records available. |
 | R2 | Multi-model comparison + hyperparameter tuning | F2 model, DL | ✅ | Baseline (fixed interval) + Linear Regression + Random Forest + XGBoost; RandomizedSearchCV with grouped/time-aware CV. |
 | R3 | F-Score, Latency P99, inference speed, business ROI | F2, Backend, Slide 11 | 🟡 | F-score needs a classification view → derived from status buckets (OK/due soon/overdue). P99 measured by load test. ROI needs Ari's real business numbers. |
 | R4 | FastAPI, CI/CD, web interface, Cloud; not local, working link | Backend, Frontend, Deploy | 🟡 | YOLO + torch images are heavy for free tiers — memory risk. See RISK-04. |
@@ -55,37 +55,40 @@ Status: ✅ covered by plan · 🟡 covered but at risk · 🔴 gap — action n
 
 ---
 
-## 3. Phase plan (assumes 4 weeks; W = week)
+## 3. Phase plan (deadline 2026-10-20 — 20 days)
 
-| Phase | Goal | Owner(s) | When | Deliverable | Done when |
-|---|---|---|---|---|---|
-| P0 Setup & decisions | Repo, contracts, collection started | PM, Ari | D1–D2 | Repo skeleton, this file, open questions answered | Repo on GitHub with structure + CI stub; deadline set; instructor answer on synthetic data requested |
-| P1 Data foundation | Schema + synthetic generator + real data intake | Data Eng | W1 | `schema.sql`, `generator.py`, `synthetic_rules.md`, `cleaning.py`, `data_dictionary.md` | Generator reproducible (seed); Ari has confirmed every rule parameter; real records cleaned with issue log |
-| P2 Prediction model | Beat baseline honestly, explain it | ML Eng | W2 | `features.py`, `train.py`, `evaluate.py`, `explain.py`, model artifact, `model_card.md` | ≥3 models + baseline compared on synthetic holdout AND real test set; SHAP plots; results table |
-| P3 Plate recognition | Detect + read plates with fallback | CV/DL Eng | W1–W3 (data-bound) | YOLO weights, `recognize.py`, `normalize.py`, eval report | mAP50/IoU reported; exact-plate-match rate on held-out trucks; manual fallback path works |
-| P4 Backend | Serve everything via API + DB | Backend Eng | W2–W3 | FastAPI app, migrations, endpoints, reminder generator, tests | All contract endpoints pass tests; P50/P95/P99 measured locally |
-| P5 Frontend | Mobile-first screens | Frontend/UX | W3 | Recording, Lookup, Vehicle card, Dashboard | Full flow works on a phone against real API |
-| P6 Deploy & MLOps | Public link, CI/CD, latency, TCO | Backend Eng (+PM) | W4 (early) | Dockerfiles, compose, GitHub Actions, cloud URL, load test, TCO table | Push to main → tests → deploy; public URL works; P99 under load reported |
-| P7 Presentation | 13 slides + demo rehearsal | PM, all | W4 (late) | Deck, demo script, backup video | 2 full rehearsals; demo works from a phone on mobile data |
+| Phase | When | Owner(s) | Deliverable | Done when |
+|---|---|---|---|---|
+| P0 Setup | ✅ Sep 30 | PM, Ari | Repo, CI, CLAUDE.md, roles | Done |
+| P1 Data foundation | Oct 1–5 | Data Eng + Ari | Excel profile, `synthetic_rules.md`, `generator.py`, `cleaning.py` | Generator reproducible; rules have sources or Ari's OK; real records cleaned with issue log |
+| P3 Plate recognition (starts in parallel) | Oct 1–12 | Ari labels, CV Eng | Labeled set (split by vehicle), YOLO weights, OCR vs CNN, normalization | mAP50/IoU + exact-plate-match on held-out trucks; manual fallback |
+| P4 Backend | Oct 3–11 | Backend Eng | FastAPI, endpoints, serving, reminders | Contract endpoints pass tests |
+| P2 Prediction model | Oct 6–10 | ML Eng | features, 4 models, tuning, SHAP, model card | Baseline beaten (or honestly not) on synthetic + real test |
+| P5 Frontend | Oct 11–14 | Frontend | Recording, Lookup, Vehicle card, Dashboard | Full flow works on a phone |
+| P6 Deploy & MLOps | Oct 14–16 | Backend Eng + PM | Docker, CI/CD, cloud URL, P99, TCO | Public URL works; P99 reported |
+| P7 Presentation | Oct 17–19 | PM + Ari | 13 slides, demo script, backup video | 2 rehearsals done |
+| Defense | **Oct 20** | Ari | Live demo | — |
 
-**Critical path:** real truck photos (for P3) and real service records (for P2 test set). Both depend on Ari collecting at work, starting **today**.
+**Buffer:** almost none. Any slip → apply cut list immediately.
 
-**If only 3 weeks:** cut P3 custom CNN comparison to a smaller version, cut Next.js → Streamlit/Gradio UI, drop external API to a single enrichment feature. Never cut: live demo, baseline comparison, SHAP, cloud link.
+**Cut list (in this order):** 1) custom CNN comparison → small version on character crops only; 2) external API → one weather feature or drop; 3) dashboard screen → merge into lookup; 4) load test → simple timed script.
+**Never cut:** live demo, baseline comparison, SHAP, cloud link, honest synthetic-vs-real reporting.
 
----
+**Parallel rule:** Claude Code runs one task at a time; Ari's own work (labeling photos, checking rules) runs in parallel with it.
 
 ## 4. Task list
 
 | ID | Task | Owner | Status |
 |---|---|---|---|
-| 0.1 | Set deadline, get instructor answer on synthetic training | Ari | TODO |
-| 0.2 | Start collecting truck photos (target 300+, min ~150, different trucks, angles, light, dirt) | Ari | TODO |
-| 0.3 | Gather existing real service records in whatever form exists (notebook, Excel, Viber) | Ari | TODO |
+| 0.1 | Set deadline, get instructor answer on synthetic training | Ari | ✅ DONE (Oct 20; synthetic OK) |
+| 0.2 | Collect truck photos (target 300+, min ~150) | Ari | 🟡 200 collected (trucks only, readable, repeat vehicles) — keep adding |
+| 0.3 | Gather existing real service records | Ari | ✅ DONE (Excel sheet → data/raw/records/) |
 | 0.4 | Create GitHub repo with agreed structure (§8) | Backend Eng | ✅ DONE (private, CI green) |
 | 0.5 | Add CLAUDE.md + .claude/settings.json to repo root, commit | Ari | ✅ DONE |
 | 0.6 | Local Python 3.11 venv; fix settings.json (.env.example readable); fill .env.example DB vars | Claude Code | TODO |
 | 1.1 | PostgreSQL schema + data dictionary | Data Eng | ✅ DONE (26 tests pass; DB tests skip in CI until 6.2) |
-| 1.2 | Synthetic rules draft → Ari confirms numbers | Data Eng + Ari | TODO |
+| 1.4a | Excel profiling script (Ari runs it; only summaries shared) | Data Eng | TODO — NEXT |
+| 1.2 | Synthetic rules: 1.2a web research with sources + Excel profile → Ari confirms | Data Eng + Ari | ⏸ PAUSED (restart by Oct 3) |
 | 1.3 | Synthetic generator with noise injection | Data Eng | TODO |
 | 1.4 | Real record intake template + cleaning script | Data Eng | TODO |
 | 1.5 | External API evaluation (1 source) | Data Eng | TODO |
@@ -120,12 +123,12 @@ Status: ✅ covered by plan · 🟡 covered but at risk · 🔴 gap — action n
 | ID | Date | Decision | Reason | Status |
 |---|---|---|---|---|
 | D-001 | 2026-09-30 | Scope frozen as in §1 | Agreed with Ari | Final |
-| D-002 | 2026-09-30 | Train on synthetic data; real records only for test/validation | Not enough real history | Final (pending instructor OK) |
+| D-002 | 2026-09-30 | Train on synthetic data; real records only for test/validation | Not enough real history | Final (instructor approved) |
 | D-003 | 2026-09-30 | Oil lab reports out of scope | Geo-Expert not taking lab reports now | Final |
 | D-004 | 2026-09-30 | Driver + phone stored per service record, not per vehicle | Drivers change between trips | Final |
 | D-005 | 2026-09-30 | Vehicle identifier has type: `plate` or `fleet_no` | Mine haul trucks may lack plates | Final |
 | D-006 | — | Primary ML target: `days_to_next_change` (regression). Mine-site vehicles may use engine hours → generator must support hour-based intervals | Date is what the reminder needs | PROPOSED |
-| D-007 | — | Status buckets: OK (> 14 days left), Due soon (0–14 days), Overdue (< 0). At risk = overdue + 7 days grace, no new record | Needed for F1 and segments | PROPOSED — Ari to confirm thresholds |
+| D-007 | — | Status buckets: OK (> 14 days left), Due soon (0–14 days), Overdue (< 0). At risk = overdue + 7 days grace, no new record | Needed for F1 and segments | APPROVED as default (adjustable parameter; Ari may change later) |
 | D-008 | — | CV comparison: pretrained OCR vs small custom PyTorch CNN char classifier (both after YOLO detection) | Satisfies "custom CNN vs transfer learning" (R6) | PROPOSED |
 | D-009 | — | Splits grouped by vehicle (no same truck in train and test), time-ordered for ML | Prevent leakage | PROPOSED |
 | D-010 | — | Reminder delivery for demo: generate message + mark "sent" + copy/share button; real SMS gateway = Later | Gateway cost/contract unknown | PROPOSED |
@@ -139,13 +142,16 @@ Status: ✅ covered by plan · 🟡 covered but at risk · 🔴 gap — action n
 | D-018 | 2026-09-30 | Workflow: PM chat writes short briefs → one NEW Claude Code session per task (role line + brief) → handoff back to PM. Claude Code commits + pushes after Ari's OK (routine in CLAUDE.md). Web role chats = optional tutors | Less copy-paste; repo files carry context | APPROVED |
 | D-019 | 2026-09-30 | Schema (task 1.1): phone = 8 digits, no +976; private owner stored as a company row; oil_grade/vehicle_model free text; route nullable; TEXT+CHECK not ENUM; segments via vehicle_segments(as_of, grace_days); days_left/status computed at read time; names in docs/data_dictionary.md are the contract | Reviewed by PM | APPROVED |
 | D-020 | 2026-09-30 | Python 3.11 is the project version (local venv, CI, Docker) even though Mac has 3.14 | ML/CV libraries (torch, ultralytics) are safest on 3.11 | APPROVED |
+| D-021 | 2026-09-30 | Deadline 2026-10-20; plan compressed to 20 days (§3) | Instructor date | APPROVED |
+| D-022 | — | Frontend for the capstone = Streamlit (mobile-friendly, camera input) calling FastAPI. Next.js moves to Later (production version after capstone) | 20 days, 1 person; FastAPI backend stays so the UI can be swapped later | PROPOSED — needs Ari's OK |
+| D-023 | 2026-09-30 | Geo-Expert will use the system after the capstone → ROI slide uses real operations; code quality matters beyond the demo | Ari confirmed | APPROVED |
 
 ---
 
 ## 6. Open questions
 
-1. **Deadline** — exact defense date?
-2. **Instructor:** is synthetic training + real test set acceptable for the "real uncleaned data" requirement?
+1. ~~Deadline~~ → Oct 20. ~~Instructor~~ → synthetic OK.
+2. Do the photo plates match the Excel records? ("maybe" — check during 1.4a / 3.1)
 3. How many real past service records exist, and in what form?
 4. How many truck photos can Ari collect per week? Any fleet-number-only trucks available to photograph?
 5. Real service interval rules per oil grade / route / vehicle type (Ari's domain knowledge) — needed for P1.2.
@@ -160,11 +166,11 @@ Status: ✅ covered by plan · 🟡 covered but at risk · 🔴 gap — action n
 
 | ID | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|---|
-| RISK-01 | Instructor rejects synthetic training | Med | High | Ask in week 1; maximize real messy data; show generator rules transparently |
+| RISK-01 | ~~Instructor rejects synthetic training~~ CLOSED | — | — | Ask in week 1; maximize real messy data; show generator rules transparently |
 | RISK-02 | Too few truck photos → weak YOLO/OCR | High | High | Start collecting today; augmentations; manual fallback is part of the product |
 | RISK-03 | Model only learns generator rules (circular evaluation) | High | Med | Report synthetic vs real test separately; state limitation on slide |
 | RISK-04 | Docker image with torch/YOLO too big for free cloud tier RAM | Med | High | Use smallest YOLO; CPU-only torch; ONNX export; or host CV service separately |
-| RISK-05 | One person running 5 roles → schedule slip | High | High | Strict phase gates; cut list in §3; Streamlit fallback |
+| RISK-05 | One person, 20 days → schedule slip | High | High | Strict dates in §3; cut list; Streamlit (D-022); Ari labels photos in parallel |
 | RISK-06 | Personal data (driver names, phones) leaked in repo/demo | Med | High | Never commit real data; seed demo DB with synthetic people; `.gitignore` data folders |
 | RISK-07 | Live demo fails (network, cloud cold start) | Med | High | Warm up URL before defense; backup video; demo on known-good plate photos |
 | RISK-08 | Plate letters misread (Cyrillic/Latin look-alikes) | High | Med | Normalization map + format regex + confirmation step |
@@ -225,6 +231,7 @@ oil-change-predictor/
 ---
 
 ## 10. Later list (not in scope unless Ari approves)
+- Next.js production frontend (if D-022 approved)
 - Real SMS / Viber gateway integration
 - Automated data drift monitoring + continuous training
 - Oil lab report analysis
