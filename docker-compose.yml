@@ -1,0 +1,37 @@
+# Local development services (D-011: local PostgreSQL in Docker).
+#
+# Start:   docker compose up -d db
+# Stop:    docker compose down          (keeps data)
+# Reset:   docker compose down -v       (deletes the volume -> schema.sql runs again)
+#
+# Credentials come from environment variables / the .env file (never committed).
+# The ":-" defaults are for local development only.
+
+services:
+  db:
+    image: postgres:16
+    container_name: ocp-db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-oil}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-oil_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-oil_change}
+      # Business runs in Mongolia: CURRENT_DATE and now() use Ulaanbaatar time.
+      TZ: Asia/Ulaanbaatar
+      PGTZ: Asia/Ulaanbaatar
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      # Database files live in a named volume, so data survives container restarts.
+      - pgdata:/var/lib/postgresql/data
+      # Scripts in /docker-entrypoint-initdb.d/ run ONCE, when the volume is empty.
+      - ./src/data/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+      # All SQL files, available inside the container for manual psql -f runs.
+      - ./src/data:/sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:

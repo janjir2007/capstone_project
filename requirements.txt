@@ -4,3 +4,6 @@
 
 # --- Testing
 pytest==9.1.1
+
+# --- Database driver (tests/test_schema.py; later also SQLAlchemy's driver)
+psycopg[binary]==3.3.6
