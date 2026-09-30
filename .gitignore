@@ -1,0 +1,63 @@
+# ============================================================
+# PRIVACY FIRST: real driver names, phones, plates and truck
+# photos must NEVER reach GitHub (PROJECT_STATE RISK-06).
+# ============================================================
+
+# --- Data: ignore everything inside data/, keep only the empty folder markers
+data/**
+!data/**/
+!data/**/.gitkeep
+
+# --- Model artifacts (large, versioned by name, not by git)
+models/**
+!models/.gitkeep
+*.pt
+*.pth
+*.onnx
+*.pkl
+*.joblib
+
+# --- Secrets
+.env
+.env.*
+!.env.example
+
+# --- Photos anywhere in the repo (truck photos show real plates)
+*.jpg
+*.jpeg
+*.JPG
+*.JPEG
+*.png
+*.PNG
+*.heic
+*.HEIC
+*.heif
+*.webp
+# Exception: charts/diagrams for slides (must NOT contain real plates or people)
+!docs/figures/**/*.png
+
+# --- Spreadsheets with real service records
+*.xlsx
+*.xls
+*.csv
+
+# --- Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# --- Jupyter
+.ipynb_checkpoints/
+
+# --- Frontend (Node)
+node_modules/
+.next/
+
+# --- OS / editors
+.DS_Store
+.vscode/
+.idea/

@@ -1,0 +1,6 @@
+# Pinned dependencies. Rule: every role adds ONLY the packages its code imports,
+# with an exact version (==), in the same pull request as that code.
+# Python 3.11
+
+# --- Testing
+pytest==9.1.1

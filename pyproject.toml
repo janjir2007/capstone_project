@@ -1,0 +1,9 @@
+[project]
+name = "oil-change-predictor"
+version = "0.1.0"
+description = "Geo-Expert oil change predictor — AI Academy Asia capstone"
+requires-python = ">=3.11,<3.12"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
