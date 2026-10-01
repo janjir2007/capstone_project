@@ -95,3 +95,42 @@ Check an export (prints counts only, safe to share):
 ## Backups
 Export JSON after each labeling session (the SQLite DB is the only copy of your
 work). Keep exports outside git (they already are).
+
+## 7. Pre-labels from a pretrained detector (task 3.1c)
+Boxes are proposed by the open-image-models detector `yolo-v9-t-640-license-plate-end2end`
+(runs on this Mac, CPU). You only fix boxes and type `plate_text`.
+
+### 7a. Detect on all photos (local, ~a few minutes)
+```bash
+.venv/bin/python -m src.cv.prelabel run
+```
+Writes `data/interim/prelabels/predictions.json` (git-ignored; contains file names — do not share).
+The printed summary is count-only and safe to share.
+
+### 7b. Create a Personal Access Token (one time)
+Label Studio 1.23.2 uses **Personal Access Tokens** (legacy tokens are off by default).
+1. Start Label Studio, log in, click your avatar (top right) → **Account & Settings**.
+2. Find the **Personal Access Token** section → **Create** → copy the token.
+   (Exact labels may differ slightly.) Only **one** valid token per user: if you lose it,
+   revoke it on the same page and create a new one.
+3. In the terminal where you run the import (the token is never saved to a file):
+   ```bash
+   export LS_API_KEY='paste-token-here'
+   ```
+
+### 7c. Import as predictions (Label Studio must be running)
+```bash
+.venv/bin/python -m src.cv.ls_import --dry-run    # counts only, changes nothing
+.venv/bin/python -m src.cv.ls_import --limit 1    # one task: open it and check the box
+.venv/bin/python -m src.cv.ls_import              # the rest (safe to re-run: no duplicates)
+```
+- Uses boxes with confidence ≥ 0.6 (`--conf` to change). Photos with no box ≥ 0.6 get no prediction.
+- Skips any task you already submitted, skipped, or have a draft on.
+- Talks only to `127.0.0.1` / `localhost` (refuses other hosts).
+- Sets the project's model version to the detector's version, so **Label All Tasks**
+  shows the boxes (without it, the labeling stream showed no pre-labels in our test).
+
+### 7d. Labeling with pre-labels
+Open a task: the red box is already there with `plate_type = plate`.
+Fix the box if needed (drag corners), delete false boxes, draw any missed plate,
+select the box, type `plate_text`, **Submit**. A photo with no plate → **Skip** as before.
