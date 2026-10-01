@@ -1,9 +1,9 @@
 # PROJECT_STATE — Capstone "Oil Change Predictor" (Geo-Expert LLC)
 
-- **Version:** 0.6
-- **Last updated:** 2026-09-30
+- **Version:** 0.7
+- **Last updated:** 2026-10-01
 - **Deadline (defense day):** 2026-10-20 (20 days from 2026-09-30)
-- **Current phase:** P1 — Data foundation
+- **Current phase:** P1 Data foundation + P3 labeling (parallel)
 - **Overall health:** 🟡 Yellow — instructor approved synthetic data; 200 truck photos + real Excel records available. Main risk: only 20 days for 1 person.
 
 ---
@@ -87,7 +87,8 @@ Status: ✅ covered by plan · 🟡 covered but at risk · 🔴 gap — action n
 | 0.5 | Add CLAUDE.md + .claude/settings.json to repo root, commit | Ari | ✅ DONE |
 | 0.6 | Local Python 3.11 venv; fix settings.json (.env.example readable); fill .env.example DB vars | Claude Code | TODO |
 | 1.1 | PostgreSQL schema + data dictionary | Data Eng | ✅ DONE (26 tests pass; DB tests skip in CI until 6.2) |
-| 1.4a | Excel profiling script (Ari runs it; only summaries shared) | Data Eng | TODO — NEXT |
+| 1.4a | Excel profiling script (Ari runs it; only summaries shared) | Data Eng | ✅ DONE — finding: Excel = vehicle registry (338 trucks, VOLVO 62%, built 2004–2013, odometer 99.4% empty), NOT service history |
+| 1.4b | Service dates for repeat trucks (Messenger photos have no EXIF/filename date) → Ari dates repeat-truck photos manually from the chat | Ari | ⏸ by ~Oct 8, after labeling |
 | 1.2 | Synthetic rules: 1.2a web research with sources + Excel profile → Ari confirms | Data Eng + Ari | ⏸ PAUSED (restart by Oct 3) |
 | 1.3 | Synthetic generator with noise injection | Data Eng | TODO |
 | 1.4 | Real record intake template + cleaning script | Data Eng | TODO |
@@ -96,8 +97,10 @@ Status: ✅ covered by plan · 🟡 covered but at risk · 🔴 gap — action n
 | 2.2 | Shared feature pipeline `features.py` | ML Eng | TODO |
 | 2.3 | Baseline + 3 models + tuning | ML Eng | TODO |
 | 2.4 | Evaluation (regression + derived classification) + SHAP | ML Eng | TODO |
-| 3.1 | Labeling setup + labeled dataset (split by vehicle) | CV Eng | TODO |
-| 3.2 | YOLO plate detector fine-tune | CV Eng | TODO |
+| 3.1 | Labeling setup (Label Studio local, box + plate_type + plate_text) | CV Eng | ✅ DONE (export tested) |
+| 3.1c | Pre-label with pretrained detector (oim YOLOv9-t, thr 0.6) → import as predictions | CV Eng | 🟡 code done; Ari runs import |
+| 3.1d | Ari checks boxes + types Cyrillic plate text for 192 photos; export JSON after each session | Ari | TODO — target Oct 4 |
+| 3.2 | Vehicle-grouped split (~70/15/15) + YOLO fine-tune; evaluate pretrained oim on same test split as baseline | CV Eng | TODO |
 | 3.3 | Recognition: pretrained OCR vs custom CNN | CV Eng | TODO |
 | 3.4 | Normalization + confidence fallback | CV Eng | TODO |
 | 4.1 | FastAPI skeleton + DB + migrations | Backend Eng | TODO |
@@ -143,8 +146,12 @@ Status: ✅ covered by plan · 🟡 covered but at risk · 🔴 gap — action n
 | D-019 | 2026-09-30 | Schema (task 1.1): phone = 8 digits, no +976; private owner stored as a company row; oil_grade/vehicle_model free text; route nullable; TEXT+CHECK not ENUM; segments via vehicle_segments(as_of, grace_days); days_left/status computed at read time; names in docs/data_dictionary.md are the contract | Reviewed by PM | APPROVED |
 | D-020 | 2026-09-30 | Python 3.11 is the project version (local venv, CI, Docker) even though Mac has 3.14 | ML/CV libraries (torch, ultralytics) are safest on 3.11 | APPROVED |
 | D-021 | 2026-09-30 | Deadline 2026-10-20; plan compressed to 20 days (§3) | Instructor date | APPROVED |
-| D-022 | — | Frontend for the capstone = Streamlit (mobile-friendly, camera input) calling FastAPI. Next.js moves to Later (production version after capstone) | 20 days, 1 person; FastAPI backend stays so the UI can be swapped later | PROPOSED — needs Ari's OK |
+| D-022 | 2026-09-30 | Frontend for the capstone = Streamlit (mobile-friendly, camera input) calling FastAPI. Next.js moves to Later (production version after capstone) | 20 days, 1 person; FastAPI backend stays so the UI can be swapped later | APPROVED by Ari |
 | D-023 | 2026-09-30 | Geo-Expert will use the system after the capstone → ROI slide uses real operations; code quality matters beyond the demo | Ari confirmed | APPROVED |
+| D-024 | 2026-10-01 | Real data roles: Excel = vehicle registry (seed vehicles table, real fleet mix for generator, messy-data evidence). Photos = real service events (plate via labels; dates only for repeat trucks). Real prediction test set = repeat-truck intervals from photos (small; reported honestly) | Excel has no service history | APPROVED |
+| D-025 | 2026-10-01 | Pre-labeling detector = open-image-models YOLOv9-t-640 (ONNX, MIT code; weights license unstated → internal labeling aid only). Import threshold 0.6. Plate text NOT pre-filled (keeps OCR ground truth unbiased) | Pilot: fewer false boxes than hf26n; 187/192 photos got boxes | APPROVED |
+| D-026 | 2026-10-01 | Labeling rules: box every real readable plate (incl. background trucks); delete non-plate boxes; Cyrillic, no spaces; `?` for unreadable char; no plate → Skip | Detector must learn all plates are plates | APPROVED |
+| D-027 | 2026-10-01 | Photos taken from now on go to data/raw/photos_new/ → second, unseen test set | Most honest evaluation | APPROVED |
 
 ---
 
@@ -173,6 +180,8 @@ Status: ✅ covered by plan · 🟡 covered but at risk · 🔴 gap — action n
 | RISK-05 | One person, 20 days → schedule slip | High | High | Strict dates in §3; cut list; Streamlit (D-022); Ari labels photos in parallel |
 | RISK-06 | Personal data (driver names, phones) leaked in repo/demo | Med | High | Never commit real data; seed demo DB with synthetic people; `.gitignore` data folders |
 | RISK-07 | Live demo fails (network, cloud cold start) | Med | High | Warm up URL before defense; backup video; demo on known-good plate photos |
+| RISK-09 | Licensing: Ultralytics YOLO is AGPL-3.0; pre-label weights license unstated. Fine for capstone; Geo-Expert production use may need Ultralytics commercial license or a permissive alternative | Med | Med | Decide after defense; document in model card |
+| RISK-10 | Real prediction test set is tiny (repeat trucks only, dates entered manually) | High | Med | Report honestly; add photos_new over time; synthetic holdout as main metric |
 | RISK-08 | Plate letters misread (Cyrillic/Latin look-alikes) | High | Med | Normalization map + format regex + confirmation step |
 
 ---
