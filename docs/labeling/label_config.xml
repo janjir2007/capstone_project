@@ -1,0 +1,27 @@
+<!--
+  Label Studio labeling config for task 3.1 (plate detection + recognition).
+  Paste into: Project -> Settings -> Labeling Interface -> Code.
+
+  - One box class only: "plate" (YOLO detector has one class).
+  - Per box (perRegion="true"): the text on the plate, and whether it is a
+    registration plate or a mine fleet number (D-005). Default = plate.
+-->
+<View>
+  <Image name="image" value="$image" zoom="true" zoomControl="true" rotateControl="true"/>
+
+  <RectangleLabels name="bbox" toName="image">
+    <Label value="plate" background="#E53935"/>
+  </RectangleLabels>
+
+  <View visibleWhen="region-selected">
+    <Header value="Selected box"/>
+    <Choices name="plate_type" toName="image" perRegion="true"
+             choice="single" showInline="true" required="true">
+      <Choice value="plate" selected="true"/>
+      <Choice value="fleet_no"/>
+    </Choices>
+    <TextArea name="plate_text" toName="image" perRegion="true"
+              editable="true" required="true" maxSubmissions="1"
+              placeholder="Type exactly what you see, e.g. 1234УБА. Unreadable char = ?"/>
+  </View>
+</View>
