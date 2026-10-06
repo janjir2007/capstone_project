@@ -17,3 +17,8 @@ numpy==2.4.6
 pillow==12.3.0
 open-image-models[onnx]==0.6.0  # plate detector chosen in the 5-photo pilot
 onnxruntime==1.30.0  # runtime behind open-image-models (its [onnx] extra)
+
+# --- CV detector fine-tune + evaluation (src/cv/train_detector.py, eval_detector.py, task 3.2)
+ultralytics==8.4.170  # YOLO11n / YOLO26n training (AGPL-3.0, see RISK-09)
+torch==2.14.1  # MPS check; installed by ultralytics anyway. CPU-only wheel for CI in task 6.2
+matplotlib==3.11.2  # charts in docs/figures/
