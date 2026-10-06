@@ -1,0 +1,29 @@
+# Keep the Docker build context small and PRIVATE (RISK-06): nothing below is
+# sent to the Docker daemon, so it can never end up inside an image.
+.git
+.github
+.venv
+.claude
+.pytest_cache
+**/__pycache__
+.env
+.env.*
+data
+models
+notebooks
+frontend
+docs
+tests
+*.pt
+*.pth
+*.onnx
+*.jpg
+*.jpeg
+*.JPG
+*.JPEG
+*.png
+*.heic
+*.csv
+*.xlsx
+*.xls
+.DS_Store

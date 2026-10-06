@@ -1,6 +1,7 @@
 # Local development services (D-011: local PostgreSQL in Docker).
 #
-# Start:   docker compose up -d db
+# Start:   docker compose up -d db        (database only, e.g. for pytest)
+#          docker compose up -d --build   (database + API on http://localhost:8000)
 # Stop:    docker compose down          (keeps data)
 # Reset:   docker compose down -v       (deletes the volume -> schema.sql runs again)
 #
@@ -34,6 +35,26 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
+  # FastAPI service (task 4.1). Health: curl http://localhost:8000/health
+  api:
+    build: .
+    container_name: ocp-api
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      POSTGRES_USER: ${POSTGRES_USER:-oil}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-oil_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-oil_change}
+      # Inside the compose network the database is reached by service name on
+      # its container port 5432 (POSTGRES_PORT above is only the HOST port).
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      TZ: Asia/Ulaanbaatar
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy  # wait for pg_isready before starting the API
 
 volumes:
   pgdata:

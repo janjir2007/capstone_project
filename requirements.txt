@@ -22,3 +22,10 @@ onnxruntime==1.30.0  # runtime behind open-image-models (its [onnx] extra)
 ultralytics==8.4.170  # YOLO11n / YOLO26n training (AGPL-3.0, see RISK-09)
 torch==2.14.1  # MPS check; installed by ultralytics anyway. CPU-only wheel for CI in task 6.2
 matplotlib==3.11.2  # charts in docs/figures/
+
+# --- API (src/api/, task 4.1). The API Docker image installs requirements-api.txt,
+# a subset of this file with the SAME pins (checked by tests/test_api.py).
+fastapi==0.142.2
+uvicorn==0.54.0  # ASGI server that runs the app (Dockerfile CMD)
+sqlalchemy==2.1.3
+httpx==0.28.1  # not imported directly; fastapi.testclient.TestClient needs it (tests)
