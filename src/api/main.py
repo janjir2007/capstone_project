@@ -3,8 +3,8 @@
 Run locally:   uvicorn src.api.main:app --reload
 In Docker:     see Dockerfile / docker-compose.yml (service "api")
 
-Business endpoints (task 4.2) and ML/CV model loading (task 4.3) are added
-later; this file only wires settings, the database engine and the routers.
+Data endpoints: task 4.2. ML/CV model loading (task 4.3) is added later;
+this file only wires settings, the database engine and the routers.
 """
 
 from collections.abc import AsyncIterator
@@ -15,7 +15,7 @@ from sqlalchemy import Engine
 
 from src.api.config import load_settings
 from src.api.db import create_db_engine
-from src.api.routers import health
+from src.api.routers import health, services, stats, vehicles
 
 API_VERSION = "0.1.0"
 
@@ -36,6 +36,9 @@ def create_app(engine: Engine | None = None) -> FastAPI:
 
     app = FastAPI(title="Oil Change Predictor API", version=API_VERSION, lifespan=lifespan)
     app.include_router(health.router)
+    app.include_router(vehicles.router)
+    app.include_router(services.router)
+    app.include_router(stats.router)
     return app
 
 

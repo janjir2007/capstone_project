@@ -28,4 +28,5 @@ matplotlib==3.11.2  # charts in docs/figures/
 fastapi==0.142.2
 uvicorn==0.54.0  # ASGI server that runs the app (Dockerfile CMD)
 sqlalchemy==2.1.3
+pydantic==2.13.5  # request/response schemas (src/api/schemas.py, task 4.2); installed by fastapi anyway
 httpx==0.28.1  # not imported directly; fastapi.testclient.TestClient needs it (tests)
