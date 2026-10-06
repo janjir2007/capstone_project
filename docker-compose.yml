@@ -25,6 +25,8 @@ services:
       - pgdata:/var/lib/postgresql/data
       # Scripts in /docker-entrypoint-initdb.d/ run ONCE, when the volume is empty.
       - ./src/data/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+      # Migrations, in order (an existing volume needs them run by hand: README).
+      - ./src/data/migrations/001_destinations.up.sql:/docker-entrypoint-initdb.d/02_migration_001_destinations.sql:ro
       # All SQL files, available inside the container for manual psql -f runs.
       - ./src/data:/sql:ro
     healthcheck:

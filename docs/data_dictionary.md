@@ -1,7 +1,8 @@
 # Data Dictionary — Oil Change Predictor
 
-- **Version:** 0.1 (Task 1.1) · **Owner:** Data Engineer · **Date:** 2026-09-30
+- **Version:** 0.2 (Task 1.1b) · **Owner:** Data Engineer · **Date:** 2026-10-06
 - **Schema file:** [`src/data/schema.sql`](../src/data/schema.sql) (PostgreSQL 16)
+  + migrations in [`src/data/migrations/`](../src/data/migrations/) (§8)
 - **This file is a contract.** Backend (SQLAlchemy models), ML (features) and
   Frontend (forms) build on these names. Changes are logged in §7.
 
@@ -23,6 +24,7 @@ erDiagram
     service_records ||--o{ predictions : "is basis of"
     predictions ||--o{ reminders : "triggers"
     vehicles ||--o{ reminders : "is sent about"
+    destinations |o--o{ service_records : "is heading to"
 
     companies {
         bigint id PK
@@ -51,6 +53,18 @@ erDiagram
         text driver_phone "8 digits"
         text oil_changer
         text photo_ref
+        bigint destination_id FK "nullable"
+        text destination_raw "nullable"
+        timestamptz created_at
+    }
+    destinations {
+        bigint id PK
+        text name UK
+        text route_category
+        integer one_way_km "nullable"
+        numeric round_trip_days_min "nullable"
+        numeric round_trip_days_max "nullable"
+        text source "nullable"
         timestamptz created_at
     }
     predictions {
@@ -112,9 +126,30 @@ erDiagram
 | `driver_phone` | TEXT | yes | exactly 8 digits, no `+976`, no spaces, e.g. `99110001` | CHECK `^[0-9]{8}$`. Normalized before insert. **Personal data** | app (pre-filled) / real / synthetic |
 | `oil_changer` | TEXT | yes | free text | who did the service | app |
 | `photo_ref` | TEXT | yes | storage key/path | reference to the photo in storage, never the image itself | system |
+| `destination_id` | BIGINT | yes | — | FK → `destinations.id`. "Where are you heading next?", asked at every service (D-033). NULL for old records and for places not in the list. *Migration 001* | app / synthetic |
+| `destination_raw` | TEXT | yes | free text, e.g. `Сайншанд` | not blank if given. What the driver said when the place is not in `destinations`. *Migration 001* | app |
 | `created_at` | TIMESTAMPTZ | no | Asia/Ulaanbaatar | default `now()`; differs from `service_date` for late entries | system |
 
 Driver + phone are stored here, not on the vehicle, because drivers change between trips (D-004).
+
+### 2.3b `destinations` — where a truck goes after its oil change (migration 001, D-033, D-035)
+
+Reference list behind the "heading next" question. Seed rows = [`docs/synthetic_rules.md`](synthetic_rules.md) §1;
+values marked TO FILL there are NULL here until Ari fills them (then a new migration / UPDATE).
+
+| Column | Type | Null | Unit / format | Allowed values / rule | Source |
+|---|---|---|---|---|---|
+| `id` | BIGINT identity | no | — | primary key, auto | system |
+| `name` | TEXT | no | e.g. `Zamyn-Uud (MN–CN border)` | unique, not blank | synthetic_rules.md §1 |
+| `route_category` | TEXT | no | — | same 5 values as `service_records.route`: `ub_city`, `mn_china`, `mn_russia`, `mine_site`, `mixed` | synthetic_rules.md §1 |
+| `one_way_km` | INTEGER | yes | road km from Ulaanbaatar | > 0. NULL = not applicable (`ub_city`, `mixed`) or not known yet. **Round-trip km is not stored**: derive as 2 × `one_way_km` (ESTIMATE, synthetic_rules.md §1) | map source in `source` |
+| `round_trip_days_min` | NUMERIC(5,1) | yes | days, **including waiting** (border, loading) | > 0, ≤ `round_trip_days_max` | Ari (TO FILL) |
+| `round_trip_days_max` | NUMERIC(5,1) | yes | days, including waiting | > 0 | Ari (TO FILL) |
+| `source` | TEXT | yes | URL | where `one_way_km` comes from (OSRM route link). NULL when there is no km | synthetic_rules.md §1 |
+| `created_at` | TIMESTAMPTZ | no | Asia/Ulaanbaatar | default `now()` | system |
+
+Used by Baseline B1 (D-035): `km_per_day = 2 × one_way_km ÷ round_trip_days`; `days = interval_km ÷ km_per_day`.
+Code must read these values from the table, never hard-code them.
 
 ### 2.4 `predictions` — model output after a service
 
@@ -190,6 +225,10 @@ Segment rules (checked top to bottom, first match wins):
 | km or engine hours present | `service_records_has_meter` | CheckViolation |
 | Phone = 8 digits | column CHECKs | CheckViolation |
 | Route in the 5 values | column CHECK | CheckViolation |
+| Destination exists | `service_records.destination_id` FK | ForeignKeyViolation |
+| `destination_raw` not blank | column CHECK | CheckViolation |
+| Destination name unique + not blank; category in the 5 route values; km > 0 | `destinations` column CHECKs / UNIQUE | Check/UniqueViolation |
+| Round-trip days > 0 and min ≤ max | `destinations_days_min_le_max` + column CHECKs | CheckViolation |
 | Prediction's service is the same vehicle | `predictions_service_same_vehicle_fk` | ForeignKeyViolation |
 | Reminder's prediction is the same vehicle | `reminders_prediction_same_vehicle_fk` | ForeignKeyViolation |
 | `sent_at` set ⇔ `status = 'sent'` | `reminders_sent_at_matches_status` | CheckViolation |
@@ -221,3 +260,26 @@ databases use synthetic rows only.
 | Version | Date | Change |
 |---|---|---|
 | 0.1 | 2026-09-30 | First version (Task 1.1) |
+| 0.2 | 2026-10-06 | Task 1.1b, migration 001: new table `destinations`; `service_records.destination_id`, `destination_raw` (nullable) |
+
+## 8. Migrations
+
+`schema.sql` = the base schema (Task 1.1). Every later change is a numbered pair in
+[`src/data/migrations/`](../src/data/migrations/): `NNN_name.up.sql` (apply) and
+`NNN_name.down.sql` (undo). Files contain no BEGIN/COMMIT; run them with
+`--single-transaction` so a failure changes nothing.
+
+| # | File | What |
+|---|---|---|
+| 001 | `001_destinations.up.sql` / `.down.sql` | `destinations` table + seed; destination columns on `service_records` |
+
+- **New dev DB** (`docker compose down -v && docker compose up -d db`): docker-compose runs
+  `schema.sql` then every up migration automatically.
+- **Existing dev DB** (volume already there): run by hand
+  ```bash
+  docker compose exec -T db psql -U oil -d oil_change --single-transaction -v ON_ERROR_STOP=1 -f /sql/migrations/001_destinations.up.sql
+  # undo:
+  docker compose exec -T db psql -U oil -d oil_change --single-transaction -v ON_ERROR_STOP=1 -f /sql/migrations/001_destinations.down.sql
+  ```
+- Tested by `tests/test_migration_001_destinations.py` (up on clean + filled DB, down restores the old schema, up→down→up).
+- Task 4.1 (FastAPI + SQLAlchemy) may move these into its migration tool; the SQL stays the same.
