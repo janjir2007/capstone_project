@@ -1,6 +1,6 @@
 # PROJECT_STATE — Capstone "Oil Change Predictor" (Geo-Expert LLC)
 
-- **Version:** 1.2
+- **Version:** 1.5
 - **Last updated:** 2026-10-06
 - **Deadline (defense day):** 2026-10-20 (20 days from 2026-09-30)
 - **Current phase:** P3 done (detector) → P1 synthetic data (redesigned around destination, D-033–D-036) + P4 backend URGENT
@@ -106,18 +106,19 @@ Status: ✅ covered by plan · 🟡 covered but at risk · 🔴 gap — action n
 | 3.1d | Ari checks boxes + types Cyrillic plate text | Ari | ✅ DONE — 183 labeled, 9 skipped, 135 trucks, 35 repeat trucks (83 photos), all 183 match 4 digits + 3 Cyrillic |
 | 3.2 | Vehicle-grouped split + YOLO fine-tune + eval vs pretrained oim | CV Eng | ✅ DONE — test (27 img / 20 trucks): yolo26n mAP50 0.991, P 0.93, R 1.00, 21.5 ms MPS; oim P 0.73 (10 false boxes) |
 | 3.3 | Recognition: pretrained OCR vs custom CNN — REDUCED scope (cut list #1): small CNN on character crops, same split.json | CV Eng | TODO — after 1.3 |
-| 3.4 | Normalization + confidence fallback | CV Eng | TODO |
-| 4.1 | FastAPI skeleton + DB + migrations (decide: keep plain SQL or move to Alembic) | Backend Eng | ▶ BRIEF ISSUED Oct 6 (pulled forward while 1.3 waits on Ari) |
-| 4.2 | Endpoints per contract (§8) | Backend Eng | TODO |
+| 3.4 | Normalization + confidence fallback (pulled forward: independent of synthetic data) | CV Eng | ▶ BRIEF ISSUED Oct 6 |
+| 4.1 | FastAPI skeleton + DB + migrations (decide: keep plain SQL or move to Alembic) | Backend Eng | ✅ DONE Oct 6 — src/api (config, db, /health 200/503), Dockerfile (310 MB, non-root), compose "api", requirements-api.txt; 130 tests pass locally |
+| 4.2 | Endpoints per contract (§8) — data endpoints only (lookup, services, vehicle card, segments); prediction field null until 4.3 | Backend Eng | ✅ DONE Oct 6 — 4 endpoints, plates.py (spaces/case only), contract docs/api_contract.md v0.2, 204 tests pass locally |
+| 4.2b | GET /destinations (dropdown, name_mn when 002 lands), lookup by fleet_no, case/space-insensitive company match, same-vehicle same-day duplicate guard (409 + force flag) | Backend Eng | ✅ DONE Oct 6 — api_contract v0.3, src/api/matching.py, 232 tests pass |
 | 4.3 | Model + CV serving | Backend Eng | TODO |
-| 4.4 | Segments + reminders | Backend Eng | TODO |
+| 4.4 | Segments + reminders. Small fixes: fleet_no matching ignores dashes (lookup + POST /services uses matching.py, not exact) | Backend Eng | TODO |
 | 5.1 | UX flow + wireframes | Frontend | TODO |
 | 5.2 | Recording mode | Frontend | TODO |
 | 5.3 | Lookup + vehicle card | Frontend | TODO |
 | 5.4 | Dashboard (segments, due list, reminders) | Frontend | TODO |
 | 6.1 | Docker + compose | Backend Eng | TODO |
 | 6.2 | CI/CD GitHub Actions (+ Postgres service so DB tests run in CI) | Backend Eng | TODO |
-| 6.3 | Cloud deploy + public URL (Supabase DB + backend host + Vercel) | Backend Eng | TODO |
+| 6.3 | Cloud deploy + public URL (Supabase DB + backend host + Vercel) + schema_migrations table & apply script (D-041) | Backend Eng | TODO |
 | 6.4 | Load test (P50/P95/P99) | Backend Eng | TODO |
 | 6.5 | TCO 3 tiers + ROI | PM + Ari | TODO |
 | 7.1 | 13-slide deck | PM + Ari | TODO |
@@ -169,6 +170,9 @@ Status: ✅ covered by plan · 🟡 covered but at risk · 🔴 gap — action n
 | D-038 | 2026-10-06 | Sanity check in 2.4: retrain with generator variation OFF → ML must ≈ B1. If ML beats B1 by much more than the injected variation explains, something leaks | Guards RISK-03 | APPROVED (PM) |
 | D-039 | 2026-10-06 | Route source of truth: if destination_id is set → service_records.route = destinations.route_category (backend 4.2 sets it, user can't override); if only destination_raw → oil changer picks route manually. Keep the route column | 1.1b handoff: the two could disagree | APPROVED (PM) |
 | D-040 | 2026-10-06 | Destinations get a Mongolian label column name_mn (UI shows Mongolian; English name stays as key). Added in migration 002 with Ari's values. Mine-site rows also via 002. Migrations = numbered plain SQL up/down until 4.1 decides on Alembic | Oil changer UI is Mongolian | APPROVED (PM) |
+| D-041 | 2026-10-06 | Migrations stay numbered plain SQL up/down for the capstone (no Alembic). Before the 2nd DB (Supabase, 6.3): add schema_migrations(version, applied_at) + small script applying missing *.up.sql in order in one transaction. Alembic = post-capstone option (baseline + wrap SQL). Role doc "Alembic" line superseded. Config stays in src/api/config.py (API-only) | 4.1 handoff: schema uses SQL function, CHECKs, seeds; no ORM models; 16 tests run .sql directly | APPROVED (PM) |
+| D-042 | 2026-10-06 | 4.2 API rules accepted: lookup returns a list (phone can match several trucks), unknown → 200 + []; 8-digit (+976 optional) = phone, else plate; POST /services needs exactly one of destination_id/destination_raw; destination_id + different route → 422; new vehicle needs company_name; fleet_no needs company_name; service_date default = today UB (UTC+8), future → 422; usual_liters = mode, tie → most recent; "today" computed in API (UB), not DB CURRENT_DATE. Exact contract = docs/api_contract.md (source of truth; §8 is summary) | 4.2 handoff | APPROVED (PM) |
+| D-043 | 2026-10-06 | 4.2b matching rules: done in Python (casefold), not SQL (Cyrillic locale differs on Supabase). Company key = case-insensitive, spaces collapsed. Duplicate = same vehicle + same calendar date → 409 {code: duplicate_service}; ?force=true overrides. No DB constraint (rare race accepted). Destinations ordered by id. Fleet_no dash-insensitive + POST matching → 4.4 | 4.2b handoff | APPROVED (PM) |
 
 ---
 
@@ -229,15 +233,17 @@ oil-change-predictor/
 └── .github/workflows/ci.yml
 ```
 
-**API contract v0 (draft — Backend owns, changes logged here)**
+**API contract v0.2 — exact fields in `docs/api_contract.md` (source of truth); summary below**
+- `GET /health` → `{status: "ok"|"error", db: "ok"|"error"}`, 200 or 503 (4.1)
 - `POST /plates/recognize` (image) → `{plate_raw, plate_normalized, confidence, bbox, needs_manual}`
-- `GET /vehicles/lookup?q=` (plate or phone) → vehicle card
-- `POST /services` → create service record (creates vehicle/company if new)
+- `GET /vehicles/lookup?q=` (plate or phone; fleet_no in 4.2b) → `{query, match_type, normalized, vehicles: VehicleCard[]}`
+- `GET /destinations` → list for dropdown (4.2b)
+- `POST /services` → create service record → 201 `{service, vehicle_id, vehicle_created, company_created}`, 422/409 cases (creates vehicle/company if new); includes `destination_id` OR `destination_raw` (+ manual route) per D-039; odometer/engine hours required
 - `GET /vehicles/{id}` → card: last service, usual liters, history, service_count, segment, prediction
 - `GET /vehicles/{id}/prediction` → `{predicted_date, days_left, status, model_version}`
 - `GET /reminders/due` → list of vehicles due soon/overdue with generated Mongolian message
 - `POST /reminders/{id}/sent`
-- `GET /stats/segments` → counts per segment
+- `GET /stats/segments` → `{as_of, total, counts{new, returning, loyal, at_risk}}`
 
 ---
 
