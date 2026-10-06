@@ -1,9 +1,9 @@
 # PROJECT_STATE — Capstone "Oil Change Predictor" (Geo-Expert LLC)
 
-- **Version:** 1.0
+- **Version:** 1.2
 - **Last updated:** 2026-10-06
 - **Deadline (defense day):** 2026-10-20 (20 days from 2026-09-30)
-- **Current phase:** P3 done (detector) → P1 synthetic data + P4 backend URGENT
+- **Current phase:** P3 done (detector) → P1 synthetic data (redesigned around destination, D-033–D-036) + P4 backend URGENT
 - **Overall health:** 🟠 Orange — detector finished and strong, but synthetic data, ML model and backend have NOT started; ~3–4 days behind plan with 15 days left.
 
 ---
@@ -14,14 +14,16 @@
 - Recording mode: photo → plate detection + Cyrillic recognition → oil changer confirms plate.
   - Existing plate → form pre-filled from last service (oil grade, liters, route, driver, phone) → check, edit, save.
   - New plate → fill everything once.
-  - Always fresh: odometer km / engine hours. Date automatic.
+  - Always fresh: odometer km / engine hours + **destination (where the truck is heading next)**. Date automatic. (D-033)
 - Lookup mode: plate or phone → vehicle card (last oil, usual liters, last date, route, history, next predicted change + status OK / due soon / overdue).
 - Structure: company → vehicles → service records (driver + phone stored per service record). Service count computed from rows.
 - Segments: New (1), Returning (2), Loyal (3+), At risk (predicted date passed, not returned).
 
 **Feature 2 — Prediction + reminder**
-- Model predicts next oil change date from vehicle model, oil grade, route (UB city / MN–China / MN–Russia / mine site / mixed), odometer history, season.
-- Must beat a naive fixed-interval baseline. Honest reporting.
+- **Purpose = reminder timing** (D-036): send the reminder just before the truck is due — too late = customer lost, too early = forgotten.
+- Model predicts next oil change date from destination/route (UB city / MN–China / MN–Russia / mine site / mixed) + distance, the vehicle's own history (km/day from odometer readings, past intervals, lateness), season, road vs haul flag. Vehicle model is NOT a model feature (D-034); oil grade TBD.
+- Baselines: B0 fixed interval, B1 route formula (distance ÷ route km/day) (D-035).
+- Must beat B0 and B1 baselines (or report honestly that it doesn't).
 - Trained on SYNTHETIC data from documented rules; real collected records used for test/validation. Stated openly.
 - Mongolian reminder message: plate, last change date, oil used, contact.
 
@@ -38,8 +40,8 @@ Status: ✅ covered by plan · 🟡 covered but at risk · 🔴 gap — action n
 | # | Requirement (source) | Maps to | Status | Notes / action |
 |---|---|---|---|---|
 | R1 | Real, uncleaned data; API / web scraping (slide "Хичээлийн даалгавар vs Capstone") | F1 records, F2 test set | 🟡 | Training is synthetic. Need: (a) real messy Geo-Expert records as test set, (b) at least one real external API, (c) ✅ instructor confirmed synthetic training is OK. Real Excel records available. |
-| R2 | Multi-model comparison + hyperparameter tuning | F2 model, DL | ✅ | Baseline (fixed interval) + Linear Regression + Random Forest + XGBoost; RandomizedSearchCV with grouped/time-aware CV. |
-| R3 | F-Score, Latency P99, inference speed, business ROI | F2, Backend, Slide 11 | 🟡 | F-score needs a classification view → derived from status buckets (OK/due soon/overdue). P99 measured by load test. ROI needs Ari's real business numbers. |
+| R2 | Multi-model comparison + hyperparameter tuning | F2 model, DL | ✅ | B0 fixed interval + B1 route formula + Ridge + Random Forest + XGBoost; RandomizedSearchCV with grouped/time-aware CV. |
+| R3 | F-Score, Latency P99, inference speed, business ROI | F2, Backend, Slide 11 | 🟡 | F-score needs a classification view → derived from status buckets (OK/due soon/overdue). P99 measured by load test. ROI needs Ari's real business numbers. Business metric = reminder hit rate (D-036). |
 | R4 | FastAPI, CI/CD, web interface, Cloud; not local, working link | Backend, Frontend, Deploy | 🟡 | YOLO + torch images are heavy for free tiers — memory risk. See RISK-04. |
 | R5 | Core ML metrics: RMSE (regression), F-Score, ROC-AUC, Feature Importance | F2 | ✅ | RMSE, MAE, R² primary; F1 + ROC-AUC on derived "overdue" class. |
 | R6 | CV track: custom CNN vs transfer learning; mAP, IoU, Accuracy | DL | 🔴 | Current plan has no "custom CNN vs transfer" comparison. Proposal D-008: pretrained OCR vs small custom PyTorch CNN char classifier. Needs Ari's approval. |
@@ -87,11 +89,12 @@ Status: ✅ covered by plan · 🟡 covered but at risk · 🔴 gap — action n
 | 0.5 | Add CLAUDE.md + .claude/settings.json to repo root, commit | Ari | ✅ DONE |
 | 0.6 | Local Python 3.11 venv; fix settings.json (.env.example readable); fill .env.example DB vars | Claude Code | TODO |
 | 1.1 | PostgreSQL schema + data dictionary | Data Eng | ✅ DONE (26 tests pass; DB tests skip in CI until 6.2) |
-| 1.1b | Schema migration: destination on service record + destinations reference table (name, route category, one-way km, round-trip days, source) | Data Eng | TODO (before 4.1) |
 | 1.4a | Excel profiling script (Ari runs it; only summaries shared) | Data Eng | ✅ DONE — finding: Excel = vehicle registry (338 trucks, VOLVO 62%, built 2004–2013, odometer 99.4% empty), NOT service history |
 | 1.4b | Service dates for repeat trucks (Messenger photos have no EXIF/filename date) → Ari dates repeat-truck photos manually from the chat | Ari | ⏸ by ~Oct 8, after labeling |
-| 1.2 | Synthetic rules (1.2a): research + Ari inputs → docs/synthetic_rules.md → Ari marks ✓/✗ | Data Eng + Ari | ▶ IN PROGRESS (started Oct 5, Claude Code) |
-| 1.3 | Synthetic generator with noise injection | Data Eng | TODO |
+| 1.1b | Schema migration: destination on service record + destinations reference table (name, route category, one-way km, round-trip days, source) | Data Eng | ✅ DONE Oct 6 — migration 001 (plain SQL up/down, psql --single-transaction), 7 destinations seeded, nullable destination_id + destination_raw, 16 tests (112 pass locally; DB tests skip in CI until 6.2), data_dictionary v0.2 |
+| 1.1c | Migration 002: Ari's round-trip days + mine-site rows + name_mn (D-040) | Data Eng | TODO — after Ari fills A1–A4 (same session as 1.3 start) |
+| 1.2 | Synthetic rules (1.2a): research + Ari inputs → docs/synthetic_rules.md → Ari marks ✓/✗. Redesigned per D-033–D-036. First draft (Oct 5) was lost/never saved; rewritten from scratch Oct 6 | Data Eng + Ari | ✅ DRAFT DONE (OSRM distances, 7 variations, 13 noise rules, 16 open items) → ⏳ BLOCKED on Ari: A1–A4 + ✓/✗ |
+| 1.3 | Synthetic generator with noise injection | Data Eng | TODO — starts when A1–A4 filled (target Oct 7) |
 | 1.4 | Real record intake template + cleaning script | Data Eng | TODO |
 | 1.5 | External API evaluation (1 source) | Data Eng | TODO |
 | 2.1 | EDA notebook (synthetic + real) | ML Eng | TODO |
@@ -104,7 +107,7 @@ Status: ✅ covered by plan · 🟡 covered but at risk · 🔴 gap — action n
 | 3.2 | Vehicle-grouped split + YOLO fine-tune + eval vs pretrained oim | CV Eng | ✅ DONE — test (27 img / 20 trucks): yolo26n mAP50 0.991, P 0.93, R 1.00, 21.5 ms MPS; oim P 0.73 (10 false boxes) |
 | 3.3 | Recognition: pretrained OCR vs custom CNN — REDUCED scope (cut list #1): small CNN on character crops, same split.json | CV Eng | TODO — after 1.3 |
 | 3.4 | Normalization + confidence fallback | CV Eng | TODO |
-| 4.1 | FastAPI skeleton + DB + migrations | Backend Eng | TODO |
+| 4.1 | FastAPI skeleton + DB + migrations (decide: keep plain SQL or move to Alembic) | Backend Eng | ▶ BRIEF ISSUED Oct 6 (pulled forward while 1.3 waits on Ari) |
 | 4.2 | Endpoints per contract (§8) | Backend Eng | TODO |
 | 4.3 | Model + CV serving | Backend Eng | TODO |
 | 4.4 | Segments + reminders | Backend Eng | TODO |
@@ -160,8 +163,12 @@ Status: ✅ covered by plan · 🟡 covered but at risk · 🔴 gap — action n
 | D-032 | 2026-10-05 | Route research PDF (docs/research/routes_ub.pdf, AI-generated): use only Medium/High routes (Zamyn-Uud–Erenhot, Altanbulag–Kyakhta, Beijing); citation markers not real links → find real sources; Chita-via-Altai route is wrong; UB city + mine site researched separately. Not cited directly on slides | PM review | APPROVED |
 | D-033 | 2026-10-05 | Destination ("where are you heading next") is asked at every service and stored on the service record; mapped to route category + round-trip distance. Core input of generator and model. Collected from now on (real data) | Geo-Expert has no usable service history; destination is real, cheap to collect | APPROVED by Ari |
 | D-034 | 2026-10-05 | Vehicle model removed from generator rules and model features (field stays in DB + vehicle card). Keep one coarse flag: road truck vs mine haul truck (engine hours, D-006). Oil grade: open question | Interval 15k–20k km regardless of model; 62% VOLVO → little signal; saves time | APPROVED by Ari (scope §1 updated) |
-| D-035 | 2026-10-05 | Formula = Baseline B1: days = interval_km ÷ route km/day, where km/day = round-trip km ÷ round-trip days incl. waiting. ML must beat B0 (fixed interval) and B1. ML adds vehicle's own history (km/day from odometer, past intervals, lateness), season, return behavior. One global model; history follows the VEHICLE (D-004), phone = message recipient. First visit → falls back to B1 | Keep ML meaningful and comparison fair | APPROVED by Ari |
+| D-035 | 2026-10-05 | Formula = Baseline B1: days = interval_km ÷ route km/day, where km/day = round-trip km ÷ round-trip days incl. waiting. ML must beat B0 and B1. ML adds vehicle's own history (km/day from odometer, past intervals, lateness), season, return behavior. One global model; history follows the VEHICLE (D-004), phone = message recipient. First visit → falls back to B1 | Keep ML meaningful and comparison fair | APPROVED by Ari |
 | D-036 | 2026-10-05 | Project purpose = reminder timing for customer retention. Business metric = reminder hit rate (% of reminders inside useful window before actual due date); RMSE/MAE kept for course. Late reminder worse than early → send with safety buffer before predicted date. Window size TBD (Ari) | Ari's business goal | APPROVED by Ari (window TBD) |
+| D-037 | 2026-10-06 | 1.2a rules accepted as draft: one-way km from OpenStreetMap/OSRM (UB centre → town point); round trip = 2× one-way; aggregator 834 km UB–Zamyn-Uud excluded pending Ari (A5); "late" = beyond 20,000 km point, extra days exponential mean 10 / max 60; if haul-truck values missing by Oct 8 → generator makes road trucks only (mine SITE stays as a destination). All [ESTIMATE] values remain Ari ✓/✗ | Handoff 1.2a review | APPROVED (PM), estimates pending Ari |
+| D-038 | 2026-10-06 | Sanity check in 2.4: retrain with generator variation OFF → ML must ≈ B1. If ML beats B1 by much more than the injected variation explains, something leaks | Guards RISK-03 | APPROVED (PM) |
+| D-039 | 2026-10-06 | Route source of truth: if destination_id is set → service_records.route = destinations.route_category (backend 4.2 sets it, user can't override); if only destination_raw → oil changer picks route manually. Keep the route column | 1.1b handoff: the two could disagree | APPROVED (PM) |
+| D-040 | 2026-10-06 | Destinations get a Mongolian label column name_mn (UI shows Mongolian; English name stays as key). Added in migration 002 with Ari's values. Mine-site rows also via 002. Migrations = numbered plain SQL up/down until 4.1 decides on Alembic | Oil changer UI is Mongolian | APPROVED (PM) |
 
 ---
 
@@ -171,14 +178,14 @@ Status: ✅ covered by plan · 🟡 covered but at risk · 🔴 gap — action n
 2. Do the photo plates match the Excel records? ("maybe" — check during 1.4a / 3.1)
 3. How many real past service records exist, and in what form?
 4. How many truck photos can Ari collect per week? Any fleet-number-only trucks available to photograph?
-5. ~~Interval rules~~ → D-030. Now: does oil grade change the interval? (else drop, D-034)
+5. ~~Interval rules~~ → D-030. Still open: does oil grade change the interval? (else drop, D-034)
+10. Destination table: main destinations + real round-trip days incl. waiting (Ari) + one-way km from a real map source. Replaces "trips per month" estimate (D-031)
+11. Reminder window: how many days before due date is ideal? (D-036)
+12. Do repeat-truck photos show odometer, or dates only? (decides if real test can use km)
 6. Hosting budget: free tiers only, or small paid? (Default now: free tiers, D-013)
 7. Which Cyrillic letters actually appear on Mongolian plates (to be verified from real photos, not assumed).
 8. Status thresholds for D-007.
 9. Frontend: keep Next.js, or accept Streamlit/Gradio if behind schedule?
-10. Destination table: round-trip days incl. waiting (Ari) + one-way km from real map source
-11. Reminder window: days before due date (D-036)
-12. Do repeat-truck photos show odometer, or dates only?
 
 ---
 
@@ -188,7 +195,7 @@ Status: ✅ covered by plan · 🟡 covered but at risk · 🔴 gap — action n
 |---|---|---|---|---|
 | RISK-01 | ~~Instructor rejects synthetic training~~ CLOSED | — | — | Ask in week 1; maximize real messy data; show generator rules transparently |
 | RISK-02 | Too few truck photos → weak YOLO/OCR | High | High | Start collecting today; augmentations; manual fallback is part of the product |
-| RISK-03 | Model only learns generator rules (circular evaluation) | High | Med | Report synthetic vs real test separately; state limitation on slide |
+| RISK-03 | Model only learns generator rules (circular evaluation) | High | Med | Report synthetic vs real test separately; B1 formula baseline makes the gain visible; state limitation on slide |
 | RISK-04 | Docker image with torch/YOLO too big for free cloud tier RAM | Med | High | Use smallest YOLO; CPU-only torch; ONNX export; or host CV service separately |
 | RISK-05 | One person, 20 days → schedule slip | High | High | Strict dates in §3; cut list; Streamlit (D-022); Ari labels photos in parallel |
 | RISK-06 | Personal data (driver names, phones) leaked in repo/demo | Med | High | Never commit real data; seed demo DB with synthetic people; `.gitignore` data folders |
@@ -196,6 +203,7 @@ Status: ✅ covered by plan · 🟡 covered but at risk · 🔴 gap — action n
 | RISK-09 | Licensing: Ultralytics YOLO is AGPL-3.0; pre-label weights license unstated. Fine for capstone; Geo-Expert production use may need Ultralytics commercial license or a permissive alternative | Med | Med | Decide after defense; document in model card |
 | RISK-11 | Detector baseline comparison biased: GT boxes started as oim pre-labels → oim mAP50-95/IoU inflated (0.97/0.997). Compare on precision/false boxes, state on slide | — | Low | Stated in docs/cv_detection_results.md |
 | RISK-10 | Real prediction test set is tiny (repeat trucks only, dates entered manually) | High | Med | Report honestly; add photos_new over time; synthetic holdout as main metric |
+| RISK-12 | Critical path blocked on Ari inputs A1–A4 (round-trip days, mine sites, destination mix, UB km/day) | Med | High | Fill by Oct 7; if a value is unknown, Ari gives a range → generator samples it |
 | RISK-08 | Plate letters misread (Cyrillic/Latin look-alikes) | High | Med | Normalization map + format regex + confirmation step |
 
 ---
