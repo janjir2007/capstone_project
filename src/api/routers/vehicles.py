@@ -1,6 +1,6 @@
 """Vehicle lookup and vehicle card (task 4.2).
 
-GET /vehicles/lookup?q=   plate or phone -> matching vehicle cards
+GET /vehicles/lookup?q=   plate, fleet number or phone -> matching vehicle cards
 GET /vehicles/{id}        one vehicle card
 
 The card = last service (pre-fills the recording form), usual liters, full
@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from src.api.clock import get_today
 from src.api.db import get_session
+from src.api.matching import fleet_no_key
 from src.api.models import ServiceRecord, Vehicle
 from src.api.schemas import CompanyOut, LookupResult, ServiceOut, VehicleCard, normalize_phone
 from src.common.plates import normalize_plate
@@ -102,18 +103,34 @@ def vehicles_by_plate(session: Session, plate_normalized: str) -> Sequence[Vehic
     return session.scalars(select(Vehicle).where(Vehicle.plate_normalized == plate_normalized)).all()
 
 
+def vehicles_by_fleet_no(session: Session, query: str) -> list[Vehicle]:
+    """Fleet trucks whose number matches ignoring case and spaces (task 4.2b).
+
+    Fleet numbers are unique only per company (D-005), so "HT-12" can return
+    several trucks. Compared in Python (see src/api/matching.py).
+    """
+    key = fleet_no_key(query)
+    fleet = session.scalars(
+        select(Vehicle).where(Vehicle.identifier_type == "fleet_no").order_by(Vehicle.id)
+    ).all()
+    return [vehicle for vehicle in fleet if fleet_no_key(vehicle.identifier) == key]
+
+
 @router.get("/lookup", response_model=LookupResult)
 def lookup(
     session: SessionDep,
     today: TodayDep,
-    q: Annotated[str, Query(min_length=1, description="Plate (any spacing/case) or 8-digit phone")],
+    q: Annotated[str, Query(min_length=1, description="Plate or fleet number (any spacing/case) or 8-digit phone")],
 ) -> LookupResult:
-    """Find vehicles by plate or driver phone.
+    """Find vehicles by plate, fleet number or driver phone.
 
     If ``q`` is a valid phone (8 digits, +976 optional) it is searched as a
-    phone, otherwise as a plate. Plates never consist of digits only, so the
-    two cannot be confused. No match -> 200 with an empty list (the app then
-    opens the new-vehicle form), not 404: an empty search is a normal result.
+    phone. Otherwise it is searched as a plate AND as a fleet number (the
+    oil changer does not have to say which): plate matches come first.
+    match_type is "fleet_no" only when every match is a fleet number; with no
+    match it stays "plate". Plates never consist of digits only, so a plate
+    and a phone cannot be confused. No match -> 200 with an empty list (the
+    app then opens the new-vehicle form), not 404: an empty search is normal.
     """
     try:
         phone = normalize_phone(q)
@@ -127,7 +144,11 @@ def lookup(
             plate = normalize_plate(q)
         except ValueError as exc:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "q is blank") from exc
-        match_type, normalized, vehicles = "plate", plate, vehicles_by_plate(session, plate)
+        by_plate = vehicles_by_plate(session, plate)
+        by_fleet_no = vehicles_by_fleet_no(session, q)
+        vehicles = [*by_plate, *by_fleet_no]
+        match_type = "fleet_no" if by_fleet_no and not by_plate else "plate"
+        normalized = fleet_no_key(q) if match_type == "fleet_no" else plate
 
     return LookupResult(
         query=q,

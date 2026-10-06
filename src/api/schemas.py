@@ -117,7 +117,11 @@ class ServiceCreate(BaseModel):
 # --------------------------------------------------------------------------
 
 class DestinationOut(BaseModel):
-    """Short form of a destinations row, shown inside a service record."""
+    """Short form of a destinations row: inside a service record, and the
+    items of GET /destinations (the form's destination picker).
+
+    name_mn (Mongolian label, D-040) is added after migration 002.
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -184,12 +188,16 @@ class VehicleCard(BaseModel):
 
 
 class LookupResult(BaseModel):
-    """GET /vehicles/lookup: all vehicles matching a plate or phone."""
+    """GET /vehicles/lookup: all vehicles matching a plate, fleet number or phone."""
 
     query: str
-    match_type: Literal["plate", "phone"]
-    normalized: str = Field(description="What was searched: normalized plate or 8-digit phone")
-    vehicles: list[VehicleCard] = Field(description="Empty list = unknown plate/phone -> new vehicle form")
+    match_type: Literal["plate", "fleet_no", "phone"] = Field(
+        description="fleet_no only if every match is a fleet number; no match -> plate"
+    )
+    normalized: str = Field(
+        description="What was searched: normalized plate, fleet-number key (lower case) or 8-digit phone"
+    )
+    vehicles: list[VehicleCard] = Field(description="Empty list = unknown -> new vehicle form")
 
 
 class SegmentCounts(BaseModel):

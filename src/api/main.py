@@ -3,7 +3,7 @@
 Run locally:   uvicorn src.api.main:app --reload
 In Docker:     see Dockerfile / docker-compose.yml (service "api")
 
-Data endpoints: task 4.2. ML/CV model loading (task 4.3) is added later;
+Data endpoints: tasks 4.2 + 4.2b. ML/CV model loading (task 4.3) is added later;
 this file only wires settings, the database engine and the routers.
 """
 
@@ -15,7 +15,7 @@ from sqlalchemy import Engine
 
 from src.api.config import load_settings
 from src.api.db import create_db_engine
-from src.api.routers import health, services, stats, vehicles
+from src.api.routers import destinations, health, services, stats, vehicles
 
 API_VERSION = "0.1.0"
 
@@ -39,6 +39,7 @@ def create_app(engine: Engine | None = None) -> FastAPI:
     app.include_router(vehicles.router)
     app.include_router(services.router)
     app.include_router(stats.router)
+    app.include_router(destinations.router)
     return app
 
 

@@ -1,4 +1,5 @@
-"""Data endpoint tests (task 4.2): lookup, POST /services, vehicle card, segments.
+"""Data endpoint tests (tasks 4.2 + 4.2b): lookup, POST /services, vehicle card,
+segments, destinations.
 
 Part 1 needs no database (phone normalization, request rules, usual liters)
 and runs in CI.
@@ -33,6 +34,7 @@ from src.api.clock import get_today
 from src.api.config import to_sqlalchemy_url
 from src.api.db import create_db_engine, database_is_up, get_session
 from src.api.main import create_app
+from src.api.matching import clean_company_name, company_key, fleet_no_key
 from src.api.routers.vehicles import usual_liters
 from src.api.schemas import ServiceCreate, normalize_phone
 from tests.test_schema import database_url
@@ -135,6 +137,32 @@ def test_engine_hours_alone_is_enough() -> None:
 def test_usual_liters(liters: list[Decimal], expected: Decimal | None) -> None:
     """Input is newest first, like the card's history."""
     assert usual_liters(liters) == expected
+
+
+@pytest.mark.parametrize(
+    "typed",
+    ["Говь Тээвэр ХХК", "говь тээвэр ххк", "  ГОВЬ   тээвэр  ХХК ", "Говь\tТээвэр ХХК"],
+)
+def test_company_key_ignores_case_and_extra_spaces(typed: str) -> None:
+    assert company_key(typed) == company_key("Говь Тээвэр ХХК")
+
+
+def test_company_key_keeps_words_apart() -> None:
+    """Only EXTRA spaces are ignored: removing a space is a different name."""
+    assert company_key("ГовьТээвэр ХХК") != company_key("Говь Тээвэр ХХК")
+
+
+def test_clean_company_name_keeps_case() -> None:
+    assert clean_company_name("  Шинэ   Тээвэр  ХХК ") == "Шинэ Тээвэр ХХК"
+
+
+@pytest.mark.parametrize("typed", ["HT-12", "ht-12", " Ht - 12 ", "HT -12"])
+def test_fleet_no_key_ignores_case_and_spaces(typed: str) -> None:
+    assert fleet_no_key(typed) == "ht-12"
+
+
+def test_fleet_no_key_keeps_dashes() -> None:
+    assert fleet_no_key("HT12") != fleet_no_key("HT-12")
 
 
 # ==========================================================================
@@ -408,3 +436,135 @@ def test_new_fleet_number_has_no_plate(client: TestClient) -> None:
     created = client.post("/services", json=body).json()
     card = client.get(f"/vehicles/{created['vehicle_id']}").json()
     assert (card["identifier_type"], card["plate_normalized"], card["company"]["id"]) == ("fleet_no", None, 4)
+
+
+# ==========================================================================
+# Task 4.2b
+# ==========================================================================
+
+# ---------------- GET /destinations ----------------
+
+def test_destinations_list(client: TestClient) -> None:
+    """The 7 rows seeded by migration 001, in seeded order, short form only."""
+    response = client.get("/destinations")
+    assert response.status_code == 200
+    destinations = response.json()
+    assert len(destinations) == 7
+    assert set(destinations[0]) == {"id", "name", "route_category"}
+    assert destinations[0] == {"id": destinations[0]["id"], "name": "Ulaanbaatar city (local work)", "route_category": "ub_city"}
+    assert destinations[-1]["route_category"] == "mixed"  # "Other / several / unknown" last
+    assert [d["id"] for d in destinations] == sorted(d["id"] for d in destinations)
+
+
+def test_destination_ids_work_in_post_services(client: TestClient) -> None:
+    """An id from the picker is accepted by POST /services, route taken from it (D-039)."""
+    beijing = next(d for d in client.get("/destinations").json() if d["name"] == "Beijing")
+    body = service_body(destination_raw=None, route=None, destination_id=beijing["id"])
+    service = client.post("/services", json=body).json()["service"]
+    assert service["route"] == beijing["route_category"] == "mn_china"
+
+
+# ---------------- lookup by fleet number ----------------
+
+@pytest.mark.parametrize("q", ["HT-12", "ht-12", " Ht - 12 "])
+def test_lookup_fleet_number(client: TestClient, q: str) -> None:
+    result = client.get("/vehicles/lookup", params={"q": q}).json()
+    assert (result["match_type"], result["normalized"]) == ("fleet_no", "ht-12")
+    assert [v["id"] for v in result["vehicles"]] == [5]
+    assert result["vehicles"][0]["identifier_type"] == "fleet_no"
+
+
+def test_lookup_same_fleet_number_in_two_companies(client: TestClient) -> None:
+    """Fleet numbers are unique only per company (D-005): both trucks are returned."""
+    body = service_body(identifier_type="fleet_no", identifier="HT-12", company_name="Говь Тээвэр ХХК")
+    other = client.post("/services", json=body).json()
+    assert other["vehicle_created"] is True
+    result = client.get("/vehicles/lookup", params={"q": "ht-12"}).json()
+    assert [v["id"] for v in result["vehicles"]] == [5, other["vehicle_id"]]
+
+
+def test_lookup_plate_unchanged_by_fleet_search(client: TestClient) -> None:
+    result = client.get("/vehicles/lookup", params={"q": "1234 УБА"}).json()
+    assert (result["match_type"], [v["id"] for v in result["vehicles"]]) == ("plate", [1])
+
+
+def test_lookup_unknown_identifier_is_plate_type(client: TestClient) -> None:
+    result = client.get("/vehicles/lookup", params={"q": "HT-77"}).json()
+    assert (result["match_type"], result["vehicles"]) == ("plate", [])
+
+
+# ---------------- company name ignores case + extra spaces ----------------
+
+def test_new_plate_company_matched_ignoring_case_and_spaces(client: TestClient, pg: Connection) -> None:
+    companies_before = count(pg, "companies")
+    created = client.post("/services", json=service_body(company_name="  говь   ТЭЭВЭР ххк ")).json()
+    assert (created["vehicle_created"], created["company_created"]) == (True, False)
+    assert client.get(f"/vehicles/{created['vehicle_id']}").json()["company"]["id"] == 1
+    assert count(pg, "companies") == companies_before
+
+
+def test_existing_fleet_number_found_with_sloppy_company_name(client: TestClient) -> None:
+    body = service_body(
+        identifier_type="fleet_no", identifier="HT-12", company_name="өмнөд  уурхай ххк",
+        odometer_km=None, engine_hours=13400.0, liters=90.0,
+    )
+    created = client.post("/services", json=body).json()
+    assert (created["vehicle_id"], created["vehicle_created"], created["company_created"]) == (5, False, False)
+
+
+def test_new_company_stored_with_clean_spacing(client: TestClient) -> None:
+    created = client.post("/services", json=service_body(company_name="  Шинэ   Тээвэр  ХХК ")).json()
+    assert created["company_created"] is True
+    assert client.get(f"/vehicles/{created['vehicle_id']}").json()["company"]["name"] == "Шинэ Тээвэр ХХК"
+
+
+# ---------------- same vehicle + same date -> 409 unless force ----------------
+
+def test_same_vehicle_same_date_is_409_and_saves_nothing(client: TestClient, pg: Connection) -> None:
+    """Vehicle 1 already has service 3 on 2026-08-10 (sample data)."""
+    before = count(pg, "service_records")
+    body = service_body(identifier="1234 УБА", company_name=None, service_date="2026-08-10")
+    response = client.post("/services", json=body)
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert (detail["code"], detail["existing_service_id"]) == ("duplicate_service", 3)
+    assert "force=true" in detail["message"]
+    assert count(pg, "service_records") == before
+
+
+def test_same_date_twice_today_second_is_409(client: TestClient) -> None:
+    """The real case: the form is sent twice (default date = today)."""
+    body = service_body(identifier="1234 УБА", company_name=None)
+    first = client.post("/services", json=body)
+    second = client.post("/services", json=body)
+    assert (first.status_code, second.status_code) == (201, 409)
+    assert second.json()["detail"]["existing_service_id"] == first.json()["service"]["id"]
+
+
+def test_same_date_with_force_is_saved(client: TestClient) -> None:
+    body = service_body(identifier="1234 УБА", company_name=None, service_date="2026-08-10")
+    response = client.post("/services", params={"force": "true"}, json=body)
+    assert response.status_code == 201
+    card = client.get("/vehicles/1").json()
+    assert [s["service_date"] for s in card["history"]].count("2026-08-10") == 2
+
+
+def test_force_false_still_checks(client: TestClient) -> None:
+    body = service_body(identifier="1234 УБА", company_name=None, service_date="2026-08-10")
+    assert client.post("/services", params={"force": "false"}, json=body).status_code == 409
+
+
+def test_same_vehicle_other_date_not_a_duplicate(client: TestClient) -> None:
+    body = service_body(identifier="1234 УБА", company_name=None, service_date="2026-08-11")
+    assert client.post("/services", json=body).status_code == 201
+
+
+def test_fleet_truck_same_date_is_409(client: TestClient) -> None:
+    """Vehicle 5 (HT-12) already has service 9 on 2026-08-25."""
+    body = service_body(
+        identifier_type="fleet_no", identifier="HT-12", company_name="Өмнөд Уурхай ХХК",
+        odometer_km=None, engine_hours=13400.0, service_date="2026-08-25",
+    )
+    response = client.post("/services", json=body)
+    assert response.status_code == 409
+    assert response.json()["detail"]["existing_service_id"] == 9
