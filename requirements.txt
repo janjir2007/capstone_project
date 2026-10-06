@@ -23,6 +23,10 @@ ultralytics==8.4.170  # YOLO11n / YOLO26n training (AGPL-3.0, see RISK-09)
 torch==2.14.1  # MPS check; installed by ultralytics anyway. CPU-only wheel for CI in task 6.2
 matplotlib==3.11.2  # charts in docs/figures/
 
+# --- CV plate recognition (src/cv/ocr_easyocr.py, char_segment.py, char_cnn.py, task 3.3)
+easyocr==1.7.2  # approach A, Mongolian "mn" -> cyrillic_g2 model (has Ө, Ү); weights ~98 MB download on first use
+opencv-python==5.0.0.93  # cv2: character segmentation; same version ultralytics already installs
+
 # --- API (src/api/, task 4.1). The API Docker image installs requirements-api.txt,
 # a subset of this file with the SAME pins (checked by tests/test_api.py).
 fastapi==0.142.2
