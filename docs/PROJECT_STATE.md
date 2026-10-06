@@ -1,10 +1,10 @@
 # PROJECT_STATE — Capstone "Oil Change Predictor" (Geo-Expert LLC)
 
-- **Version:** 0.7
-- **Last updated:** 2026-10-01
+- **Version:** 1.0
+- **Last updated:** 2026-10-06
 - **Deadline (defense day):** 2026-10-20 (20 days from 2026-09-30)
-- **Current phase:** P1 Data foundation + P3 labeling (parallel)
-- **Overall health:** 🟡 Yellow — instructor approved synthetic data; 200 truck photos + real Excel records available. Main risk: only 20 days for 1 person.
+- **Current phase:** P3 done (detector) → P1 synthetic data + P4 backend URGENT
+- **Overall health:** 🟠 Orange — detector finished and strong, but synthetic data, ML model and backend have NOT started; ~3–4 days behind plan with 15 days left.
 
 ---
 
@@ -87,9 +87,10 @@ Status: ✅ covered by plan · 🟡 covered but at risk · 🔴 gap — action n
 | 0.5 | Add CLAUDE.md + .claude/settings.json to repo root, commit | Ari | ✅ DONE |
 | 0.6 | Local Python 3.11 venv; fix settings.json (.env.example readable); fill .env.example DB vars | Claude Code | TODO |
 | 1.1 | PostgreSQL schema + data dictionary | Data Eng | ✅ DONE (26 tests pass; DB tests skip in CI until 6.2) |
+| 1.1b | Schema migration: destination on service record + destinations reference table (name, route category, one-way km, round-trip days, source) | Data Eng | TODO (before 4.1) |
 | 1.4a | Excel profiling script (Ari runs it; only summaries shared) | Data Eng | ✅ DONE — finding: Excel = vehicle registry (338 trucks, VOLVO 62%, built 2004–2013, odometer 99.4% empty), NOT service history |
 | 1.4b | Service dates for repeat trucks (Messenger photos have no EXIF/filename date) → Ari dates repeat-truck photos manually from the chat | Ari | ⏸ by ~Oct 8, after labeling |
-| 1.2 | Synthetic rules: 1.2a web research with sources + Excel profile → Ari confirms | Data Eng + Ari | ⏸ PAUSED (restart by Oct 3) |
+| 1.2 | Synthetic rules (1.2a): research + Ari inputs → docs/synthetic_rules.md → Ari marks ✓/✗ | Data Eng + Ari | ▶ IN PROGRESS (started Oct 5, Claude Code) |
 | 1.3 | Synthetic generator with noise injection | Data Eng | TODO |
 | 1.4 | Real record intake template + cleaning script | Data Eng | TODO |
 | 1.5 | External API evaluation (1 source) | Data Eng | TODO |
@@ -98,10 +99,10 @@ Status: ✅ covered by plan · 🟡 covered but at risk · 🔴 gap — action n
 | 2.3 | Baseline + 3 models + tuning | ML Eng | TODO |
 | 2.4 | Evaluation (regression + derived classification) + SHAP | ML Eng | TODO |
 | 3.1 | Labeling setup (Label Studio local, box + plate_type + plate_text) | CV Eng | ✅ DONE (export tested) |
-| 3.1c | Pre-label with pretrained detector (oim YOLOv9-t, thr 0.6) → import as predictions | CV Eng | 🟡 code done; Ari runs import |
-| 3.1d | Ari checks boxes + types Cyrillic plate text for 192 photos; export JSON after each session | Ari | TODO — target Oct 4 |
-| 3.2 | Vehicle-grouped split (~70/15/15) + YOLO fine-tune; evaluate pretrained oim on same test split as baseline | CV Eng | TODO |
-| 3.3 | Recognition: pretrained OCR vs custom CNN | CV Eng | TODO |
+| 3.1c | Pre-label with pretrained detector (oim YOLOv9-t, thr 0.6) → import as predictions | CV Eng | ✅ DONE |
+| 3.1d | Ari checks boxes + types Cyrillic plate text | Ari | ✅ DONE — 183 labeled, 9 skipped, 135 trucks, 35 repeat trucks (83 photos), all 183 match 4 digits + 3 Cyrillic |
+| 3.2 | Vehicle-grouped split + YOLO fine-tune + eval vs pretrained oim | CV Eng | ✅ DONE — test (27 img / 20 trucks): yolo26n mAP50 0.991, P 0.93, R 1.00, 21.5 ms MPS; oim P 0.73 (10 false boxes) |
+| 3.3 | Recognition: pretrained OCR vs custom CNN — REDUCED scope (cut list #1): small CNN on character crops, same split.json | CV Eng | TODO — after 1.3 |
 | 3.4 | Normalization + confidence fallback | CV Eng | TODO |
 | 4.1 | FastAPI skeleton + DB + migrations | Backend Eng | TODO |
 | 4.2 | Endpoints per contract (§8) | Backend Eng | TODO |
@@ -152,6 +153,15 @@ Status: ✅ covered by plan · 🟡 covered but at risk · 🔴 gap — action n
 | D-025 | 2026-10-01 | Pre-labeling detector = open-image-models YOLOv9-t-640 (ONNX, MIT code; weights license unstated → internal labeling aid only). Import threshold 0.6. Plate text NOT pre-filled (keeps OCR ground truth unbiased) | Pilot: fewer false boxes than hf26n; 187/192 photos got boxes | APPROVED |
 | D-026 | 2026-10-01 | Labeling rules: box every real readable plate (incl. background trucks); delete non-plate boxes; Cyrillic, no spaces; `?` for unreadable char; no plate → Skip | Detector must learn all plates are plates | APPROVED |
 | D-027 | 2026-10-01 | Photos taken from now on go to data/raw/photos_new/ → second, unseen test set | Most honest evaluation | APPROVED |
+| D-028 | 2026-10-05 | Production plate detector = fine-tuned yolo26n (best test mAP50/P/R, fastest on MPS). yolo11n kept as comparison only. No retraining unless data changes (yolo26n took ~3 h) | Test results 3.2 | APPROVED (PM) |
+| D-029 | 2026-10-05 | Schedule recovery: order = 1.2a+1.3 synthetic data → 2.x ML model → 4.1–4.4 backend → 3.3/3.4 OCR (reduced) → Streamlit UI → deploy. Ari's parallel work: date repeat-truck photos (1.4b), keep collecting photos_new | 15 days left, data/ML/backend not started | APPROVED by Ari |
+| D-030 | 2026-10-05 | Interval rules: recommended = change before 15,000 km (low fuel quality in MN) → reminder target. ACTUAL driver behavior (CONFIRMED by Ari) = 15,000–20,000 km → generator models actual. Gap = business argument for reminders | Ari's domain knowledge | APPROVED |
+| D-031 | 2026-10-05 | Customer return behavior (Ari ESTIMATE): ~50% on time, ~40% late, ~10% never return. Trips/month unknown → estimated from route research, UNCONFIRMED parameter; calibrate later with 35 repeat trucks' real dates | Ari's estimate | APPROVED as parameters |
+| D-032 | 2026-10-05 | Route research PDF (docs/research/routes_ub.pdf, AI-generated): use only Medium/High routes (Zamyn-Uud–Erenhot, Altanbulag–Kyakhta, Beijing); citation markers not real links → find real sources; Chita-via-Altai route is wrong; UB city + mine site researched separately. Not cited directly on slides | PM review | APPROVED |
+| D-033 | 2026-10-05 | Destination ("where are you heading next") is asked at every service and stored on the service record; mapped to route category + round-trip distance. Core input of generator and model. Collected from now on (real data) | Geo-Expert has no usable service history; destination is real, cheap to collect | APPROVED by Ari |
+| D-034 | 2026-10-05 | Vehicle model removed from generator rules and model features (field stays in DB + vehicle card). Keep one coarse flag: road truck vs mine haul truck (engine hours, D-006). Oil grade: open question | Interval 15k–20k km regardless of model; 62% VOLVO → little signal; saves time | APPROVED by Ari (scope §1 updated) |
+| D-035 | 2026-10-05 | Formula = Baseline B1: days = interval_km ÷ route km/day, where km/day = round-trip km ÷ round-trip days incl. waiting. ML must beat B0 (fixed interval) and B1. ML adds vehicle's own history (km/day from odometer, past intervals, lateness), season, return behavior. One global model; history follows the VEHICLE (D-004), phone = message recipient. First visit → falls back to B1 | Keep ML meaningful and comparison fair | APPROVED by Ari |
+| D-036 | 2026-10-05 | Project purpose = reminder timing for customer retention. Business metric = reminder hit rate (% of reminders inside useful window before actual due date); RMSE/MAE kept for course. Late reminder worse than early → send with safety buffer before predicted date. Window size TBD (Ari) | Ari's business goal | APPROVED by Ari (window TBD) |
 
 ---
 
@@ -161,11 +171,14 @@ Status: ✅ covered by plan · 🟡 covered but at risk · 🔴 gap — action n
 2. Do the photo plates match the Excel records? ("maybe" — check during 1.4a / 3.1)
 3. How many real past service records exist, and in what form?
 4. How many truck photos can Ari collect per week? Any fleet-number-only trucks available to photograph?
-5. Real service interval rules per oil grade / route / vehicle type (Ari's domain knowledge) — needed for P1.2.
+5. ~~Interval rules~~ → D-030. Now: does oil grade change the interval? (else drop, D-034)
 6. Hosting budget: free tiers only, or small paid? (Default now: free tiers, D-013)
 7. Which Cyrillic letters actually appear on Mongolian plates (to be verified from real photos, not assumed).
 8. Status thresholds for D-007.
 9. Frontend: keep Next.js, or accept Streamlit/Gradio if behind schedule?
+10. Destination table: round-trip days incl. waiting (Ari) + one-way km from real map source
+11. Reminder window: days before due date (D-036)
+12. Do repeat-truck photos show odometer, or dates only?
 
 ---
 
@@ -181,6 +194,7 @@ Status: ✅ covered by plan · 🟡 covered but at risk · 🔴 gap — action n
 | RISK-06 | Personal data (driver names, phones) leaked in repo/demo | Med | High | Never commit real data; seed demo DB with synthetic people; `.gitignore` data folders |
 | RISK-07 | Live demo fails (network, cloud cold start) | Med | High | Warm up URL before defense; backup video; demo on known-good plate photos |
 | RISK-09 | Licensing: Ultralytics YOLO is AGPL-3.0; pre-label weights license unstated. Fine for capstone; Geo-Expert production use may need Ultralytics commercial license or a permissive alternative | Med | Med | Decide after defense; document in model card |
+| RISK-11 | Detector baseline comparison biased: GT boxes started as oim pre-labels → oim mAP50-95/IoU inflated (0.97/0.997). Compare on precision/false boxes, state on slide | — | Low | Stated in docs/cv_detection_results.md |
 | RISK-10 | Real prediction test set is tiny (repeat trucks only, dates entered manually) | High | Med | Report honestly; add photos_new over time; synthetic holdout as main metric |
 | RISK-08 | Plate letters misread (Cyrillic/Latin look-alikes) | High | Med | Normalization map + format regex + confirmation step |
 
