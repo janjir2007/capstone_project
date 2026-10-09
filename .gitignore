@@ -16,6 +16,20 @@ models/**
 *.onnx
 *.pkl
 *.joblib
+*.safetensors
+
+# --- Ultralytics training output (prediction JPGs, results.csv, args.yaml with local paths)
+runs/
+
+# --- Label exports and archives (may hold real plate text / photos)
+# *.json and *.txt are NOT ignored globally (requirements.txt, config JSON stay tracked);
+# only inside export folders. data/** and runs/ above already cover those two folders.
+exports/**/*.json
+exports/**/*.txt
+*.zip
+
+# --- Video (truck clips show real plates)
+*.mp4
 
 # --- Secrets
 .env
