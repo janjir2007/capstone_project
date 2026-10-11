@@ -1,0 +1,120 @@
+# =====================================================================
+# Synthetic service-history generator — parameters (Task 1.3)
+# Read by: src/data/generator.py     Rules: docs/synthetic_rules.md
+#
+# Every parameter carries a `tag`:
+#   "[SOURCE: ...]"  checkable source (decision in PROJECT_STATE, OSRM link)
+#   "[ESTIMATE]"     placeholder so the generator can run; NOT a fact.
+#                    Ari marks ✓/✗. Do NOT tune these to match real data
+#                    yet (task 1.3 brief) — the report only shows the gap.
+# Unknown numbers are RANGES (min/max): Ari has no exact per-destination values.
+# The generator refuses to run if a parameter has no tag.
+# =====================================================================
+
+seed: 42  # fixed random seed -> same output every run
+
+output_dir: data/synthetic          # git-ignored (data/**)
+report_path: docs/synthetic_report.md
+figures_dir: docs/figures
+
+# Real days-between-visits, made by Ari from real records (private, git-ignored).
+# If the file exists the report compares synthetic vs real. Needs a column
+# `days_between_visits`.
+real_intervals_path: data/interim/real_intervals.csv
+
+fleet:
+  n_vehicles: {value: 500, tag: "[ESTIMATE]", note: "dataset size, not a business fact"}
+  # Observation window: services happen between these dates.
+  start_date: {value: "2024-01-01", tag: "[ESTIMATE]"}
+  end_date: {value: "2026-09-30", tag: "[ESTIMATE]", note: "records after this date are not observed (censored)"}
+  # First service of each vehicle: uniform inside the first N days of the window.
+  first_service_spread_days: {value: 365, tag: "[ESTIMATE]"}
+  start_odometer_km: {min: 50000, max: 600000, tag: "[ESTIMATE]", note: "odometer at first observed service"}
+
+# Destinations: docs/synthetic_rules.md §1 = migration 001 seed rows with km.
+# ub_city, mine_site and mixed are NOT generated: no km (ub_city, mixed) or no
+# named site yet (mine_site, A2). See handoff report.
+destinations:
+  - {name: "Zamyn-Uud (MN–CN border)", route_category: mn_china, one_way_km: 656,
+     tag: "[SOURCE: OSRM https://router.project-osrm.org/route/v1/driving/106.9177016,47.9184676;111.9049227,43.7180017?overview=false]"}
+  - {name: "Erenhot (CN side of border)", route_category: mn_china, one_way_km: 668,
+     tag: "[SOURCE: OSRM https://router.project-osrm.org/route/v1/driving/106.9177016,47.9184676;111.9435190,43.6407813?overview=false]"}
+  - {name: "Beijing", route_category: mn_china, one_way_km: 1330,
+     tag: "[SOURCE: OSRM https://router.project-osrm.org/route/v1/driving/106.9177016,47.9184676;116.3912972,39.9057136?overview=false]"}
+  - {name: "Altanbulag (MN–RU border)", route_category: mn_russia, one_way_km: 345,
+     tag: "[SOURCE: OSRM https://router.project-osrm.org/route/v1/driving/106.9177016,47.9184676;106.4970360,50.3141390?overview=false]"}
+  - {name: "Kyakhta (RU side of border)", route_category: mn_russia, one_way_km: 351,
+     tag: "[SOURCE: OSRM https://router.project-osrm.org/route/v1/driving/106.9177016,47.9184676;106.4491500,50.3531760?overview=false]"}
+
+# Equal share for every destination above (task 1.3 brief, A3 unanswered).
+destination_mix: {value: equal, tag: "[ESTIMATE]"}
+
+# Trip time. Driving days = round_trip_km ÷ (speed × hours); round trip = 2 × one-way.
+trip:
+  speed_kmh: {min: 90, max: 110, tag: "[ESTIMATE]", note: "whole-day average while driving; drawn once per vehicle"}
+  driving_hours_per_day: {min: 8, max: 11, tag: "[ESTIMATE]", note: "drawn once per vehicle"}
+  waiting_days_per_trip: {min: 0, max: 5, tag: "[ESTIMATE]", note: "border, loading; drawn per trip, uniform"}
+  round_trip_factor: {value: 2, tag: "[ESTIMATE]", note: "same road back (synthetic_rules §1)"}
+
+# Oil change interval actually driven (D-030).
+interval:
+  min_km: {value: 15000, tag: "[SOURCE: D-030]"}
+  max_km: {value: 20000, tag: "[SOURCE: D-030]"}
+  shape: {value: uniform, tag: "[ESTIMATE]"}
+
+# Return behavior after each service (D-031), drawn per visit.
+return_behavior:
+  on_time_share: {value: 0.50, tag: "[SOURCE: D-031, Ari estimate]"}
+  late_share: {value: 0.40, tag: "[SOURCE: D-031, Ari estimate]"}
+  never_share: {value: 0.10, tag: "[SOURCE: D-031, Ari estimate]"}
+
+# Lateness (synthetic_rules §4, D-037).
+lateness:
+  # Late = measured from the day the truck passes interval.max_km.
+  extra_days_mean: {value: 10, tag: "[ESTIMATE]", note: "exponential"}
+  max_days: {value: 60, tag: "[ESTIMATE]", note: "later than this -> never returns"}
+
+# Variation the ML can learn (synthetic_rules §6).
+variation:
+  # Master switch for the D-038 honesty check. false -> V1, V2, V5, V6 off:
+  # every vehicle gets the middle speed/hours, no per-trip noise, the fleet
+  # lateness share, and never changes destination.
+  enabled: {value: true, tag: "[SOURCE: D-038]"}
+  trip_noise_sd: {value: 0.20, tag: "[ESTIMATE]", note: "V2: driving days × Normal(1, sd)"}
+  trip_noise_clip: {min: 0.5, max: 2.0, tag: "[ESTIMATE]", note: "V2"}
+  # V5: per-vehicle late chance ~ Beta(a, b), mean a/(a+b) = late_share.
+  lateness_beta_concentration: {value: 5, tag: "[ESTIMATE]", note: "a + b; smaller = more spread between customers"}
+  same_destination_prob: {value: 0.70, tag: "[ESTIMATE]", note: "V6; V7 home destination = first trip"}
+  # V3: km/day factor by month (winter slower). Driving days ÷ factor.
+  season_factor:
+    tag: "[ESTIMATE]"
+    winter: 0.85   # Dec–Feb
+    spring: 1.0    # Mar–May
+    summer: 1.05   # Jun–Aug
+    autumn: 1.0    # Sep–Nov
+  # V4 holiday stops (Tsagaan Sar, Naadam): A11 unanswered -> no effect.
+
+# Noise for the "dirty" file (synthetic_rules §7). Share of service records.
+noise:
+  missing_phone: {value: 0.10, tag: "[ESTIMATE]", note: N1}
+  missing_driver_name: {value: 0.15, tag: "[ESTIMATE]", note: N2}
+  missing_destination: {value: 0.10, tag: "[ESTIMATE]", note: "N3: destination + route empty"}
+  missing_odometer: {value: 0.03, tag: "[ESTIMATE]", note: N4}
+  destination_variant: {value: 0.20, tag: "[ESTIMATE]", note: "N5: other spelling"}
+  plate_latin_lookalike: {value: 0.05, tag: "[ESTIMATE]", note: "N6: one Cyrillic letter -> Latin look-alike"}
+  plate_spacing: {value: 0.05, tag: "[ESTIMATE]", note: N7}
+  odometer_digit_error: {value: 0.01, tag: "[ESTIMATE]", note: "N8: ×10 or ÷10"}
+  odometer_lower_than_last: {value: 0.01, tag: "[ESTIMATE]", note: N9}
+  phone_format: {value: 0.10, tag: "[ESTIMATE]", note: "N10: +976 / spaces / dashes"}
+  duplicate_record: {value: 0.02, tag: "[ESTIMATE]", note: N11}
+  late_entry: {value: 0.05, tag: "[ESTIMATE]", note: "N12: created_at 1–7 days later"}
+  # N13 (haul truck engine hours) not used: road trucks only (D-037 fallback).
+
+# Other spellings for N5. Mongolian names: needs Ari check.
+destination_variants:
+  tag: "[ESTIMATE]"
+  "Zamyn-Uud (MN–CN border)": ["Замын-Үүд", "Замын Үүд", "Zamyn Uud", "zamiin uud"]
+  "Erenhot (CN side of border)": ["Эрээн", "Erenhot", "ereen"]
+  "Beijing": ["Бээжин", "beijing", "Beejin"]
+  "Altanbulag (MN–RU border)": ["Алтанбулаг", "Altanbulag", "altanbulag"]
+  "Kyakhta (RU side of border)": ["Хиагт", "Kyakhta", "Khiagt"]
