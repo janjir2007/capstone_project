@@ -25,18 +25,18 @@ Geo-Expert's customers. Same config + data → same report.
 ## 2. Baselines
 
 - **B0** = median train interval = **58 days** for every truck.
-- **B1** = 15,000 km (D-030 recommended interval) ÷ route km/day. km/day = round-trip km ÷
+- **B1** = 17,500 km (D-049) ÷ route km/day. km/day = round-trip km ÷
   (driving days + waiting) with speed, hours and waiting at the middle of their
   [ESTIMATE] ranges (configs/generator.yaml). 17 of 202 test visits
   have no destination → B0 fallback.
 
-| Destination | Route | One-way km | km/day (all ranges at middle) | B1 days at 15,000 km | Test: actual median days |
+| Destination | Route | One-way km | km/day (all ranges at middle) | B1 days at 17,500 km | Test: actual median days |
 |---|---|---|---|---|---|
-| Zamyn-Uud (MN–CN border) | mn_china | 656 | 338 | 44 | 52 |
-| Erenhot (CN side of border) | mn_china | 668 | 342 | 44 | 61 |
-| Beijing | mn_china | 1,330 | 502 | 30 | 54 |
-| Altanbulag (MN–RU border) | mn_russia | 345 | 214 | 70 | 64 |
-| Kyakhta (RU side of border) | mn_russia | 351 | 217 | 69 | 68 |
+| Zamyn-Uud (MN–CN border) | mn_china | 656 | 338 | 52 | 52 |
+| Erenhot (CN side of border) | mn_china | 668 | 342 | 51 | 61 |
+| Beijing | mn_china | 1,330 | 502 | 35 | 54 |
+| Altanbulag (MN–RU border) | mn_russia | 345 | 214 | 82 | 64 |
+| Kyakhta (RU side of border) | mn_russia | 351 | 217 | 81 | 68 |
 
 ## 3. Results on the test split (202 visits, 46 trucks)
 
@@ -45,15 +45,15 @@ Geo-Expert's customers. Same config + data → same report.
 | Baseline | RMSE (days) | MAE (days) | R² | Reminder hit rate | Too early | Too late |
 |---|---|---|---|---|---|---|
 | B0 (median) | 15.7 | 12.3 | -0.00 | 9.4% | 34.7% | 55.9% |
-| B1 (15,000 km) | 22.5 | 17.8 | -1.08 | 8.4% | 56.9% | 34.7% |
-| B1 @ 17,500 km (sensitivity) | 20.9 | 16.8 | -0.78 | 5.4% | 46.0% | 48.5% |
+| B1 (17,500 km) | 20.9 | 16.8 | -0.78 | 5.4% | 46.0% | 48.5% |
+| B1 @ 15,000 km (sensitivity) | 22.5 | 17.8 | -1.08 | 8.4% | 56.9% | 34.7% |
 
 Reminder: sent on the predicted day − 0 buffer days. **Hit** =
 it arrives 3–7 days before the actual visit (D-036; window [ESTIMATE],
 Ari to confirm). **Too late** is the worse miss (truck may already be overdue).
 
-The `B1 @ … km` rows are a sensitivity check only (middle of the actual 15k–20k km,
-D-030), not the official B1, and were not chosen by looking at the test scores.
+The `B1 @ … km` rows are a sensitivity check only (fixed in configs/ml.yaml from D-030 /
+D-049), not the official B1, and were not chosen by looking at the test scores.
 
 ## 4. Reading
 
@@ -63,9 +63,8 @@ D-030), not the official B1, and were not chosen by looking at the test scores.
   destination (e.g. Beijing vs the Russian border), but the actual medians barely do.
   A truck's stated destination fixes only its next trip; it often changes route
   before the next oil change (V6), and waiting days matter as much as distance
-  (D-047, docs/synthetic_report.md §3). B1 at 15,000 km also predicts the
-  *recommended* day, while trucks come at 15k–20k km and ~40 % late (D-030, D-031),
-  so it is too early on average. This is a finding about the SYNTHETIC rules; real
+  (D-047, docs/synthetic_report.md §3). B1 also has no notion of lateness:
+  ~40 % of visits come after 20,000 km (D-031). This is a finding about the SYNTHETIC rules; real
   routes may behave differently.
 - Test has 202 visits: differences of about 1 day MAE or a few % hit rate
   are within noise. Only 46 of the 100 held-out trucks have a visit

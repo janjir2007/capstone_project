@@ -40,3 +40,8 @@ pyyaml==6.0.3  # reads configs/generator.yaml; already installed by ultralytics
 
 # --- ML baselines + split metrics (src/ml/baselines.py, tasks 2.1–2.3a); 2.3b models use it too
 scikit-learn==1.9.1
+
+# --- ML models (src/ml/train.py, task 2.3b)
+xgboost==3.2.0  # macOS needs the OpenMP runtime: brew install libomp (Linux CI has libgomp)
+scipy==1.17.1  # search distributions (scipy.stats); installed by scikit-learn anyway
+joblib==1.6.0  # saves the model to models/; installed by scikit-learn anyway

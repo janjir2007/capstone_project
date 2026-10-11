@@ -110,7 +110,8 @@ def results_table(results: dict[str, dict[str, float]]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def plot_baselines(results: dict[str, dict[str, float]], window: tuple[int, int], path: Path) -> None:
+def plot_baselines(results: dict[str, dict[str, float]], window: tuple[int, int], path: Path,
+                   outcome_title: str = "Reminder outcome (% of test visits)") -> None:
     """Two panels on separate axes (never a dual axis): MAE, and reminder outcome shares."""
     names = list(results)
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 3.6), facecolor=SURFACE,
@@ -136,7 +137,7 @@ def plot_baselines(results: dict[str, dict[str, float]], window: tuple[int, int]
     ax2.set_yticks(y, names)
     ax2.invert_yaxis()
     ax2.set_xlim(0, 100)
-    ax2.set_title("Reminder outcome (% of test visits)", color=TEXT, fontsize=10, loc="left")
+    ax2.set_title(outcome_title, color=TEXT, fontsize=10, loc="left")
     ax2.legend(frameon=False, fontsize=8, labelcolor=TEXT, ncol=3, loc="upper left", bbox_to_anchor=(0, -0.12))
     for ax in (ax1, ax2):
         ax.set_facecolor(SURFACE)
@@ -200,7 +201,7 @@ Geo-Expert's customers. Same config + data → same report.
 ## 2. Baselines
 
 - **B0** = median train interval = **{b0_value:.0f} days** for every truck.
-- **B1** = {km:,} km (D-030 recommended interval) ÷ route km/day. km/day = round-trip km ÷
+- **B1** = {km:,} km (D-049) ÷ route km/day. km/day = round-trip km ÷
   (driving days + waiting) with speed, hours and waiting at the middle of their
   [ESTIMATE] ranges (configs/generator.yaml). {b1_fallbacks} of {len(test)} test visits
   have no destination → B0 fallback.
@@ -217,8 +218,8 @@ Reminder: sent on the predicted day − {cfg['reminder']['buffer_days']} buffer 
 it arrives {window[0]}–{window[1]} days before the actual visit (D-036; window [ESTIMATE],
 Ari to confirm). **Too late** is the worse miss (truck may already be overdue).
 
-The `B1 @ … km` rows are a sensitivity check only (middle of the actual 15k–20k km,
-D-030), not the official B1, and were not chosen by looking at the test scores.
+The `B1 @ … km` rows are a sensitivity check only (fixed in configs/ml.yaml from D-030 /
+D-049), not the official B1, and were not chosen by looking at the test scores.
 
 ## 4. Reading
 
@@ -228,9 +229,8 @@ D-030), not the official B1, and were not chosen by looking at the test scores.
   destination (e.g. Beijing vs the Russian border), but the actual medians barely do.
   A truck's stated destination fixes only its next trip; it often changes route
   before the next oil change (V6), and waiting days matter as much as distance
-  (D-047, docs/synthetic_report.md §3). B1 at 15,000 km also predicts the
-  *recommended* day, while trucks come at 15k–20k km and ~40 % late (D-030, D-031),
-  so it is too early on average. This is a finding about the SYNTHETIC rules; real
+  (D-047, docs/synthetic_report.md §3). B1 also has no notion of lateness:
+  ~40 % of visits come after 20,000 km (D-031). This is a finding about the SYNTHETIC rules; real
   routes may behave differently.
 - Test has {len(test)} visits: differences of about 1 day MAE or a few % hit rate
   are within noise. Only {test[vc].nunique()} of the {len(split.test_vehicles)} held-out trucks have a visit

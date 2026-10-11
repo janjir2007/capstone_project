@@ -25,8 +25,10 @@ features:
   late_km: 20000               # [SOURCE: D-030 / D-047] more km than this = late interval
 
 baselines:
-  b1_interval_km: 15000        # [SOURCE: D-030] recommended interval (reminder target)
-  b1_sensitivity_km: [17500]   # [ESTIMATE] middle of actual 15k–20k (D-030); shown, not the official B1
+  # D-049: official B1 = expected ACTUAL km (middle of 15k–20k, D-030): we predict when the truck really returns.
+  # B1 km/day checked against the generator in 2.3b: includes waiting, matches its trips within ~3% (ml_results.md §1).
+  b1_interval_km: 17500        # [SOURCE: D-049]
+  b1_sensitivity_km: [15000]   # [SOURCE: D-030] recommended interval; shown, not the official B1
 
 reminder:
   # D-036: hit = reminder lands this many days BEFORE the actual visit. Window TBD by Ari.
@@ -35,3 +37,14 @@ reminder:
 
 report_path: docs/ml_baselines.md
 figures_dir: docs/figures
+
+# Task 2.3b: Ridge / Random Forest / XGBoost. Everything here is tuned on TRAIN only.
+models:
+  cv_folds: 5                  # GroupKFold by truck inside TRAIN (no truck in two folds)
+  n_iter: 25                   # RandomizedSearchCV draws per model
+  # Best model = lowest MAE on out-of-fold (validation) predictions of TRAIN — never test.
+  # Reminder buffer = days early that maximizes the hit rate on the same out-of-fold predictions.
+  buffer_range_days: [0, 30]
+  bootstrap_resamples: 2000    # test MAE difference vs B0, resampling whole trucks
+  model_dir: models            # git-ignored
+  results_path: docs/ml_results.md
