@@ -1,6 +1,6 @@
 # PROJECT_STATE — Capstone "Oil Change Predictor" (Geo-Expert LLC)
 
-- **Version:** 1.9
+- **Version:** 2.0
 - **Last updated:** 2026-10-10
 - **Deadline (defense day):** 2026-10-20 (20 days from 2026-09-30)
 - **Current phase:** P3 done (detector) → P1 synthetic data (redesigned around destination, D-033–D-036) + P4 backend URGENT
@@ -98,8 +98,8 @@ Status: ✅ covered by plan · 🟡 covered but at risk · 🔴 gap — action n
 | 1.4 | Cleaning script (tested on dirty file + noise_log) | Data Eng | ✅ DONE Oct 10 — 3,927 → 3,845 rows; precision/recall 100% on own noise (circular — see D-048); 0 truck identity errors; 274 tests pass |
 | 1.4c | Real record intake template / Excel column mapping | Data Eng | LATER (post-defense; not needed for real test, which uses 1.4b intervals) |
 | 1.5 | External API evaluation (1 source) | Data Eng | TODO |
-| 2.1–2.3a | EDA + `features.py` + vehicle/time split + baselines B0, B1 (one session; clean file first, switch to cleaned later) | ML Eng | ▶ BRIEF ISSUED Oct 10 |
-| 2.3b | Ridge / RF / XGBoost + RandomizedSearchCV | ML Eng | TODO (Oct 11–12) |
+| 2.1–2.3a | EDA + `features.py` + vehicle/time split + baselines B0, B1 (one session; clean file first, switch to cleaned later) | ML Eng | ✅ DONE Oct 10 — 6 EDA charts, features.py, split (46 test trucks / 202 visits), B0 MAE 12.3 hit 9.4%, B1 worse (MAE 17.8); history features weak (|r| ≤ 0.16); 313 tests pass |
+| 2.3b | Verify B1 km/day includes waiting; Ridge / RF / XGBoost + RandomizedSearchCV; reminder buffer tuned on validation (not test) | ML Eng | ▶ BRIEF ISSUED Oct 10 |
 | 2.4 | Evaluation (regression + derived classification + reminder hit rate D-036) + D-038 variation-off check + SHAP | ML Eng | TODO (Oct 12–13) |
 | 3.1 | Labeling setup (Label Studio local, box + plate_type + plate_text) | CV Eng | ✅ DONE (export tested) |
 | 3.1c | Pre-label with pretrained detector (oim YOLOv9-t, thr 0.6) → import as predictions | CV Eng | ✅ DONE |
@@ -135,10 +135,10 @@ Status: ✅ covered by plan · 🟡 covered but at risk · 🔴 gap — action n
 | D-003 | 2026-09-30 | Oil lab reports out of scope | Geo-Expert not taking lab reports now | Final |
 | D-004 | 2026-09-30 | Driver + phone stored per service record, not per vehicle | Drivers change between trips | Final |
 | D-005 | 2026-09-30 | Vehicle identifier has type: `plate` or `fleet_no` | Mine haul trucks may lack plates | Final |
-| D-006 | — | Primary ML target: `days_to_next_change` (regression). Mine-site vehicles may use engine hours → generator must support hour-based intervals | Date is what the reminder needs | PROPOSED |
+| D-006 | — | Primary ML target: `days_to_next_change` (regression). Mine-site vehicles may use engine hours → generator must support hour-based intervals | Date is what the reminder needs | APPROVED (PM, Oct 10 — used in 2.1–2.3a) |
 | D-007 | — | Status buckets: OK (> 14 days left), Due soon (0–14 days), Overdue (< 0). At risk = overdue + 7 days grace, no new record | Needed for F1 and segments | APPROVED as default (adjustable parameter; Ari may change later) |
 | D-008 | — | CV comparison: pretrained OCR vs small custom PyTorch CNN char classifier (both after YOLO detection) | Satisfies "custom CNN vs transfer learning" (R6) | PROPOSED |
-| D-009 | — | Splits grouped by vehicle (no same truck in train and test), time-ordered for ML | Prevent leakage | PROPOSED |
+| D-009 | — | Splits grouped by vehicle (no same truck in train and test), time-ordered for ML | Prevent leakage | APPROVED (PM, Oct 10 — used in 2.1–2.3a) |
 | D-010 | — | Reminder delivery for demo: generate message + mark "sent" + copy/share button; real SMS gateway = Later | Gateway cost/contract unknown | PROPOSED |
 | D-011 | 2026-09-30 | Database = PostgreSQL. Local dev: Postgres in Docker. Cloud: Supabase, used ONLY for Postgres + Storage (photos). No Supabase Auth/auto-API; all logic in FastAPI via SQLAlchemy + standard connection string | Course grades FastAPI; stays portable to AWS (TCO tiers) | APPROVED by Ari |
 | D-012 | 2026-09-30 | Model line-up: Prediction = fixed-interval baseline, Linear/Ridge Regression, Random Forest, XGBoost + SHAP. CV = Ultralytics YOLO (smallest size) for detection; recognition compares pretrained OCR (EasyOCR or PaddleOCR) vs custom PyTorch CNN | Meets multi-model + custom-vs-transfer requirements | APPROVED by Ari (OCR Cyrillic support must be verified by CV Eng) |
@@ -178,6 +178,8 @@ Status: ✅ covered by plan · 🟡 covered but at risk · 🔴 gap — action n
 | D-046 | 2026-10-10 | 1.4b: Messenger photos have no EXIF/filename date (known since 1.4a), so dates must come from the Messenger chat. Claude Code builds a fill-in CSV (photo file → date column, repeat trucks only, ~35 trucks); Ari fills dates from the chat; script then computes days between visits (hashed vehicle key + days only). Missing dates counted, not guessed | Smallest manual effort | APPROVED (PM) |
 | D-047 | 2026-10-10 | 1.3 generator accepted: road trucks only; 5 OSRM destinations (MN–China + MN–Russia), equal mix; speed/hours drawn once per vehicle, waiting per trip; on-time = U(15k,20k) km, late = 20k + Exp(10) days, >60 → never; per-vehicle lateness ~Beta; records after end_date censored. ub_city / mixed / mine_site NOT generated → model covers MN–China/MN–Russia only; other routes fall back to B0 (fixed interval) in the app, stated on slides. Weak destination signal (medians 51–64 days) = honest finding: waiting + truck's own pace matter more than distance | 1.3 handoff | APPROVED (PM) |
 | D-048 | 2026-10-10 | 1.4 cleaning accepted: reuses plates/phone normalizers; missing values kept empty (never impute phones); destination alias → transliteration → fuzzy ≥ 0.8; duplicate = same plate + date (D-043), keep most complete; odometer plausibility ≤ 1,500 km/day [ESTIMATE], ×10/÷10 repair only if ≥5× off. Slide wording must say the 100% scores are on our OWN injected noise — real data will be harder | 1.4 handoff | APPROVED (PM) |
+| D-049 | 2026-10-10 | Baselines: official B1 uses 17,500 km (expected ACTUAL behavior, D-030) — we predict when the truck really returns; 15,000 km shown as sensitivity. B0 = median train interval. Reminder hit window 3–7 days early (default until Ari decides, D-036); buffer tuned on validation only | Fair baseline; 2.1–2.3a handoff | APPROVED (PM) |
+| D-050 | 2026-10-10 | If ML ≈ B0 on synthetic data: do NOT inflate generator variation to make ML win. Only calibrate generator to REAL repeat-truck intervals (1.4b): if real trucks are consistent per vehicle, raise per-vehicle variation to match real spread — documented before/after. Otherwise report "ML ≈ baseline on synthetic; value grows with real history" honestly | Integrity; RISK-03 | APPROVED (PM) |
 
 ---
 
@@ -212,6 +214,7 @@ Status: ✅ covered by plan · 🟡 covered but at risk · 🔴 gap — action n
 | RISK-09 | Licensing: Ultralytics YOLO is AGPL-3.0; pre-label weights license unstated. Fine for capstone; Geo-Expert production use may need Ultralytics commercial license or a permissive alternative | Med | Med | Decide after defense; document in model card |
 | RISK-11 | Detector baseline comparison biased: GT boxes started as oim pre-labels → oim mAP50-95/IoU inflated (0.97/0.997). Compare on precision/false boxes, state on slide | — | Low | Stated in docs/cv_detection_results.md |
 | RISK-10 | Real prediction test set is tiny (repeat trucks only, dates entered manually) | High | Med | Report honestly; add photos_new over time; synthetic holdout as main metric |
+| RISK-13 | ML may not beat B0: synthetic history features weak (|r| ≤ 0.16), noise large vs per-vehicle signal | High | High | D-050: calibrate to real 1.4b intervals (Ari dates = now critical); honest reporting; buffer tuning improves business metric |
 | RISK-12 | Critical path blocked on Ari inputs A1–A4 | — | HIT | Resolved by D-045 (ranges). ML starts ~Oct 11 → 9 days left; cut list active if 2.x slips past Oct 14 |
 | RISK-08 | Plate letters misread (Cyrillic/Latin look-alikes) | High | Med | Normalization map + format regex + confirmation step |
 
