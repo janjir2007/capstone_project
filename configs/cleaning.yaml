@@ -1,0 +1,59 @@
+# =====================================================================
+# Cleaning rules (Task 1.4) — read by src/data/cleaning.py
+# Same tag rule as configs/generator.yaml: every parameter is
+# "[SOURCE: ...]" or "[ESTIMATE]".
+#
+# This file must NOT copy the generator's noise variants
+# (configs/generator.yaml: destination_variants). Cleaning has to work on
+# real spellings it has never seen, so it gets only the official name, the
+# Mongolian name and common short forms, then transliteration + fuzzy match.
+# =====================================================================
+
+odometer:
+  # A reading is "consistent" with an earlier one if
+  #   0 <= km gained <= max_km_per_day × days between + slack_km
+  max_km_per_day: {value: 1500, tag: "[ESTIMATE]", note: "D-045 maximum 110 km/h × 11 h = 1,210 km/day, plus margin"}
+  slack_km: {value: 500, tag: "[ESTIMATE]", note: "typing / rounding margin"}
+  # A suspect reading is repaired if ×10 or ÷10 makes it consistent (N8).
+  digit_fix_factors: {value: [10, 0.1], tag: "[ESTIMATE]"}
+  # ...but only if the reading is this many times off its nearest reading
+  # (a ×10 error is ~10×; a true or "lower than last" reading is ~1×).
+  digit_error_min_ratio: {value: 5, tag: "[ESTIMATE]"}
+
+destination_match:
+  # difflib similarity (0–1) of the Latin keys; below this -> unmatched.
+  min_similarity: {value: 0.8, tag: "[ESTIMATE]"}
+  # Best match must beat the second best by this much (avoid coin flips).
+  min_margin: {value: 0.05, tag: "[ESTIMATE]"}
+
+# Destination list = migration 001 seed rows (names are the keys, D-040).
+# Aliases: Mongolian name + usual short forms. Needs Ari's check.
+destinations:
+  - name: "Ulaanbaatar city (local work)"
+    route_category: ub_city
+    aliases: ["Улаанбаатар", "УБ", "UB", "Ulaanbaatar", "Хот дотор"]
+    tag: "[SOURCE: migration 001] aliases [ESTIMATE]"
+  - name: "Zamyn-Uud (MN–CN border)"
+    route_category: mn_china
+    aliases: ["Замын-Үүд", "Zamyn-Uud"]
+    tag: "[SOURCE: migration 001] aliases [ESTIMATE]"
+  - name: "Erenhot (CN side of border)"
+    route_category: mn_china
+    aliases: ["Эрээн", "Erenhot", "Erlian"]
+    tag: "[SOURCE: migration 001] aliases [ESTIMATE]"
+  - name: "Beijing"
+    route_category: mn_china
+    aliases: ["Бээжин", "Beijing"]
+    tag: "[SOURCE: migration 001] aliases [ESTIMATE]"
+  - name: "Altanbulag (MN–RU border)"
+    route_category: mn_russia
+    aliases: ["Алтанбулаг", "Altanbulag"]
+    tag: "[SOURCE: migration 001] aliases [ESTIMATE]"
+  - name: "Kyakhta (RU side of border)"
+    route_category: mn_russia
+    aliases: ["Хиагт", "Кяхта", "Kyakhta"]
+    tag: "[SOURCE: migration 001] aliases [ESTIMATE]"
+  - name: "Other / several / unknown"
+    route_category: mixed
+    aliases: ["Бусад", "Other", "Unknown"]
+    tag: "[SOURCE: migration 001] aliases [ESTIMATE]"
