@@ -1,0 +1,37 @@
+# =====================================================================
+# ML settings — tasks 2.1–2.3a (EDA, split, baselines); 2.3b reuses the split.
+# Read by: src/ml/dataset.py, src/ml/baselines.py, notebooks/01_eda.ipynb
+# Tags as in configs/generator.yaml: [SOURCE: ...] checkable, [ESTIMATE] placeholder.
+# =====================================================================
+
+seed: 42
+
+input: data/synthetic/service_records_cleaned.csv   # output of task 1.4 (git-ignored)
+vehicle_col: vehicle_key                              # one truck = one key (cleaned plate)
+
+# Route km/day for B1 and the route features. Until task 1.1c puts round-trip
+# days in the destinations table, they come from the generator's [ESTIMATE]
+# ranges at their middle (same numbers as docs/synthetic_report.md §3).
+generator_config: configs/generator.yaml
+
+split:
+  # D-009: no truck in both train and test, and test is LATER in time than train.
+  test_vehicle_share: 0.2      # [ESTIMATE] share of trucks held out
+  cutoff_quantile: 0.7         # [ESTIMATE] cutoff date = this quantile of service dates
+  # train = train trucks, visits whose NEXT visit is before the cutoff (target fully in the past)
+  # test  = test trucks, visits on/after the cutoff
+
+features:
+  late_km: 20000               # [SOURCE: D-030 / D-047] more km than this = late interval
+
+baselines:
+  b1_interval_km: 15000        # [SOURCE: D-030] recommended interval (reminder target)
+  b1_sensitivity_km: [17500]   # [ESTIMATE] middle of actual 15k–20k (D-030); shown, not the official B1
+
+reminder:
+  # D-036: hit = reminder lands this many days BEFORE the actual visit. Window TBD by Ari.
+  window_days_early: [3, 7]    # [ESTIMATE] from the 2.1–2.3a brief
+  buffer_days: 0               # reminder sent this many days before the predicted date
+
+report_path: docs/ml_baselines.md
+figures_dir: docs/figures
