@@ -1,7 +1,7 @@
 # PROJECT_STATE — Capstone "Oil Change Predictor" (Geo-Expert LLC)
 
-- **Version:** 1.5
-- **Last updated:** 2026-10-06
+- **Version:** 1.9
+- **Last updated:** 2026-10-10
 - **Deadline (defense day):** 2026-10-20 (20 days from 2026-09-30)
 - **Current phase:** P3 done (detector) → P1 synthetic data (redesigned around destination, D-033–D-036) + P4 backend URGENT
 - **Overall health:** 🟠 Orange — detector finished and strong, but synthetic data, ML model and backend have NOT started; ~3–4 days behind plan with 15 days left.
@@ -90,23 +90,23 @@ Status: ✅ covered by plan · 🟡 covered but at risk · 🔴 gap — action n
 | 0.6 | Local Python 3.11 venv; fix settings.json (.env.example readable); fill .env.example DB vars | Claude Code | TODO |
 | 1.1 | PostgreSQL schema + data dictionary | Data Eng | ✅ DONE (26 tests pass; DB tests skip in CI until 6.2) |
 | 1.4a | Excel profiling script (Ari runs it; only summaries shared) | Data Eng | ✅ DONE — finding: Excel = vehicle registry (338 trucks, VOLVO 62%, built 2004–2013, odometer 99.4% empty), NOT service history |
-| 1.4b | Service dates for repeat trucks (Messenger photos have no EXIF/filename date) → Ari dates repeat-truck photos manually from the chat | Ari | ⏸ by ~Oct 8, after labeling |
+| 1.4b | Service dates for repeat trucks: Claude Code makes fill-in CSV → Ari types dates from Messenger chat → script computes real intervals (D-046) | Data Eng + Ari | ▶ BRIEF ISSUED Oct 10 (was due Oct 8) |
 | 1.1b | Schema migration: destination on service record + destinations reference table (name, route category, one-way km, round-trip days, source) | Data Eng | ✅ DONE Oct 6 — migration 001 (plain SQL up/down, psql --single-transaction), 7 destinations seeded, nullable destination_id + destination_raw, 16 tests (112 pass locally; DB tests skip in CI until 6.2), data_dictionary v0.2 |
 | 1.1c | Migration 002: Ari's round-trip days + mine-site rows + name_mn (D-040) | Data Eng | TODO — after Ari fills A1–A4 (same session as 1.3 start) |
 | 1.2 | Synthetic rules (1.2a): research + Ari inputs → docs/synthetic_rules.md → Ari marks ✓/✗. Redesigned per D-033–D-036. First draft (Oct 5) was lost/never saved; rewritten from scratch Oct 6 | Data Eng + Ari | ✅ DRAFT DONE (OSRM distances, 7 variations, 13 noise rules, 16 open items) → ⏳ BLOCKED on Ari: A1–A4 + ✓/✗ |
-| 1.3 | Synthetic generator with noise injection | Data Eng | TODO — starts when A1–A4 filled (target Oct 7) |
-| 1.4 | Real record intake template + cleaning script | Data Eng | TODO |
+| 1.3 | Synthetic generator with noise injection — unknowns as config ranges (D-045) | Data Eng | ✅ DONE Oct 10 — 500 trucks, 3,845 clean / 3,927 dirty rows, seed 42 reproducible, every param tagged; days to next change p5 36 / median 58 / p95 88; real comparison pending 1.4b |
+| 1.4 | Cleaning script (tested on dirty file + noise_log) | Data Eng | ✅ DONE Oct 10 — 3,927 → 3,845 rows; precision/recall 100% on own noise (circular — see D-048); 0 truck identity errors; 274 tests pass |
+| 1.4c | Real record intake template / Excel column mapping | Data Eng | LATER (post-defense; not needed for real test, which uses 1.4b intervals) |
 | 1.5 | External API evaluation (1 source) | Data Eng | TODO |
-| 2.1 | EDA notebook (synthetic + real) | ML Eng | TODO |
-| 2.2 | Shared feature pipeline `features.py` | ML Eng | TODO |
-| 2.3 | Baseline + 3 models + tuning | ML Eng | TODO |
-| 2.4 | Evaluation (regression + derived classification) + SHAP | ML Eng | TODO |
+| 2.1–2.3a | EDA + `features.py` + vehicle/time split + baselines B0, B1 (one session; clean file first, switch to cleaned later) | ML Eng | ▶ BRIEF ISSUED Oct 10 |
+| 2.3b | Ridge / RF / XGBoost + RandomizedSearchCV | ML Eng | TODO (Oct 11–12) |
+| 2.4 | Evaluation (regression + derived classification + reminder hit rate D-036) + D-038 variation-off check + SHAP | ML Eng | TODO (Oct 12–13) |
 | 3.1 | Labeling setup (Label Studio local, box + plate_type + plate_text) | CV Eng | ✅ DONE (export tested) |
 | 3.1c | Pre-label with pretrained detector (oim YOLOv9-t, thr 0.6) → import as predictions | CV Eng | ✅ DONE |
 | 3.1d | Ari checks boxes + types Cyrillic plate text | Ari | ✅ DONE — 183 labeled, 9 skipped, 135 trucks, 35 repeat trucks (83 photos), all 183 match 4 digits + 3 Cyrillic |
 | 3.2 | Vehicle-grouped split + YOLO fine-tune + eval vs pretrained oim | CV Eng | ✅ DONE — test (27 img / 20 trucks): yolo26n mAP50 0.991, P 0.93, R 1.00, 21.5 ms MPS; oim P 0.73 (10 false boxes) |
-| 3.3 | Recognition: pretrained OCR vs custom CNN — REDUCED scope (cut list #1): small CNN on character crops, same split.json | CV Eng | TODO — after 1.3 |
-| 3.4 | Normalization + confidence fallback (pulled forward: independent of synthetic data) | CV Eng | ▶ BRIEF ISSUED Oct 6 |
+| 3.3 | Recognition: pretrained OCR vs custom CNN — REDUCED scope (cut list #1): small CNN on character crops, same split.json | CV Eng | ▶ BRIEF ISSUED Oct 6 (pulled forward: 1.3 waits on Ari) |
+| 3.4 | Normalization + confidence fallback (pulled forward: independent of synthetic data) | CV Eng | ✅ DONE Oct 6 — read_plate() + normalize_plate(); 21 letters seen; 183/183 labels pass format; 291 tests pass |
 | 4.1 | FastAPI skeleton + DB + migrations (decide: keep plain SQL or move to Alembic) | Backend Eng | ✅ DONE Oct 6 — src/api (config, db, /health 200/503), Dockerfile (310 MB, non-root), compose "api", requirements-api.txt; 130 tests pass locally |
 | 4.2 | Endpoints per contract (§8) — data endpoints only (lookup, services, vehicle card, segments); prediction field null until 4.3 | Backend Eng | ✅ DONE Oct 6 — 4 endpoints, plates.py (spaces/case only), contract docs/api_contract.md v0.2, 204 tests pass locally |
 | 4.2b | GET /destinations (dropdown, name_mn when 002 lands), lookup by fleet_no, case/space-insensitive company match, same-vehicle same-day duplicate guard (409 + force flag) | Backend Eng | ✅ DONE Oct 6 — api_contract v0.3, src/api/matching.py, 232 tests pass |
@@ -173,6 +173,11 @@ Status: ✅ covered by plan · 🟡 covered but at risk · 🔴 gap — action n
 | D-041 | 2026-10-06 | Migrations stay numbered plain SQL up/down for the capstone (no Alembic). Before the 2nd DB (Supabase, 6.3): add schema_migrations(version, applied_at) + small script applying missing *.up.sql in order in one transaction. Alembic = post-capstone option (baseline + wrap SQL). Role doc "Alembic" line superseded. Config stays in src/api/config.py (API-only) | 4.1 handoff: schema uses SQL function, CHECKs, seeds; no ORM models; 16 tests run .sql directly | APPROVED (PM) |
 | D-042 | 2026-10-06 | 4.2 API rules accepted: lookup returns a list (phone can match several trucks), unknown → 200 + []; 8-digit (+976 optional) = phone, else plate; POST /services needs exactly one of destination_id/destination_raw; destination_id + different route → 422; new vehicle needs company_name; fleet_no needs company_name; service_date default = today UB (UTC+8), future → 422; usual_liters = mode, tie → most recent; "today" computed in API (UB), not DB CURRENT_DATE. Exact contract = docs/api_contract.md (source of truth; §8 is summary) | 4.2 handoff | APPROVED (PM) |
 | D-043 | 2026-10-06 | 4.2b matching rules: done in Python (casefold), not SQL (Cyrillic locale differs on Supabase). Company key = case-insensitive, spaces collapsed. Duplicate = same vehicle + same calendar date → 409 {code: duplicate_service}; ?force=true overrides. No DB constraint (rare race accepted). Destinations ordered by id. Fleet_no dash-insensitive + POST matching → 4.4 | 4.2b handoff | APPROVED (PM) |
+| D-044 | 2026-10-06 | Plate rules (3.4): clean spaces/hyphens/dots + case → 12 Latin look-alikes + U→У → O↔0 by position (7 chars only) → format = 4 digits + 3 of 21 letters SEEN in 183 labels (АБВГДЕКМНОПРСТУХЦЧЭҮӨ) → confidence ≥ 0.6 (inclusive) else needs_manual. Unseen letter → manual input; add letters as photos_new grows | 3.4 handoff; 183/183 labels pass | APPROVED (PM) |
+| D-045 | 2026-10-10 | A1–A4 replaced: Ari has no per-destination numbers (real trips vary too much). Generator uses RANGES in configs/generator.yaml, all [ESTIMATE]: whole-day avg speed 90–110 km/h (Ari: trucks drive 100+ most of the time), 8–11 driving h/day, 0–5 days waiting per trip, equal destination mix. Driving days = km ÷ (speed × hours). Realism checked against real days-between-visits of repeat trucks (1.4b), gap reported, not tuned yet | Unblock critical path; honest uncertainty | APPROVED by Ari |
+| D-046 | 2026-10-10 | 1.4b: Messenger photos have no EXIF/filename date (known since 1.4a), so dates must come from the Messenger chat. Claude Code builds a fill-in CSV (photo file → date column, repeat trucks only, ~35 trucks); Ari fills dates from the chat; script then computes days between visits (hashed vehicle key + days only). Missing dates counted, not guessed | Smallest manual effort | APPROVED (PM) |
+| D-047 | 2026-10-10 | 1.3 generator accepted: road trucks only; 5 OSRM destinations (MN–China + MN–Russia), equal mix; speed/hours drawn once per vehicle, waiting per trip; on-time = U(15k,20k) km, late = 20k + Exp(10) days, >60 → never; per-vehicle lateness ~Beta; records after end_date censored. ub_city / mixed / mine_site NOT generated → model covers MN–China/MN–Russia only; other routes fall back to B0 (fixed interval) in the app, stated on slides. Weak destination signal (medians 51–64 days) = honest finding: waiting + truck's own pace matter more than distance | 1.3 handoff | APPROVED (PM) |
+| D-048 | 2026-10-10 | 1.4 cleaning accepted: reuses plates/phone normalizers; missing values kept empty (never impute phones); destination alias → transliteration → fuzzy ≥ 0.8; duplicate = same plate + date (D-043), keep most complete; odometer plausibility ≤ 1,500 km/day [ESTIMATE], ×10/÷10 repair only if ≥5× off. Slide wording must say the 100% scores are on our OWN injected noise — real data will be harder | 1.4 handoff | APPROVED (PM) |
 
 ---
 
@@ -207,7 +212,7 @@ Status: ✅ covered by plan · 🟡 covered but at risk · 🔴 gap — action n
 | RISK-09 | Licensing: Ultralytics YOLO is AGPL-3.0; pre-label weights license unstated. Fine for capstone; Geo-Expert production use may need Ultralytics commercial license or a permissive alternative | Med | Med | Decide after defense; document in model card |
 | RISK-11 | Detector baseline comparison biased: GT boxes started as oim pre-labels → oim mAP50-95/IoU inflated (0.97/0.997). Compare on precision/false boxes, state on slide | — | Low | Stated in docs/cv_detection_results.md |
 | RISK-10 | Real prediction test set is tiny (repeat trucks only, dates entered manually) | High | Med | Report honestly; add photos_new over time; synthetic holdout as main metric |
-| RISK-12 | Critical path blocked on Ari inputs A1–A4 (round-trip days, mine sites, destination mix, UB km/day) | Med | High | Fill by Oct 7; if a value is unknown, Ari gives a range → generator samples it |
+| RISK-12 | Critical path blocked on Ari inputs A1–A4 | — | HIT | Resolved by D-045 (ranges). ML starts ~Oct 11 → 9 days left; cut list active if 2.x slips past Oct 14 |
 | RISK-08 | Plate letters misread (Cyrillic/Latin look-alikes) | High | Med | Normalization map + format regex + confirmation step |
 
 ---
