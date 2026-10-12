@@ -1,6 +1,6 @@
-# UI screens — Streamlit frontend (tasks 5.1–5.3)
+# UI screens — Streamlit frontend (tasks 5.1–5.3c)
 
-- **Owner:** Frontend Engineer (iMac, branch `ui`, D-052) · **Version:** 0.2 (2026-10-12, T2 / 5.3b: contract v0.5)
+- **Owner:** Frontend Engineer (iMac, branch `ui`, D-052) · **Version:** 0.3 (2026-10-12, DESIGN v2)
 - Stack: Streamlit 1.64 (D-022), calls FastAPI over HTTP only (`docs/api_contract.md` v0.5).
 - UI text: Mongolian. Fake demo data only (RISK-06).
 
@@ -9,7 +9,7 @@
 ```bash
 pip install -r requirements-ui.txt              # Python 3.11 venv
 docker compose up -d --build                    # db + api on :8000
-streamlit run src/ui/app.py --client.toolbarMode minimal
+cd src/ui && streamlit run app.py               # from src/ui/ -> .streamlit/config.toml theme applies
 # phone on the same Wi-Fi: http://<mac-ip>:8501
 ```
 
@@ -25,67 +25,73 @@ Streamlit `AppTest` and are skipped if Streamlit is not installed).
 
 | File | Role |
 |---|---|
-| `src/ui/app.py` | Entry: page config, login gate, top navigation |
-| `src/ui/views/record.py` | Screen 1 — Recording mode (5.2) |
-| `src/ui/views/lookup.py` | Screen 2 — Lookup + vehicle card (5.3) |
-| `src/ui/common.py` | Mobile CSS, vehicle card component, cached destinations, page hand-off |
+| `src/ui/app.py` | Entry: page config, login gate, hidden navigation |
+| `src/ui/.streamlit/config.toml` | Theme: background #F4F5F7, primary #1F4E9D (placeholder), radius, minimal toolbar |
+| `src/ui/views/home.py` | Home |
+| `src/ui/views/record.py` | Record flow (5.2): capture → manual → confirm → form → success |
+| `src/ui/views/search.py` | Search (5.3) |
+| `src/ui/views/card.py` | Vehicle card (5.3) |
+| `src/ui/common.py` | DESIGN v2 CSS, header, plate box, chips, card parts, navigation hand-off |
 | `src/ui/api_client.py` | HTTP client (no Streamlit): one function per endpoint, `ApiError`, `DuplicateService` |
-| `src/ui/logic.py` | Pure helpers: Mongolian labels, pre-fill, payload, error translation |
+| `src/ui/logic.py` | Pure helpers: labels, pre-fill, payload, prediction view, recognize outcome, errors |
 | `src/ui/auth.py` | `UI_PASSWORD` check (constant-time compare) |
 
 The folder is `views/`, **not** `pages/`: Streamlit runs a folder named `pages/` in legacy mode,
-which skips `app.py` — and therefore the login gate — when a URL such as `/lookup` is opened
-directly. Found in browser testing; guarded by `test_no_streamlit_pages_folder`.
+which skips `app.py` (and the login gate) when a URL is opened directly. Guarded by
+`test_no_streamlit_pages_folder`.
 
-## Screen 0 — Login (only if `UI_PASSWORD` is set)
+## DESIGN v2 (how it is built)
 
-Password field → «Нэвтрэх». Wrong → «Нууц үг буруу байна.» Until logged in, only this page
-exists in the navigation, so `/lookup` cannot be opened by URL. «Гарах» at the bottom of each page.
+- Theme (config.toml): grey background, white cards, black text, primary #1F4E9D, one column
+  (max 560 px).
+- White cards = `st.container(key="card_…")`; CSS hooks on Streamlit's `st-key-card_…` class:
+  radius 24, soft shadow. All buttons ≥ 56 px, radius 18. Black button = key `btn_black…`.
+- Header on every screen: «Гео-Эксперт» pill + big title; inner screens have «‹ Буцах».
+- Navigation menu is hidden; screens are linked by their big buttons.
 
-## Screen 1 — Үйлчилгээ бүртгэх (Recording, 5.2)
+## Screens
 
-1. **📷 Зургаар таних** (folded): «Камер нээх» → camera, or upload jpg/png/heic. A new photo is
-   sent at once to `POST /plates/recognize` (field `file`; the API does not store it).
-   - Clear read → plate field = `plate_normalized`, looked up immediately («Дугаар уншигдлаа: …»).
-   - `needs_manual` → field filled with what was read (may be empty) + warning by `reason`;
-     the oil changer fixes it and presses «Шалгах».
-   - 503 (recognizer not loaded) / 413 / 422 / no connection → «… гараар оруулна уу», manual entry.
-2. **Төрөл**: Улсын дугаар / Парк дугаар. **Дугаар** + «Шалгах» → `GET /vehicles/lookup`.
-   - Found → «Бүртгэлтэй машин · N удаа · segment», folded «Машины карт», form pre-filled from
-     the last service: oil grade, liters (fallback `usual_liters`), driver, phone. Company is
-     shown locked (the API ignores it for an existing plate).
-   - Not found → «🆕 Шинэ машин», empty form + company (required) and model fields.
-   - Fleet number in several companies → radio «Аль компанийн машин бэ?» (+ «Өөр компанийн шинэ машин»).
-   - A phone typed here → hint to use «Хайлт». Plate edited after checking → form hidden until re-check.
-3. **Always fresh (D-033):** Гүйлт (км) / Моторын цаг (one required; hint shows previous km) and
-   «Дараа нь хаашаа явах вэ?» from `GET /destinations` (label = `name_mn` if present, else `name`;
-   cached 5 min). «Жагсаалтад байхгүй…» → free text + route type (D-039).
-4. «💾 Хадгалах» → `POST /services` (no `service_date`: API uses today, Ulaanbaatar).
-   - Missing fields → Mongolian errors, nothing sent. API 422 → known messages translated.
-   - **409 `duplicate_service`** → «Энэ машинд өнөөдөр үйлчилгээ аль хэдийн бүртгэгдсэн байна (№id).
-     Дахин хадгалах уу?» + «Ингээд хадгалах» (resend `?force=true`) / «Болих».
-   - 201 → «✅ Хадгалагдлаа: <plate> (шинэ машин)», form cleared, «Тос солигч» remembered,
-     «Картыг харах» opens the card.
-   - API down → «Сервертэй холбогдож чадсангүй…».
+**Login** (only if `UI_PASSWORD` set): password card → «Нэвтрэх». Until logged in only this page
+exists, so a direct URL cannot skip it.
 
-## Screen 2 — Машин хайх (Lookup + card, 5.3)
+**Нүүр (Home)**: big primary card «📷 Бүртгэх» (opens the camera step), white card «🔍 Хайх».
+«Сануулга» link comes with 5.4.
 
-One field: plate / phone / fleet number → `GET /vehicles/lookup`. **📷 Камераар хайх**: photo →
-recognize → clear read searches at once; `needs_manual` fills the field and waits for «Хайх». Caption tells how it was matched
-and how many trucks. Phone/fleet number can return several cards (one under another).
-Unknown → «Олдсонгүй» + «➕ Шинэ машин бүртгэх» (opens Screen 1 with the plate filled).
+**Бүртгэх (Record)**
+1. *Capture*: camera (+ upload jpg/png/heic). New photo → `POST /plates/recognize` (field `file`,
+   not stored). Clear read → lookup → confirm. `needs_manual` or recognizer down → manual step
+   with the read text and a reason message. «Дугаарыг гараар оруулах» → manual.
+2. *Manual*: Улсын дугаар / Парк дугаар + «Дугаар» → «Шалгах» → lookup → confirm. A phone typed
+   here → hint to use «Хайх».
+3. *Confirm*: plate large in monospace in a bordered box + chip «Бүртгэлтэй · N удаа ирсэн» (green)
+   or «Шинэ машин» (blue); fleet number in several companies → company radio. «Зөв, үргэлжлүүлэх»
+   / «Буруу байна — засах» (back to manual, plate kept).
+4. *Form*: small plate box + chip. Card 1 (always fresh, D-033): «Гүйлт (км)» (hint = previous km),
+   «Моторын цаг» (fleet numbers, or if the truck had hours before), «Дараа нь хаашаа явах вэ?» as tap
+   pills from `GET /destinations` (`name_mn` else `name`) + «Бусад» → place name + route pills
+   (D-039). Card 2: existing truck → «Өмнөхөөс авсан» one line (oil · liters · driver · phone) +
+   «Засах» expander; new truck → company, model, oil, liters, driver, phone, oil changer.
+   «Хадгалах» → `POST /services` (no date: API = today). 409 duplicate → warning +
+   «Ингээд хадгалах» (`force=true`) / «Болих». 422 → Mongolian messages.
+5. *Success*: ✓ «Хадгалагдлаа», plate, «Дараагийн машин» (back to camera; oil changer remembered),
+   «Машины карт үзэх».
 
-**Vehicle card:** plate · segment badge (Шинэ / Давтан / Байнгын / Эрсдэлтэй) · company · model;
-2×3 tiles (service count, usual liters, last date, last km/engine hours, oil, destination);
-driver + phone; **prediction card** from `prediction` (v0.5): tinted by `status` — ok #1e6b34 on
-#e3f1e7 «Хэвийн», due_soon #8a5300 on #fbefd6 «Удахгүй», overdue #b3261e on #f9e3e1 «Хэтэрсэн»;
-big «N хоног үлдсэн / хэтэрсэн» (or «Өнөөдөр»), `predicted_date`, progress bar = share of
-`last_service_date → predicted_date` already used, small note = `method` (Загварын таамаглал /
-Маршрутын тооцоо / Дундаж хугацаа) + `fallback_reason`. `null` → grey card «Таамаглал удахгүй нэмэгдэнэ»; «Түүх (N)» one line per service, newest first;
-«➕ Үйлчилгээ бүртгэх» opens Screen 1 pre-filled.
+**Хайх (Search)**: white card with input + «Хайх» (primary) and black «📷 Камераар хайх» (camera +
+upload; clear read searches, `needs_manual` fills the field). One match → card opens; several →
+list (plate · company · segment); none → «Олдсонгүй» + «Шинэ машин бүртгэх» (form, new truck).
+«Сүүлд үзсэн»: cards opened in this session (max 5).
 
-## Phone width (~390 px)
+**Машины карт (Card)** (fresh `GET /vehicles/{id}`): plate box + segment badge (Шинэ / Давтан /
+Байнгын / Эрсдэлтэй), company · model · N удаа · ердийн L; **status card** from `prediction`:
+ok #1e6b34 on #e3f1e7 «Хэвийн», due_soon #8a5300 on #fbefd6 «Удахгүй», overdue #b3261e on
+#f9e3e1 «Хэтэрсэн»; big «N хоног үлдсэн/хэтэрсэн», `predicted_date`, progress bar (share of
+last_service_date → predicted_date used), note = method + fallback_reason; `null` → grey
+«Таамаглал удахгүй нэмэгдэнэ». 3 tiles: Сүүлд солисон, Тос (grade · liters), Чиглэл. Call row
+«Жолооч · утас — Залгах» (`tel:` link). «Түүх (N)» expander. Primary «Тос солилт бүртгэх».
 
-Checked in Chrome at 390×844 (mobile emulation): no horizontal scroll (`scrollWidth` = 390),
-tiles stay 2 columns, buttons full width, smaller titles. On phones Streamlit folds the top menu
-into «»», so each page also has a one-tap link to the other screen.
+## Streamlit limits (accepted, "close is enough")
+
+- Built-in widget text stays English: camera permission prompt ("This app would like to use your
+  camera", "Take Photo"), uploader ("Upload", "15MB per file" — limit set to the API's 15 MB in config.toml).
+- Pills wrap to several rows on a phone (7 destinations).
+- No real "card" component: white cards are keyed containers + CSS.

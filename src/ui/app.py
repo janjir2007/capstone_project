@@ -1,9 +1,8 @@
 """Streamlit entry point (tasks 5.1–5.3, D-022).
 
-Run:  streamlit run src/ui/app.py
+Run:  cd src/ui && streamlit run app.py   (from src/ui/ so .streamlit/config.toml = theme applies)
 Env:  API_URL (default http://localhost:8000)
       UI_PASSWORD (unset -> no login, local dev; D-061)
-      UI_ENABLE_RECOGNIZE=1 (show the plate-recognize button, after task 4.3)
 """
 
 import sys
@@ -30,8 +29,8 @@ common.inject_css()
 
 def login_screen() -> None:
     """Password screen; shown only when UI_PASSWORD is set."""
-    st.title("🛢️ Тос солилт")
-    with st.form("login"):
+    common.header("Нэвтрэх")
+    with st.form("login", border=False), st.container(key="card_login"):
         password = st.text_input("Нууц үг", type="password")
         if st.form_submit_button("Нэвтрэх", width="stretch", type="primary"):
             if auth.check_password(password):
@@ -45,8 +44,11 @@ if auth.login_required() and not st.session_state.get("authed"):
     # page can be opened by URL.
     st.navigation([st.Page(login_screen, title="Нэвтрэх")], position="hidden").run()
 else:
+    # Screens navigate with their own big buttons (DESIGN v2), so the menu is hidden.
     pages = [
-        st.Page(common.RECORD_PAGE, title="Бүртгэл", icon=":material/add_circle:", default=True),
-        st.Page(common.LOOKUP_PAGE, title="Хайлт", icon=":material/search:"),
+        st.Page(common.HOME_PAGE, title="Нүүр", default=True),
+        st.Page(common.RECORD_PAGE, title="Бүртгэх"),
+        st.Page(common.SEARCH_PAGE, title="Хайх"),
+        st.Page(common.CARD_PAGE, title="Машины карт"),
     ]
-    st.navigation(pages, position="top").run()
+    st.navigation(pages, position="hidden").run()

@@ -292,9 +292,20 @@ def test_password_checked(monkeypatch) -> None:
     assert not auth.check_password(None)
 
 
+VIEWS = ("home.py", "record.py", "search.py", "card.py")
+
+
 def test_no_streamlit_pages_folder() -> None:
-    """A folder named src/ui/pages/ would let /lookup open without app.py,
-    i.e. without the login gate (Streamlit legacy multipage mode)."""
+    """A folder named src/ui/pages/ would let a screen URL open without app.py,
+    i.e. without the login gate (Streamlit legacy multipage mode). Every screen
+    must live in views/; behaviour is tested in test_ui_app.py."""
     ui = Path(__file__).resolve().parent.parent / "src" / "ui"
     assert not (ui / "pages").exists()
-    assert (ui / "views" / "record.py").exists()
+    assert sorted(p.name for p in (ui / "views").glob("*.py")) == sorted(VIEWS)
+
+
+def test_prev_summary_only_filled_parts() -> None:
+    form = logic.prefill_from_card(CARD)
+    assert logic.prev_summary(form) == "15W-40 · 30 л · Тест Д. · 99110001"
+    assert logic.prev_summary({**form, "driver_name": None, "driver_phone": ""}) == "15W-40 · 30 л"
+    assert logic.prev_summary(logic.empty_form()) == "—"

@@ -267,6 +267,17 @@ def prefill_from_card(card: dict | None) -> dict[str, Any]:
     return form
 
 
+def prev_summary(form: dict[str, Any]) -> str:
+    """One line for «Өмнөхөөс авсан»: '15W-40 · 32 л · Тест Д. · 99110001' (only filled parts)."""
+    parts = [
+        form.get("oil_grade"),
+        format_number(form["liters"], "л") if form.get("liters") is not None else None,
+        form.get("driver_name"),
+        form.get("driver_phone"),
+    ]
+    return " · ".join(str(p) for p in parts if p) or NOT_GIVEN
+
+
 def _clean(value: Any) -> Any:
     """Strip strings; blank string -> None."""
     if isinstance(value, str):

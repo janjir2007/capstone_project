@@ -1,0 +1,26 @@
+# Streamlit theme + client settings — DESIGN v2 (task 5.3c).
+# Streamlit reads .streamlit/config.toml from the CURRENT folder, so start the app
+# from src/ui/:   cd src/ui && streamlit run app.py
+# Primary color #1F4E9D is a placeholder until Geo-Expert's brand color is known.
+
+[theme]
+base = "light"
+primaryColor = "#1F4E9D"
+backgroundColor = "#F4F5F7"
+secondaryBackgroundColor = "#EEF0F3"  # inputs, pills
+textColor = "#111111"
+borderColor = "#E3E5E9"
+baseRadius = "14px"
+buttonRadius = "18px"
+headingFontWeights = [800, 700]
+
+[client]
+toolbarMode = "minimal"          # no "Deploy" / developer menu
+showSidebarNavigation = false    # the app navigates with its own buttons
+
+[server]
+headless = true
+maxUploadSize = 15                # MB, same limit as POST /plates/recognize (API returns 413 above)
+
+[browser]
+gatherUsageStats = false

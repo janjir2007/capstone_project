@@ -1,31 +1,38 @@
-"""Recording mode (task 5.2): photo -> plate -> check -> pre-filled form -> save.
+"""Record screen (task 5.2, DESIGN v2): camera -> confirm plate -> form -> saved.
 
-Flow:
-1. Photo (camera or upload) -> POST /plates/recognize. A clear read is looked up
-   at once; needs_manual (or recognizer down) -> the oil changer checks/types it.
-2. "Шалгах" looks the plate up. Existing vehicle -> form pre-filled from the last
-   service; new vehicle -> empty form + company/model fields.
-3. Odometer / engine hours and destination are always entered fresh (D-033).
-4. Save -> POST /services. 409 duplicate_service -> warning + "Ингээд хадгалах"
-   (resend with force=true).
+Steps (st.session_state["rec_step"]):
+- capture: camera (or upload) -> POST /plates/recognize. Clear read -> lookup ->
+  confirm. needs_manual / recognizer down -> manual. «Дугаарыг гараар оруулах» -> manual.
+- manual:  type plate or fleet number -> «Шалгах» -> lookup -> confirm.
+- confirm: plate in a big box + chip «Бүртгэлтэй · N удаа ирсэн» / «Шинэ машин»
+  -> «Зөв, үргэлжлүүлэх» (form) or «Буруу байна — засах» (manual).
+- form:    card 1 = odometer (+ engine hours for fleet numbers) + destination pills
+  (GET /destinations, «Бусад» -> text + route, D-039) — always fresh (D-033);
+  card 2 = «Өмнөхөөс авсан» summary + «Засах» (existing) / full fields (new).
+  «Хадгалах» -> POST /services; 409 duplicate -> «Ингээд хадгалах» (force=true).
+- success: ✓ «Хадгалагдлаа» -> «Дараагийн машин» / «Машины карт үзэх».
 
-Buttons use on_click callbacks: a callback runs BEFORE the page is redrawn, so
-it may change widget values (pre-fill, reset). Messages for the next draw are
-kept in st.session_state["rec_msgs"].
+Buttons use on_click callbacks: a callback runs BEFORE the screen is redrawn,
+so it may change widget values (pre-fill, reset) and the step.
 """
 
 import streamlit as st
 
 from src.ui import api_client, common, logic
 
-NEW_VEHICLE = -1  # option in the "which truck?" radio for fleet numbers
+NEW_VEHICLE = -1  # option in the "which company?" radio for fleet numbers
+STEP = "rec_step"
 
 
-# --- state helpers -----------------------------------------------------------
+# --- state helpers -------------------------------------------------------------------
 
 def _say(level: str, text: str) -> None:
-    """Queue a message (level: success/info/warning/error) for the next draw."""
+    """Queue a message (success/info/warning/error) for the next draw."""
     st.session_state.setdefault("rec_msgs", []).append((level, text))
+
+
+def _goto(step: str) -> None:
+    st.session_state[STEP] = step
 
 
 def _apply_form(values: dict) -> None:
@@ -33,6 +40,14 @@ def _apply_form(values: dict) -> None:
     for name in logic.FORM_FIELDS:
         st.session_state[f"f_{name}"] = values.get(name)
     st.session_state["f_oil_changer"] = st.session_state.get(common.OIL_CHANGER)
+
+
+def _reset() -> None:
+    """Forget the current truck; start again at the camera."""
+    for key in ("rec_checked", "rec_choice", "rec_dup", "rec_saved", "rec_manual"):
+        st.session_state.pop(key, None)
+    _apply_form(logic.empty_form())
+    _goto("capture")
 
 
 def _selected_card() -> dict | None:
@@ -46,47 +61,75 @@ def _selected_card() -> dict | None:
     return checked["matches"][choice]
 
 
-def _set_checked(identifier_type: str, identifier: str, matches: list[dict], card: dict | None) -> None:
-    """Remember the checked vehicle and pre-fill the form for it."""
-    st.session_state["rec_checked"] = {
-        "identifier_type": identifier_type,
-        "identifier": identifier,
-        "matches": matches,
-    }
-    st.session_state["rec_choice"] = matches.index(card) if card in matches else (0 if matches else NEW_VEHICLE)
+def _set_checked(identifier_type: str, identifier: str, matches: list[dict]) -> None:
+    st.session_state["rec_checked"] = {"identifier_type": identifier_type, "identifier": identifier,
+                                       "matches": matches}
+    st.session_state["rec_choice"] = 0 if matches else NEW_VEHICLE
     st.session_state.pop("rec_dup", None)
-    _apply_form(logic.prefill_from_card(card))
 
 
-# --- callbacks -----------------------------------------------------------------
-
-def on_check() -> None:
-    """Look the typed plate / fleet number up and pre-fill the form."""
-    identifier_type = st.session_state.get("rec_identifier_type", "plate")
-    identifier = (st.session_state.get("rec_identifier") or "").strip()
-    st.session_state.pop("rec_saved", None)
+def _lookup(identifier_type: str, identifier: str) -> None:
+    """GET /vehicles/lookup -> confirm step (or a message and stay)."""
+    identifier = identifier.strip()
     if not identifier:
         _say("error", "Дугаараа оруулна уу.")
         return
     try:
         result = api_client.lookup(identifier)
     except api_client.ApiError as exc:
-        st.session_state.pop("rec_checked", None)
         for message in logic.error_messages(exc.status, exc.detail):
             _say("error", message)
         return
     if result.get("match_type") == "phone":
-        st.session_state.pop("rec_checked", None)
-        _say("warning", "Энэ утасны дугаар байна. Машины дугаараа оруулна уу (утсаар хайх бол «Хайлт»).")
+        _say("warning", "Энэ утасны дугаар байна. Машины дугаараа оруулна уу (утсаар хайх бол «Хайх»).")
         return
     matches = [v for v in result.get("vehicles", []) if v.get("identifier_type") == identifier_type]
-    _set_checked(identifier_type, identifier, matches, matches[0] if matches else None)
+    _set_checked(identifier_type, identifier, matches)
+    _goto("confirm")
 
 
-def on_choice() -> None:
-    """Another truck picked in the fleet-number radio -> pre-fill for it."""
-    st.session_state.pop("rec_dup", None)
+# --- callbacks -------------------------------------------------------------------------
+
+def on_photo(key: str) -> None:
+    """New photo -> recognize. Clear read -> lookup; needs_manual -> manual step."""
+    photo = st.session_state.get(key)
+    if photo is None:
+        return
+    plate, needs_manual, message = common.recognize_photo(photo)
+    st.session_state["rec_type"] = "plate"
+    if needs_manual:
+        st.session_state["rec_manual"] = plate
+        _say("warning", message)
+        _goto("manual")
+    else:
+        _say("info", message)
+        _lookup("plate", plate)
+        if st.session_state.get(STEP) != "confirm":  # lookup failed -> let him type
+            st.session_state["rec_manual"] = plate
+            _goto("manual")
+
+
+def on_manual_open() -> None:
+    st.session_state["rec_manual"] = ""
+    _goto("manual")
+
+
+def on_manual_check() -> None:
+    _lookup(st.session_state.get("rec_type", "plate"), st.session_state.get("rec_manual") or "")
+
+
+def on_confirm() -> None:
+    """«Зөв, үргэлжлүүлэх»: pre-fill from the chosen truck's last service."""
     _apply_form(logic.prefill_from_card(_selected_card()))
+    _goto("form")
+
+
+def on_wrong() -> None:
+    """«Буруу байна — засах»: back to typing, with the plate kept for editing."""
+    checked = st.session_state.get("rec_checked") or {}
+    st.session_state["rec_manual"] = checked.get("identifier", "")
+    st.session_state["rec_type"] = checked.get("identifier_type", "plate")
+    _goto("manual")
 
 
 def _send(payload: dict, force: bool) -> None:
@@ -101,19 +144,14 @@ def _send(payload: dict, force: bool) -> None:
             _say("error", message)
         return
     st.session_state[common.OIL_CHANGER] = payload.get("oil_changer")
-    st.session_state["rec_saved"] = {
-        "identifier": payload["identifier"],
-        "vehicle_created": result.get("vehicle_created", False),
-    }
-    # Reset for the next truck.
-    for key in ("rec_checked", "rec_dup", "rec_choice"):
-        st.session_state.pop(key, None)
-    st.session_state["rec_identifier"] = ""
-    _apply_form(logic.empty_form())
+    saved = {"identifier": payload["identifier"], "vehicle_id": result.get("vehicle_id"),
+             "vehicle_created": result.get("vehicle_created", False)}
+    _reset()
+    st.session_state["rec_saved"] = saved
+    _goto("success")
 
 
 def on_save() -> None:
-    """Validate the form and send it."""
     checked = st.session_state.get("rec_checked") or {}
     form = {name: st.session_state.get(f"f_{name}") for name in logic.FORM_FIELDS}
     payload, errors = logic.build_service_payload(
@@ -131,7 +169,6 @@ def on_save() -> None:
 
 
 def on_force() -> None:
-    """'Ингээд хадгалах': resend the duplicate with force=true."""
     dup = st.session_state.get("rec_dup")
     if dup:
         _send(dup["payload"], force=True)
@@ -141,181 +178,146 @@ def on_cancel_dup() -> None:
     st.session_state.pop("rec_dup", None)
 
 
-def on_photo(key: str) -> None:
-    """New photo -> POST /plates/recognize. Clear read -> fill + look up;
-    needs_manual -> fill what was read and ask to check (contract v0.5)."""
-    photo = st.session_state.get(key)
-    if photo is None:
-        return
-    plate, needs_manual, message = common.recognize_photo(photo)
-    st.session_state["rec_identifier_type"] = "plate"
-    st.session_state["rec_identifier"] = plate
-    if needs_manual:
-        st.session_state.pop("rec_checked", None)
-        _say("warning", message)
-    else:
-        _say("info", message)
-        on_check()
+# --- arrival -----------------------------------------------------------------------------
 
+if st.session_state.pop(common.REC_RESET, False):
+    _reset()
 
-# --- page ----------------------------------------------------------------------
-
-st.title("🛢️ Үйлчилгээ бүртгэх")
-common.nav_link(to_lookup=True)
-
-# Arrived from the lookup page ("➕ Үйлчилгээ бүртгэх" / "Шинэ машин бүртгэх").
+# From the card («Тос солилт бүртгэх») or search («Шинэ машин бүртгэх»): straight to the form.
 pending = st.session_state.pop(common.REC_PENDING, None)
 if pending:
-    st.session_state.pop("rec_saved", None)
-    st.session_state["rec_identifier_type"] = pending["identifier_type"]
-    st.session_state["rec_identifier"] = pending["identifier"]
     card = pending["card"]
-    _set_checked(pending["identifier_type"], pending["identifier"], [card] if card else [], card)
+    _set_checked(pending["identifier_type"], pending["identifier"], [card] if card else [])
+    _apply_form(logic.prefill_from_card(card))
+    st.session_state.pop("rec_saved", None)
+    _goto("form")
 
-# Widget values are dropped when the user visits another page; restore them.
-checked = st.session_state.get("rec_checked")
-if "f_oil_grade" not in st.session_state:
+step = st.session_state.get(STEP, "capture")
+# Widget values are dropped when the user visits another screen mid-form; restore them.
+if step == "form" and "f_oil_grade" not in st.session_state:
     _apply_form(logic.prefill_from_card(_selected_card()))
-if checked and "rec_identifier" not in st.session_state:
-    st.session_state["rec_identifier_type"] = checked["identifier_type"]
-    st.session_state["rec_identifier"] = checked["identifier"]
 
+common.header("Бүртгэх", back=common.HOME_PAGE)
 for level, text in st.session_state.pop("rec_msgs", []):
     getattr(st, level)(text)
 
-saved = st.session_state.get("rec_saved")
-if saved:
-    note = " (шинэ машин)" if saved["vehicle_created"] else ""
-    st.success(f"✅ Хадгалагдлаа: {saved['identifier']}{note}")
-    if st.button("Картыг харах", width="stretch"):
-        common.go_lookup(saved["identifier"])
-
-# 1. Photo -> automatic plate reading ---------------------------------------------
-with st.expander("📷 Зургаар таних", expanded=False):
-    if st.toggle("Камер нээх", key="rec_camera_on"):
-        st.camera_input("Дугаарын зураг авах", key="rec_cam", on_change=on_photo, args=("rec_cam",))
-    st.file_uploader(
-        "Эсвэл зураг оруулах", type=["jpg", "jpeg", "png", "heic", "heif"],
-        key="rec_upload", on_change=on_photo, args=("rec_upload",),
-    )
-    st.caption("Зураг хадгалагдахгүй. Уншигдсан дугаарыг доор шалгана уу.")
-
-# 2. Plate / fleet number -----------------------------------------------------------
-st.radio(
-    "Төрөл",
-    options=["plate", "fleet_no"],
-    format_func=logic.IDENTIFIER_TYPE_LABELS.get,
-    key="rec_identifier_type",
-    horizontal=True,
-)
-st.text_input("Дугаар", key="rec_identifier", placeholder="1234 УБА")
-st.button("Шалгах", on_click=on_check, width="stretch", type="primary")
-
-identifier_type = st.session_state.get("rec_identifier_type", "plate")
-identifier = (st.session_state.get("rec_identifier") or "").strip()
 checked = st.session_state.get("rec_checked")
 
-if checked and (checked["identifier"] != identifier or checked["identifier_type"] != identifier_type):
-    st.info("Дугаар өөрчлөгдсөн — «Шалгах» дарна уу.")
-    checked = None
+# --- steps ------------------------------------------------------------------------------
 
-# 3. Form --------------------------------------------------------------------------
-if checked:
+if step == "capture":
+    with st.container(key="card_capture"):
+        st.camera_input("Машины дугаарын зураг авна уу", key="rec_cam", on_change=on_photo, args=("rec_cam",))
+        st.file_uploader("Эсвэл зураг оруулах", type=["jpg", "jpeg", "png", "heic", "heif"],
+                         key="rec_upload", on_change=on_photo, args=("rec_upload",))
+        st.markdown('<span class="muted">Зураг хадгалагдахгүй.</span>', unsafe_allow_html=True)
+    st.button("Дугаарыг гараар оруулах", on_click=on_manual_open, width="stretch")
+
+elif step == "manual":
+    with st.container(key="card_manual"):
+        st.radio("Төрөл", options=["plate", "fleet_no"], format_func=logic.IDENTIFIER_TYPE_LABELS.get,
+                 key="rec_type", horizontal=True)
+        st.text_input("Дугаар", key="rec_manual", placeholder="1234 УБА")
+    st.button("Шалгах", on_click=on_manual_check, type="primary", width="stretch")
+    st.button("‹ Зураг авах", on_click=_goto, args=("capture",), type="tertiary")
+
+elif step == "confirm" and checked:
     matches = checked["matches"]
-    if identifier_type == "fleet_no" and matches:
-        st.radio(
-            "Аль компанийн машин бэ?",
-            options=list(range(len(matches))) + [NEW_VEHICLE],
-            format_func=lambda i: "Өөр компанийн шинэ машин"
-            if i == NEW_VEHICLE
-            else (matches[i].get("company") or {}).get("name", "?"),
-            key="rec_choice",
-            on_change=on_choice,
-        )
+    with st.container(key="card_confirm"):
+        common.plate_box(checked["identifier"])
+        if checked["identifier_type"] == "fleet_no" and matches:
+            st.radio(
+                "Аль компанийн машин бэ?",
+                options=list(range(len(matches))) + [NEW_VEHICLE],
+                format_func=lambda i: "Өөр компанийн шинэ машин" if i == NEW_VEHICLE
+                else (matches[i].get("company") or {}).get("name", "?"),
+                key="rec_choice",
+            )
+        card = _selected_card()
+        common.known_chip(card)
+        if card:
+            facts = [(card.get("company") or {}).get("name"), card.get("vehicle_model")]
+            st.markdown(f'<div class="muted">{" · ".join(f for f in facts if f)}</div>', unsafe_allow_html=True)
+    st.button("Зөв, үргэлжлүүлэх", on_click=on_confirm, type="primary", width="stretch")
+    st.button("Буруу байна — засах", on_click=on_wrong, width="stretch")
+
+elif step == "form" and checked:
     card = _selected_card()
     is_new = card is None
+    is_fleet = checked["identifier_type"] == "fleet_no"
     last = (card or {}).get("last_service") or {}
 
-    if is_new:
-        st.info("🆕 Шинэ машин — мэдээллийг бүрэн бөглөнө үү.")
-    else:
-        st.success(
-            f"Бүртгэлтэй машин · {card['service_count']} удаа · {logic.segment_label(card.get('segment'))}"
+    common.plate_box(checked["identifier"], small=True)
+    common.known_chip(card)
+
+    with st.container(key="card_fresh"):
+        st.number_input("Гүйлт (км)", min_value=0, step=1000, key="f_odometer_km", placeholder="одоогийн км",
+                        help=f"Өмнөх: {logic.format_number(last.get('odometer_km'), 'км')}"
+                        if last.get("odometer_km") is not None else None)
+        if is_fleet or last.get("engine_hours") is not None:
+            st.number_input("Моторын цаг", min_value=0.0, step=0.1, format="%.1f", key="f_engine_hours",
+                            placeholder="мото цаг")
+
+        try:
+            destinations = common.cached_destinations()
+        except api_client.ApiError:
+            destinations = []
+            st.warning("Газрын жагсаалт ачаалагдсангүй — «Бусад» сонгож бичнэ үү.")
+        dest_by_id = {d["id"]: d for d in destinations}
+        st.pills(
+            "Дараа нь хаашаа явах вэ?",
+            options=list(dest_by_id) + [logic.OTHER_DESTINATION],
+            format_func=lambda i: "Бусад" if i == logic.OTHER_DESTINATION else logic.destination_label(dest_by_id[i]),
+            key="f_destination_id",
         )
-        with st.expander("Машины карт"):
-            common.render_vehicle_card(card, key="rec_card", show_record_button=False)
+        if st.session_state.get("f_destination_id") == logic.OTHER_DESTINATION:
+            st.text_input("Газрын нэр", key="f_destination_raw")
+            st.pills("Маршрут", options=list(logic.ROUTE_LABELS), format_func=logic.ROUTE_LABELS.get, key="f_route")
 
-    company_locked = not is_new
-    st.text_input(
-        "Компани / эзэмшигч" + (" *" if not company_locked else ""),
-        key="f_company_name",
-        disabled=company_locked,
-    )
-    if is_new:
-        st.text_input("Машины загвар", key="f_vehicle_model", placeholder="Howo A7")
-
-    st.number_input(
-        "Гүйлт (км)",
-        min_value=0,
-        step=1000,
-        key="f_odometer_km",
-        placeholder="одоогийн км",
-        help=f"Өмнөх: {logic.format_number(last.get('odometer_km'), 'км')}" if last else None,
-    )
-    st.number_input(
-        "Моторын цаг (уурхайн машин)",
-        min_value=0.0,
-        step=0.1,
-        format="%.1f",
-        key="f_engine_hours",
-        placeholder="заавал биш",
-    )
-    st.caption("Гүйлт эсвэл моторын цагийн аль нэг заавал.")
-
-    st.text_input("Тосны төрөл *", key="f_oil_grade", placeholder="15W-40")
-    st.number_input("Литр *", min_value=0.0, step=0.5, format="%.1f", key="f_liters")
-
-    try:
-        destinations = common.cached_destinations()
-    except api_client.ApiError:
-        destinations = []
-        st.warning("Газрын жагсаалт ачаалагдсангүй — газрын нэрийг гараар бичнэ үү.")
-    dest_by_id = {d["id"]: d for d in destinations}
-    st.selectbox(
-        "Дараа нь хаашаа явах вэ? *",
-        options=list(dest_by_id) + [logic.OTHER_DESTINATION],
-        format_func=lambda i: "Жагсаалтад байхгүй…"
-        if i == logic.OTHER_DESTINATION
-        else logic.destination_label(dest_by_id[i]),
-        index=None,
-        placeholder="Сонгоно уу",
-        key="f_destination_id",
-    )
-    if st.session_state.get("f_destination_id") == logic.OTHER_DESTINATION:
-        st.text_input("Газрын нэр *", key="f_destination_raw")
-        st.selectbox(
-            "Маршрутын төрөл *",
-            options=list(logic.ROUTE_LABELS),
-            format_func=logic.ROUTE_LABELS.get,
-            index=None,
-            placeholder="Сонгоно уу",
-            key="f_route",
-        )
-
-    st.text_input("Жолоочийн нэр", key="f_driver_name")
-    st.text_input("Жолоочийн утас", key="f_driver_phone", placeholder="99112233")
-    st.text_input("Тос солигч", key="f_oil_changer")
+    with st.container(key="card_prev"):
+        if is_new:
+            st.markdown("**Машины мэдээлэл**")
+            st.text_input("Компани / эзэмшигч", key="f_company_name")
+            st.text_input("Машины загвар", key="f_vehicle_model", placeholder="Howo A7")
+            st.text_input("Тосны төрөл", key="f_oil_grade", placeholder="15W-40")
+            st.number_input("Литр", min_value=0.0, step=0.5, format="%.1f", key="f_liters")
+            st.text_input("Жолоочийн нэр", key="f_driver_name")
+            st.text_input("Жолоочийн утас", key="f_driver_phone", placeholder="99112233")
+            st.text_input("Тос солигч", key="f_oil_changer")
+        else:
+            st.markdown("**Өмнөхөөс авсан**")
+            current = {name: st.session_state.get(f"f_{name}") for name in logic.FORM_FIELDS}
+            st.markdown(f'<div class="muted">{logic.prev_summary(current)}</div>', unsafe_allow_html=True)
+            with st.expander("Засах"):
+                st.text_input("Тосны төрөл", key="f_oil_grade")
+                st.number_input("Литр", min_value=0.0, step=0.5, format="%.1f", key="f_liters")
+                st.text_input("Жолоочийн нэр", key="f_driver_name")
+                st.text_input("Жолоочийн утас", key="f_driver_phone")
+                st.text_input("Тос солигч", key="f_oil_changer")
 
     dup = st.session_state.get("rec_dup")
     if dup:
         ref = f" (№{dup['existing_id']})" if dup.get("existing_id") else ""
-        st.warning(
-            f"Энэ машинд өнөөдөр үйлчилгээ аль хэдийн бүртгэгдсэн байна{ref}. Дахин хадгалах уу?"
-        )
-        left, right = st.columns(2)
-        left.button("Ингээд хадгалах", on_click=on_force, width="stretch", type="primary")
-        right.button("Болих", on_click=on_cancel_dup, width="stretch")
+        st.warning(f"Энэ машинд өнөөдөр үйлчилгээ аль хэдийн бүртгэгдсэн байна{ref}. Дахин хадгалах уу?")
+        st.button("Ингээд хадгалах", on_click=on_force, type="primary", width="stretch")
+        st.button("Болих", on_click=on_cancel_dup, width="stretch")
     else:
-        st.button("💾 Хадгалах", on_click=on_save, width="stretch", type="primary")
+        st.button("Хадгалах", on_click=on_save, type="primary", width="stretch")
+
+elif step == "success" and st.session_state.get("rec_saved"):
+    saved = st.session_state["rec_saved"]
+    with st.container(key="card_success"):
+        st.markdown('<div class="done">✓</div><div class="done-title">Хадгалагдлаа</div>', unsafe_allow_html=True)
+        common.plate_box(saved["identifier"], small=True)
+        if saved["vehicle_created"]:
+            st.markdown('<div class="muted" style="text-align:center">Шинэ машин бүртгэгдлээ</div>',
+                        unsafe_allow_html=True)
+    st.button("Дараагийн машин", on_click=_reset, type="primary", width="stretch")
+    if saved.get("vehicle_id") and st.button("Машины карт үзэх", width="stretch"):
+        common.go_card(saved["vehicle_id"])
+
+else:  # unknown/stale step (e.g. state lost) -> start over
+    _reset()
+    st.rerun()
 
 common.logout_button()
