@@ -74,5 +74,6 @@ PROBLEMS / RISKS:
 CONTRACT CHANGES: none.
 SLIDE MATERIAL: t7_before_after/*.png ("less ink, more space": 800 → 600 weight, no borders,
   status = soft tint + dot + word).
-NEXT STEP: Ari reviews http://localhost:8501 / screenshots. PR ui → main stays the boss's decision.
+NEXT STEP: Pushed to origin/ui: T6 baseline e7182c2 (code) + 7c14b70 (docs); T7 8ac862d (design)
+  + 577dc23 (docs). Ari reviews http://localhost:8501 / screenshots. PR ui → main stays the boss's decision.
 ```
