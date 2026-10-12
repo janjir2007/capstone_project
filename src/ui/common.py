@@ -42,10 +42,29 @@ RECENT_MAX = 5
 # border only on focus) · primary #1F4E9D only for main buttons + selected chips · buttons 52 px.
 CSS = """
 <style>
-.block-container {padding-top: 64px; padding-bottom: 48px; padding-left: 16px; padding-right: 16px; max-width: 560px;}
+/* T8 spacing (exact values): no Streamlit top bar; page 16/20/32 px; max 480 px centered */
+[data-testid="stHeader"], [data-testid="stToolbar"], [data-testid="stDecoration"] {display: none !important;}
+.block-container {padding: 16px 20px 32px !important; max-width: 480px;}
+/* CSS-only markdown blocks are 0 px tall but still take a gap -> remove them from the layout */
+[data-testid="stElementContainer"]:has(style) {display: none;}
+[data-testid="stVerticalBlock"] {gap: 12px;}                  /* element -> element */
+[class*="st-key-card_"], [class*="st-key-act_"] {margin-top: 8px;}  /* 12 + 8 = 20 px before a card */
+[class*="st-key-card_"] {gap: 14px;}                          /* field -> field inside a card */
+.st-key-topbar {height: 44px; min-height: 44px;}             /* «‹ Буцах» + «Гео-Эксперт» */
+[data-testid="stElementContainer"]:has(> .stHeading h1) {margin: -4px 0 4px;}  /* 8 px above, 16 px below */
+[data-testid="stElementContainer"]:has(> .stHeading h2, > .stHeading h3) {margin-top: 8px;}  /* section: 20 px */
+.stHeading h1, .stHeading h2, .stHeading h3 {margin: 0 !important; padding: 0 !important;}
+/* right under the title the 16 px title gap wins (no extra card/section margin) */
+[data-testid="stElementContainer"]:has(> .stHeading h1) + [data-testid="stLayoutWrapper"] > [class*="st-key-card_"],
+[data-testid="stElementContainer"]:has(> .stHeading h1) + [data-testid="stElementContainer"] {margin-top: 0;}
+/* whatever follows a card (button, link, text) also starts 20 px below it */
+[data-testid="stLayoutWrapper"]:has(> [class*="st-key-card_"], > [class*="st-key-act_"])
+  + :not([data-testid="stLayoutWrapper"]:has(> [class*="st-key-card_"], > [class*="st-key-act_"])) {margin-top: 8px;}
+.st-key-btn_save, .st-key-btn_save_force {margin-top: 8px;}                        /* «Хадгалах»: 20 px above */
 b, strong, th {font-weight: 600 !important;}
-h1 {font-size: 22px !important; font-weight: 600 !important; letter-spacing: -.01em; padding: 0 0 8px !important;}
-h2, h3 {font-size: 15px !important; font-weight: 600 !important; padding: 16px 0 0 !important;}
+h1 {font-size: 22px !important; font-weight: 600 !important; letter-spacing: -.01em; line-height: 30px !important;}
+h2, h3 {font-size: 15px !important; font-weight: 600 !important; line-height: 22px !important;}
+[data-testid="stWidgetLabel"] {margin-bottom: 6px !important; min-height: 0 !important;}  /* label -> input */
 [data-testid="stWidgetLabel"] p {font-size: 13px !important; font-weight: 500 !important; color: #6B7280;}
 .stButton button, .stFormSubmitButton button {min-height: 52px; border-radius: 14px; padding: 8px 16px;}
 .stButton button p, .stFormSubmitButton button p {font-size: 16px; font-weight: 600;}
@@ -102,7 +121,7 @@ h2, h3 {font-size: 15px !important; font-weight: 600 !important; padding: 16px 0
 .center {display: flex; justify-content: center;}
 /* home action cards: HTML card + the real button/link stretched over it (one tap target) */
 [class*="st-key-act_"] {position: relative; background: #fff; border-radius: 16px; padding: 16px;
-  box-shadow: 0 1px 3px rgba(0,0,0,.06); gap: 0;}
+  box-shadow: 0 1px 3px rgba(0,0,0,.06); gap: 0 !important;}
 .st-key-act_record {background: #1F4E9D;}
 [class*="st-key-act_"] [data-testid="stElementContainer"]:has(.stButton, .stPageLink) {
   position: absolute; inset: 0; margin: 0; z-index: 2; height: 100%;}
@@ -151,7 +170,7 @@ def inject_css() -> None:
 
 def header(title: str, back: str | None = None) -> None:
     """Screen header: back link (inner screens) + small "Гео-Эксперт" + title (22/600)."""
-    with st.container(horizontal=True, vertical_alignment="center", horizontal_alignment="distribute"):
+    with st.container(key="topbar", horizontal=True, vertical_alignment="center", horizontal_alignment="distribute"):
         if back:
             if st.button("‹ Буцах", key="back", type="tertiary"):
                 st.switch_page(back)
@@ -307,9 +326,9 @@ def _pair(label: str, value: str) -> str:
 
 
 def render_tiles(card: dict) -> None:
-    """4 info pairs (label + value, 2 columns, no boxes): last change, oil · liters, destination, driver."""
+    """4 info pairs (label + value, 2 columns, no boxes): last change, «15W-40 · ердийн 30 л», destination, driver."""
     last = card.get("last_service") or {}
-    oil = f"{last.get('oil_grade', '')} · {logic.format_number(last.get('liters'), 'л')}" if last else logic.NOT_GIVEN
+    oil = logic.oil_pair_text(last, card.get("usual_liters"))
     driver = " · ".join(x for x in (last.get("driver_name"), last.get("driver_phone")) if x) or logic.NOT_GIVEN
     pairs = [
         _pair("Сүүлд солисон", last.get("service_date") or logic.NOT_GIVEN),

@@ -599,7 +599,7 @@ def test_single_match_opens_card(fake_api) -> None:
     assert "Таамаглал удахгүй нэмэгдэнэ" in page               # prediction null -> grey card
     assert "Шинэ · 1 удаа</span>" in page                       # grey segment chip next to the plate (T7)
     assert "Говь Тест ХХК" in page                             # one line company · model
-    assert "Сүүлд солисон" in page and "10W-40 · 32 л" in page  # info pairs
+    assert "Сүүлд солисон" in page and "10W-40 · ердийн\u00a032\u00a0л" in page  # usual liters back (T8)
     assert "Жолооч Д. · 99110002" in page and "Залгах" not in page  # driver tile, no call button (T6)
 
 

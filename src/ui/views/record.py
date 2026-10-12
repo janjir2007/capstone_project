@@ -350,10 +350,10 @@ elif step == "form" and checked:
     if dup:
         ref = f" (№{dup['existing_id']})" if dup.get("existing_id") else ""
         st.warning(f"Энэ машинд өнөөдөр үйлчилгээ аль хэдийн бүртгэгдсэн байна{ref}. Дахин хадгалах уу?")
-        st.button("Ингээд хадгалах", on_click=on_force, type="primary", width="stretch")
+        st.button("Ингээд хадгалах", key="btn_save_force", on_click=on_force, type="primary", width="stretch")
         st.button("Болих", on_click=on_cancel_dup, width="stretch")
     else:
-        st.button("Хадгалах", on_click=on_save, type="primary", width="stretch")
+        st.button("Хадгалах", key="btn_save", on_click=on_save, type="primary", width="stretch")
 
 elif step == "success" and st.session_state.get("rec_saved"):
     saved = st.session_state["rec_saved"]

@@ -140,6 +140,17 @@ def service_meter_text(service: dict) -> str:
     return " · ".join(parts) or NOT_GIVEN
 
 
+def oil_pair_text(last_service: dict | None, usual_liters: float | None) -> str:
+    """Card «Тос» pair: '15W-40 · ердийн 30 л' (T8: usual liters back); last liters if no usual."""
+    if not last_service:
+        return NOT_GIVEN
+    grade = last_service.get("oil_grade") or NOT_GIVEN
+    # non-breaking spaces: '32 л' never splits over two lines at 390 px
+    if usual_liters:
+        return f"{grade} · ердийн\u00a0{format_number(usual_liters, 'л')}".replace(" л", "\u00a0л")
+    return f"{grade} · {format_number(last_service.get('liters'), 'л')}".replace(" л", "\u00a0л")
+
+
 def service_line(service: dict) -> str:
     """One compact history line that fits a ~390 px phone screen."""
     return " · ".join(

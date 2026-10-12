@@ -131,15 +131,15 @@ def test_vehicle_card_fits_phone(ui_url, phone_page, shot_dir) -> None:
     _check_phone_width(phone_page, shot_dir, "screen_card")
 
 
-def test_header_not_hidden_and_light_buttons(ui_url, phone_page) -> None:
-    """CSS regressions AppTest cannot see: the header row must sit below Streamlit's top bar
-    (T6), and secondary buttons in a card are borderless grey (T7: no outlines)."""
+def test_top_row_and_light_buttons(ui_url, phone_page) -> None:
+    """CSS regressions AppTest cannot see: Streamlit's top bar is hidden and our top row starts
+    at 16 px (T8), and secondary buttons in a card are borderless grey (T7: no outlines)."""
     phone_page.goto(ui_url + "/search")
     phone_page.wait_for_selector("text=Камераар хайх", timeout=20000)
     phone_page.wait_for_timeout(800)
-    pill = phone_page.locator(".geo-pill").bounding_box()
-    bar = phone_page.locator('[data-testid="stHeader"]').bounding_box()
-    assert pill["y"] >= bar["y"] + bar["height"], "header row hidden under the top bar"
+    assert not phone_page.locator('[data-testid="stHeader"]').is_visible()  # T8: no Streamlit top bar
+    top = phone_page.locator(".st-key-topbar").bounding_box()
+    assert (round(top["y"]), round(top["height"])) == (16, 44)            # T8: 16 px page top, 44 px row
     bg, border = phone_page.locator(".st-key-btn_cam button").evaluate(
         "e => [getComputedStyle(e).backgroundColor, getComputedStyle(e).borderTopStyle]")
     assert (bg, border) == ("rgb(243, 244, 246)", "none")
@@ -167,6 +167,27 @@ def test_home_card_tap_opens_screen(ui_url, phone_page) -> None:
     assert box["height"] >= 52
     phone_page.mouse.click(box["x"] + box["width"] * 0.3, box["y"] + box["height"] / 2)
     phone_page.wait_for_selector("text=Камераар хайх", timeout=10000)
+
+
+SPACING_JS = """() => {
+  const r = e => e.getBoundingClientRect(), bc = document.querySelector('.block-container');
+  const cs = getComputedStyle(bc), h1 = document.querySelector('.stHeading h1');
+  const top = document.querySelector('.st-key-topbar');
+  const empty = [...bc.querySelectorAll('[data-testid="stElementContainer"]')]
+    .filter(e => getComputedStyle(e).display !== 'none' && r(e).height < 2).length;
+  return {pad: [cs.paddingTop, cs.paddingRight, cs.paddingBottom, cs.paddingLeft].join(' '),
+          top_to_title: Math.round(r(h1).top - r(top).bottom), empty};
+}"""
+
+
+@pytest.mark.parametrize("path", list(SCREENS))
+def test_spacing_exact_values(ui_url, phone_page, path) -> None:
+    """T8: page padding 16/20/32, 8 px top row -> title, no empty blocks taking a gap."""
+    phone_page.goto(ui_url + path)
+    phone_page.wait_for_selector(f"text={SCREENS[path]}", timeout=20000)
+    phone_page.wait_for_timeout(800)
+    m = phone_page.evaluate(SPACING_JS)
+    assert m == {"pad": "16px 20px 32px 20px", "top_to_title": 8, "empty": 0}, m
 
 
 def test_selected_chip_is_primary(ui_url, phone_page) -> None:

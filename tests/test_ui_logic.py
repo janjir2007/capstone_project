@@ -373,6 +373,14 @@ def test_oil_grade_split_and_resolve() -> None:
     assert logic.resolve_choice("Бусад", "  ") is None
 
 
+def test_oil_pair_text_usual_liters() -> None:
+    """T8: «Тос» pair shows usual liters; last liters only when there is no usual value."""
+    nb = "\u00a0"
+    assert logic.oil_pair_text({"oil_grade": "15W-40", "liters": 28.0}, 30.0) == f"15W-40 · ердийн{nb}30{nb}л"
+    assert logic.oil_pair_text({"oil_grade": "15W-40", "liters": 28.0}, None) == f"15W-40 · 28{nb}л"
+    assert logic.oil_pair_text(None, 30.0) == logic.NOT_GIVEN
+
+
 def test_today_text_mongolian() -> None:
     assert logic.today_text(date(2026, 10, 11)) == "10-р сарын 11, Ням"
     assert logic.today_text(date(2026, 10, 12)) == "10-р сарын 12, Даваа"

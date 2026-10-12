@@ -1,4 +1,4 @@
-"""Manager dashboard «Сануулга» (task 5.4, contract v0.5). Desktop-friendly, works on a phone.
+"""Manager dashboard «Сануулга» (task 5.4, contract v0.5). Same 480 px column as the other screens (T8).
 
 - Segment counts (GET /stats/segments): 4 tiles.
 - Due reminders (GET /reminders/due) in two groups: «Илгээх» and «Эрсдэлтэй»
@@ -15,9 +15,7 @@ import streamlit as st
 from src.ui import api_client, common, logic
 
 WIDE_CSS = """<style>
-.block-container {max-width: 1100px;}
-.seg-grid {display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 8px 0 8px;}
-@media (max-width: 640px) {.seg-grid {grid-template-columns: repeat(2, 1fr);}}
+.seg-grid {display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px;}  /* 2x2 in the 480 px column (T8) */
 .seg {background: #fff; border-radius: 16px; padding: 12px 16px; box-shadow: 0 1px 3px rgba(0,0,0,.06);}
 .seg .k {display: flex; align-items: center; gap: 6px;}
 .seg .v {font-size: 24px; font-weight: 600; margin-top: 2px;}
