@@ -40,7 +40,8 @@ from src.api.schemas import ServiceCreate, normalize_phone
 from tests.test_schema import database_url
 
 SQL_DIR = Path(__file__).resolve().parent.parent / "src" / "data"
-SQL_FILES = ["schema.sql", "migrations/001_destinations.up.sql", "sample_data.sql"]
+SQL_FILES = ["schema.sql", "migrations/001_destinations.up.sql", "migrations/003_reminders_sent.up.sql",
+             "sample_data.sql"]
 TODAY = date(2026, 9, 30)
 
 
@@ -156,13 +157,14 @@ def test_clean_company_name_keeps_case() -> None:
     assert clean_company_name("  Шинэ   Тээвэр  ХХК ") == "Шинэ Тээвэр ХХК"
 
 
-@pytest.mark.parametrize("typed", ["HT-12", "ht-12", " Ht - 12 ", "HT -12"])
-def test_fleet_no_key_ignores_case_and_spaces(typed: str) -> None:
-    assert fleet_no_key(typed) == "ht-12"
+@pytest.mark.parametrize("typed", ["HT-12", "ht-12", " Ht - 12 ", "HT -12", "HT12", "h-t 1-2"])
+def test_fleet_no_key_ignores_case_spaces_and_dashes(typed: str) -> None:
+    assert fleet_no_key(typed) == "ht12"  # task 4.4: dashes no longer count
 
 
-def test_fleet_no_key_keeps_dashes() -> None:
-    assert fleet_no_key("HT12") != fleet_no_key("HT-12")
+def test_fleet_no_key_keeps_other_characters() -> None:
+    assert fleet_no_key("HT-12") != fleet_no_key("HT-13")
+    assert fleet_no_key("HT/12") != fleet_no_key("HT12")
 
 
 # ==========================================================================
@@ -208,7 +210,8 @@ def client(pg: Connection) -> Iterator[TestClient]:
     # The app's own engine is unused (sessions are overridden); SQLite keeps
     # startup/shutdown away from the Postgres test connection.
     dummy_engine = create_engine("sqlite://", poolclass=StaticPool)
-    app = create_app(engine=dummy_engine)
+    # No model files here (predictions are tested in tests/test_serving.py): prediction = null.
+    app = create_app(engine=dummy_engine, model_dir=SQL_DIR / "no_models_here")
     app.dependency_overrides[get_session] = test_session
     app.dependency_overrides[get_today] = lambda: TODAY
     with TestClient(app) as test_client:
@@ -274,7 +277,7 @@ def test_vehicle_card_fields(client: TestClient) -> None:
     assert card["service_count"] == 3
     assert card["segment"] == "loyal"
     assert card["usual_liters"] == 32.0  # a JSON number, not "32.0"
-    assert card["prediction"] is None    # until task 4.3
+    assert card["prediction"] is None    # model not loaded in this fixture (4.3 tests: test_serving.py)
     assert [s["service_date"] for s in card["history"]] == ["2026-08-10", "2026-05-20", "2026-03-05"]
     assert card["last_service"] == card["history"][0]
 
@@ -466,10 +469,10 @@ def test_destination_ids_work_in_post_services(client: TestClient) -> None:
 
 # ---------------- lookup by fleet number ----------------
 
-@pytest.mark.parametrize("q", ["HT-12", "ht-12", " Ht - 12 "])
+@pytest.mark.parametrize("q", ["HT-12", "ht-12", " Ht - 12 ", "HT12", "ht 12"])
 def test_lookup_fleet_number(client: TestClient, q: str) -> None:
     result = client.get("/vehicles/lookup", params={"q": q}).json()
-    assert (result["match_type"], result["normalized"]) == ("fleet_no", "ht-12")
+    assert (result["match_type"], result["normalized"]) == ("fleet_no", "ht12")
     assert [v["id"] for v in result["vehicles"]] == [5]
     assert result["vehicles"][0]["identifier_type"] == "fleet_no"
 

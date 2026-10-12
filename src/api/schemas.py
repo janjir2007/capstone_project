@@ -170,6 +170,61 @@ class CompanyOut(BaseModel):
     name: str
 
 
+# --------------------------------------------------------------------------
+# Prediction (task 4.3)
+# --------------------------------------------------------------------------
+
+PredictionMethod = Literal["ridge", "b1", "b0"]
+Status = Literal["ok", "due_soon", "overdue"]
+
+
+class PredictionOut(BaseModel):
+    """GET /vehicles/{id}/prediction and VehicleCard.prediction: next oil change after the LAST service."""
+
+    vehicle_id: int
+    method: PredictionMethod = Field(
+        description="ridge = ML model; b1 = route formula (first visit, D-035); "
+                    "b0 = fixed interval (route not MN–China/MN–Russia, destination typed by hand, D-047)"
+    )
+    fallback_reason: Literal["first_visit", "destination_raw_only", "route_not_modelled", "unknown_destination"] | None
+    model_version: str = Field(description="Serving model file, e.g. ridge-1a2b3c4d (first 8 hex of its SHA-256)")
+    based_on_service_id: int
+    last_service_date: date
+    predicted_days: float = Field(description="Days from the last service to the next oil change")
+    predicted_date: date = Field(description="last_service_date + round(predicted_days)")
+    today: date = Field(description="Ulaanbaatar date used for days_left")
+    days_left: int = Field(description="predicted_date − today; negative = overdue")
+    status: Status = Field(description="D-007: ok > 14 days left, due_soon 0–14, overdue < 0")
+
+
+# --------------------------------------------------------------------------
+# POST /plates/recognize (task 4.3)
+# --------------------------------------------------------------------------
+
+class DetectionOut(BaseModel):
+    """Best plate box in pixels of the upright (EXIF-rotated) photo."""
+
+    box: tuple[float, float, float, float] = Field(description="x1, y1, x2, y2")
+    confidence: float
+
+
+class PlateRecognitionOut(BaseModel):
+    """What the photo says; the oil changer confirms or types it when needs_manual is true."""
+
+    plate_raw: str = Field(description="Recognizer text before normalization ('' if nothing read)")
+    plate_normalized: str | None = Field(description="normalize_plate(plate_raw); null if nothing read")
+    confidence: float = Field(description="Recognizer confidence 0–1 (product of the 7 character probabilities)")
+    needs_manual: bool
+    reason: Literal["no_plate", "empty", "invalid_format", "low_confidence"] | None = Field(
+        description="no_plate = detector found no plate; empty = 7 characters not found; "
+                    "invalid_format / low_confidence = D-044 rules"
+    )
+    detection: DetectionOut | None
+    detector: str
+    recognizer: str
+    ms: float = Field(description="Server time for detect + read, milliseconds")
+
+
 class VehicleCard(BaseModel):
     """GET /vehicles/{id}: everything the lookup screen shows about one truck."""
 
@@ -184,7 +239,9 @@ class VehicleCard(BaseModel):
     usual_liters: float | None = Field(description="Most frequent liters over all services; tie -> most recent")
     last_service: ServiceOut | None = Field(description="Pre-fills the recording form")
     history: list[ServiceOut] = Field(description="All services, newest first")
-    prediction: None = Field(default=None, description="Always null until task 4.3")
+    prediction: PredictionOut | None = Field(
+        default=None, description="Next oil change (task 4.3); null if the vehicle has no service or the model is not loaded"
+    )
 
 
 class LookupResult(BaseModel):
@@ -215,3 +272,56 @@ class SegmentStats(BaseModel):
     as_of: date
     total: int
     counts: SegmentCounts
+
+
+# --------------------------------------------------------------------------
+# Reminders (task 4.4)
+# --------------------------------------------------------------------------
+
+class DueReminder(BaseModel):
+    """One vehicle to remind today: GET /reminders/due."""
+
+    service_id: int = Field(description="Newest service = the reminder's id: POST /reminders/{service_id}/sent")
+    vehicle_id: int
+    identifier_type: Literal["plate", "fleet_no"]
+    identifier: str = Field(description="Plate or fleet number as confirmed, e.g. 1234 УБА")
+    plate_normalized: str | None
+    company: str
+    phone: str | None = Field(description="driver_phone of the newest service (D-004); null = no phone recorded")
+    driver_name: str | None
+    last_change_date: date
+    oil_grade: str
+    liters: float
+    method: PredictionMethod
+    buffer_days: int = Field(description="Days before predicted_date the reminder is sent (tuned per method on validation)")
+    predicted_date: date
+    send_on: date = Field(description="predicted_date − buffer_days")
+    days_left: int = Field(description="predicted_date − as_of")
+    status: Status
+    message_mn: str = Field(description="Mongolian reminder text (copy into the SMS / messenger)")
+
+
+class DueReminders(BaseModel):
+    """GET /reminders/due."""
+
+    as_of: date
+    contact_is_placeholder: bool = Field(description="true = GEO_EXPERT_PHONE is not set, the message has a fake number")
+    reminders: list[DueReminder] = Field(description="send_on <= as_of and not sent yet; oldest send_on first")
+
+
+class ReminderSentOut(BaseModel):
+    """POST /reminders/{service_id}/sent: the stored reminder."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    service_id: int
+    vehicle_id: int
+    phone: str | None
+    message_text: str
+    method: PredictionMethod
+    model_version: str
+    predicted_date: date
+    send_on: date
+    sent_at: datetime
+    already_sent: bool = Field(default=False, description="true = it was marked before; nothing changed")

@@ -1,9 +1,23 @@
-# Packages the API Docker image needs (task 4.1). Every line must also appear,
+# Packages the API Docker image needs (tasks 4.1, 4.3). Every line must also appear,
 # with the same pin, in requirements.txt (checked by tests/test_api.py).
-# Kept separate so the image does not ship torch/ultralytics/pandas before the
-# API actually serves models (task 4.3) — smaller image for free cloud tiers (RISK-04).
+# No torch / ultralytics / matplotlib: both networks run as ONNX files on onnxruntime
+# (task 4.3), which keeps the image small for free cloud tiers (RISK-04).
 fastapi==0.142.2
 uvicorn==0.54.0
 sqlalchemy==2.1.3
 pydantic==2.13.5  # request/response schemas (src/api/schemas.py, task 4.2); installed by fastapi anyway
 psycopg[binary]==3.3.6
+python-multipart==0.0.32  # file upload for POST /plates/recognize
+
+# --- Prediction (src/api/prediction.py -> src/common/features.py + the Ridge pipeline)
+numpy==2.4.6
+pandas==3.0.6
+scikit-learn==1.9.1  # unpickling the Ridge pipeline needs the SAME version it was saved with
+scipy==1.17.1  # installed by scikit-learn anyway; pinned for a reproducible image
+joblib==1.6.0  # loads models/next_change_model.joblib
+
+# --- Plate recognition (src/cv/plate_reader.py)
+onnxruntime==1.30.0
+opencv-python-headless==5.0.0.93
+pillow==12.3.0  # reads the uploaded photo + EXIF rotation
+pillow-heif==1.8.1  # HEIC/HEIF photos (iPhone default), task 4.4

@@ -28,6 +28,7 @@ services:
       - ./src/data/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
       # Migrations, in order (an existing volume needs them run by hand: README).
       - ./src/data/migrations/001_destinations.up.sql:/docker-entrypoint-initdb.d/02_migration_001_destinations.sql:ro
+      - ./src/data/migrations/003_reminders_sent.up.sql:/docker-entrypoint-initdb.d/03_migration_003_reminders_sent.sql:ro
       # All SQL files, available inside the container for manual psql -f runs.
       - ./src/data:/sql:ro
     healthcheck:
@@ -50,6 +51,14 @@ services:
       POSTGRES_HOST: db
       POSTGRES_PORT: "5432"
       TZ: Asia/Ulaanbaatar
+      # Task 4.3: model files are git-ignored and NOT in the image (.dockerignore);
+      # they are mounted read-only from ./models (make them with the 4.3 handoff "HOW TO RUN").
+      MODEL_DIR: /app/models
+      # Task 4.4: contact in the reminder message (placeholder until Ari sets the real number in .env).
+      GEO_EXPERT_NAME: ${GEO_EXPERT_NAME:-Geo-Expert}
+      GEO_EXPERT_PHONE: ${GEO_EXPERT_PHONE:-99000000}
+    volumes:
+      - ./models:/app/models:ro
     ports:
       - "${API_PORT:-8000}:8000"
     depends_on:

@@ -1,11 +1,12 @@
 """Vehicle lookup and vehicle card (task 4.2).
 
-GET /vehicles/lookup?q=   plate, fleet number or phone -> matching vehicle cards
-GET /vehicles/{id}        one vehicle card
+GET /vehicles/lookup?q=          plate, fleet number or phone -> matching vehicle cards
+GET /vehicles/{id}               one vehicle card
+GET /vehicles/{id}/prediction    next oil change only (task 4.3)
 
 The card = last service (pre-fills the recording form), usual liters, full
-history, service count and today's segment. prediction is always null until
-task 4.3 serves the model.
+history, service count, today's segment and the prediction (task 4.3; null
+when the model is not loaded).
 """
 
 from collections import Counter
@@ -14,21 +15,31 @@ from datetime import date
 from decimal import Decimal
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import func, select, text
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session
 
 from src.api.clock import get_today
 from src.api.db import get_session
+from src.api.history import service_records, visits_oldest_first
 from src.api.matching import fleet_no_key
 from src.api.models import ServiceRecord, Vehicle
-from src.api.schemas import CompanyOut, LookupResult, ServiceOut, VehicleCard, normalize_phone
+from src.api.prediction import Predictor, segment_of
+from src.api.schemas import CompanyOut, LookupResult, PredictionOut, ServiceOut, VehicleCard, normalize_phone
 from src.common.plates import normalize_plate
 
 router = APIRouter(prefix="/vehicles", tags=["vehicles"])
 
+
+
+def get_predictor(request: Request) -> Predictor | None:
+    """FastAPI dependency: the model loaded at startup (None if its files were missing)."""
+    return getattr(request.app.state, "predictor", None)
+
+
 SessionDep = Annotated[Session, Depends(get_session)]
 TodayDep = Annotated[date, Depends(get_today)]
+PredictorDep = Annotated[Predictor | None, Depends(get_predictor)]
 
 
 def usual_liters(liters_newest_first: Sequence[Decimal]) -> Decimal | None:
@@ -52,17 +63,25 @@ def vehicle_segment(session: Session, vehicle_id: int, as_of: date) -> str | Non
     ).scalar_one_or_none()
 
 
-def build_card(session: Session, vehicle: Vehicle, today: date) -> VehicleCard:
+def predict(predictor: Predictor | None, vehicle_id: int, records: Sequence[ServiceRecord],
+            today: date) -> PredictionOut | None:
+    """Prediction for the card; None without model or without services."""
+    if predictor is None or not records:
+        return None
+    return PredictionOut.model_validate(predictor.predict(vehicle_id, visits_oldest_first(records), today),
+                                        from_attributes=True)
+
+
+def build_card(session: Session, vehicle: Vehicle, today: date, predictor: Predictor | None = None) -> VehicleCard:
     """Assemble the vehicle card from the vehicle row and its service records."""
-    records = session.scalars(
-        select(ServiceRecord)
-        .options(selectinload(ServiceRecord.destination))  # load destinations in 1 extra query
-        .where(ServiceRecord.vehicle_id == vehicle.id)
-        # Same order as v_vehicle_service_summary: newest date first, id breaks ties.
-        .order_by(ServiceRecord.service_date.desc(), ServiceRecord.id.desc())
-    ).all()
+    records = service_records(session, vehicle.id)
     history = [ServiceOut.model_validate(record) for record in records]
     liters = usual_liters([record.liters for record in records])
+    prediction = predict(predictor, vehicle.id, records, today)
+    # Same rule as GET /stats/segments: with a prediction, at_risk comes from it (D-007, task 4.4);
+    # without the model, the database function (count-based) answers.
+    segment = (segment_of(len(records), prediction.predicted_date, today) if prediction is not None
+               else vehicle_segment(session, vehicle.id, today))
     return VehicleCard(
         id=vehicle.id,
         identifier_type=vehicle.identifier_type,
@@ -71,11 +90,11 @@ def build_card(session: Session, vehicle: Vehicle, today: date) -> VehicleCard:
         vehicle_model=vehicle.vehicle_model,
         company=CompanyOut.model_validate(vehicle.company),
         service_count=len(history),
-        segment=vehicle_segment(session, vehicle.id, today),
+        segment=segment if records else None,
         usual_liters=None if liters is None else float(liters),
         last_service=history[0] if history else None,
         history=history,
-        prediction=None,
+        prediction=prediction,
     )
 
 
@@ -120,6 +139,7 @@ def vehicles_by_fleet_no(session: Session, query: str) -> list[Vehicle]:
 def lookup(
     session: SessionDep,
     today: TodayDep,
+    predictor: PredictorDep,
     q: Annotated[str, Query(min_length=1, description="Plate or fleet number (any spacing/case) or 8-digit phone")],
 ) -> LookupResult:
     """Find vehicles by plate, fleet number or driver phone.
@@ -154,14 +174,30 @@ def lookup(
         query=q,
         match_type=match_type,
         normalized=normalized,
-        vehicles=[build_card(session, vehicle, today) for vehicle in vehicles],
+        vehicles=[build_card(session, vehicle, today, predictor) for vehicle in vehicles],
     )
 
 
 @router.get("/{vehicle_id}", response_model=VehicleCard)
-def get_vehicle(vehicle_id: int, session: SessionDep, today: TodayDep) -> VehicleCard:
+def get_vehicle(vehicle_id: int, session: SessionDep, today: TodayDep, predictor: PredictorDep) -> VehicleCard:
     """The vehicle card. 404 if the id does not exist."""
     vehicle = session.get(Vehicle, vehicle_id)
     if vehicle is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"vehicle {vehicle_id} not found")
-    return build_card(session, vehicle, today)
+    return build_card(session, vehicle, today, predictor)
+
+
+@router.get("/{vehicle_id}/prediction", response_model=PredictionOut)
+def get_prediction(vehicle_id: int, session: SessionDep, today: TodayDep, predictor: PredictorDep) -> PredictionOut:
+    """Next oil change after the vehicle's newest service.
+
+    404 unknown vehicle or no service yet; 503 if the model files were not loaded.
+    """
+    if predictor is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "prediction model not loaded")
+    if session.get(Vehicle, vehicle_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"vehicle {vehicle_id} not found")
+    result = predict(predictor, vehicle_id, service_records(session, vehicle_id), today)
+    if result is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"vehicle {vehicle_id} has no service yet")
+    return result
