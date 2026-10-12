@@ -18,12 +18,12 @@ SEGMENT_LABELS: dict[str, str] = {
     "loyal": "Байнгын",
     "at_risk": "Эрсдэлтэй",
 }
-# st.badge colors
-SEGMENT_COLORS: dict[str, str] = {
-    "new": "blue",
-    "returning": "green",
-    "loyal": "violet",
-    "at_risk": "red",
+# small colored dot next to the segment word (T7: the word carries the meaning, the dot is a hint)
+SEGMENT_DOTS: dict[str, str] = {
+    "new": "#1F4E9D",
+    "returning": "#1E7A4C",
+    "loyal": "#6D28D9",
+    "at_risk": "#B42318",
 }
 
 ROUTE_LABELS: dict[str, str] = {
@@ -44,13 +44,14 @@ PREDICTION_STATUS_LABELS: dict[str, str] = {
     "due_soon": "Удахгүй",
     "overdue": "Хэтэрсэн",
 }
-# (text color, background) per status — DESIGN v2
-STATUS_COLORS: dict[str, tuple[str, str]] = {  # AAA contrast (≥ 7.4:1), same everywhere (T6)
-    "ok": ("#14532D", "#E3F1E7"),
-    "due_soon": ("#6B3F00", "#FBEFD6"),
-    "overdue": ("#8C1D18", "#F9E3E1"),
+# (text color, soft tint) per status, same on card + dashboard, always shown with the word.
+# T7 values (Ari): WCAG AA on the tint (4.75 / 4.87 / 5.76 : 1), tested >= 4.5.
+STATUS_COLORS: dict[str, tuple[str, str]] = {
+    "ok": ("#1E7A4C", "#E8F5EE"),
+    "due_soon": ("#A05A00", "#FFF4E0"),
+    "overdue": ("#B42318", "#FDECEC"),
 }
-PENDING_COLORS = ("#3F4552", "#ECEEF1")  # grey block while prediction is null (8.3:1)
+PENDING_COLORS = ("#4B5563", "#F3F4F6")  # grey block while prediction is null (6.9:1)
 
 # Prediction.method / fallback_reason (contract v0.5) -> short Mongolian note
 METHOD_LABELS: dict[str, str] = {
@@ -256,6 +257,14 @@ def is_at_risk(reminder: dict) -> bool:
     """True if this due reminder belongs to «Эрсдэлтэй» (overdue beyond the grace)."""
     days_left = reminder.get("days_left")
     return days_left is not None and days_left < -AT_RISK_GRACE_DAYS
+
+
+WEEKDAYS_MN = ("Даваа", "Мягмар", "Лхагва", "Пүрэв", "Баасан", "Бямба", "Ням")
+
+
+def today_text(day: date) -> str:
+    """Home date line: '10-р сарын 11, Бямба'."""
+    return f"{day.month}-р сарын {day.day}, {WEEKDAYS_MN[day.weekday()]}"
 
 
 def split_reminders(reminders: list[dict]) -> tuple[list[dict], list[dict]]:

@@ -1,4 +1,4 @@
-"""Search screen (task 5.3 / DESIGN v2): plate, phone or fleet number -> vehicle card.
+"""Search screen (task 5.3 / DESIGN v4): plate, phone or fleet number -> vehicle card.
 
 GET /vehicles/lookup returns a LIST (a phone can match several trucks, a fleet
 number several companies). Exactly one match opens the card at once; several
@@ -39,7 +39,7 @@ with st.container(key="card_search"):
         # The API still matches fleet numbers too; the label names the two common cases (T6).
         st.text_input("Улсын дугаар эсвэл утас", key="search_q", placeholder="1234 УБА · 99112233")
         searched = st.form_submit_button("Хайх", type="primary", width="stretch")
-    st.button("Камераар хайх", key="btn_dark_cam", width="stretch", on_click=on_toggle_camera,
+    st.button("Камераар хайх", key="btn_cam", width="stretch", on_click=on_toggle_camera,
               icon=":material/photo_camera:")
     if st.session_state.get("search_cam_open"):
         st.camera_input("Дугаарын зураг", key="search_cam", on_change=on_photo, args=("search_cam",),
@@ -71,9 +71,9 @@ if result:
     with st.container(key="card_results"):
         if not vehicles:
             if result.get("match_type") == "phone":
-                st.markdown("**Олдсонгүй.** Энэ утасны дугаартай үйлчилгээ бүртгэгдээгүй байна.")
+                st.markdown("Олдсонгүй. Энэ утасны дугаартай үйлчилгээ бүртгэгдээгүй байна.")
             else:
-                st.markdown("**Олдсонгүй.** Энэ машин бүртгэлгүй байна.")
+                st.markdown("Олдсонгүй. Энэ машин бүртгэлгүй байна.")
             if result.get("match_type") != "phone" and st.button("Шинэ машин бүртгэх", type="primary",
                                                                   width="stretch"):
                 common.go_record("plate", result.get("query", ""), None)

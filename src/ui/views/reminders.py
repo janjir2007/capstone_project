@@ -16,15 +16,18 @@ from src.ui import api_client, common, logic
 
 WIDE_CSS = """<style>
 .block-container {max-width: 1100px;}
-.seg-grid {display: grid; grid-template-columns: repeat(4, 1fr); gap: .6rem; margin: .25rem 0 1rem;}
+.seg-grid {display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 8px 0 8px;}
 @media (max-width: 640px) {.seg-grid {grid-template-columns: repeat(2, 1fr);}}
-.seg {background: #fff; border-radius: 20px; padding: .8rem 1rem; box-shadow: 0 1px 2px rgba(16,24,40,.05), 0 6px 18px rgba(16,24,40,.06);}
-.seg .k {font-size: .85rem; color: #5f6368;} .seg .v {font-size: 2rem; font-weight: 800;}
-.rem-top {display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: .4rem;}
-.rem-plate {font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 1.35rem; font-weight: 700;
-  border: 2px solid #111; border-radius: 10px; padding: .1rem .5rem; background: #fff;}
-.rem-status {font-size: .85rem; font-weight: 700; border-radius: 999px; padding: .25rem .7rem;}
-.rem-meta {font-size: .9rem; color: #3c4043; margin: .35rem 0;}
+.seg {background: #fff; border-radius: 16px; padding: 12px 16px; box-shadow: 0 1px 3px rgba(0,0,0,.06);}
+.seg .k {display: flex; align-items: center; gap: 6px;}
+.seg .v {font-size: 24px; font-weight: 600; margin-top: 2px;}
+.rem-top {display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px;}
+.rem-status {display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600;
+  border-radius: 999px; padding: 4px 10px;}
+.rem-meta {font-size: 13px; color: #4B5563; margin: 8px 0; line-height: 1.6;}
+.rem-meta b {color: #111827; font-weight: 500 !important;}
+.note-line {display: flex; align-items: center; gap: 6px; font-size: 13px; color: #6B7280; margin: 0 0 8px;}
+[data-testid="stCode"] pre {background: #F6F7F9; border: none; font-family: inherit; font-size: 14px;}
 </style>"""
 
 
@@ -46,7 +49,8 @@ def on_sent(service_id: int) -> None:
 def segment_tiles(stats: dict) -> None:
     counts = stats.get("counts") or {}
     tiles = "".join(
-        f'<div class="seg"><div class="k">{logic.SEGMENT_LABELS[s]}</div><div class="v">{counts.get(s, 0)}</div></div>'
+        f'<div class="seg"><div class="k"><i class="dot" style="background:{logic.SEGMENT_DOTS[s]}"></i>'
+        f'{logic.SEGMENT_LABELS[s]}</div><div class="v">{counts.get(s, 0)}</div></div>'
         for s in logic.SEGMENT_ORDER
     )
     st.markdown(f'<div class="seg-grid">{tiles}</div>', unsafe_allow_html=True)
@@ -59,8 +63,9 @@ def reminder_row(r: dict) -> None:
     status = logic.PREDICTION_STATUS_LABELS.get(r.get("status"), r.get("status") or "")
     with st.container(key=f"card_rem_{r['service_id']}"):
         st.markdown(
-            f'<div class="rem-top"><span class="rem-plate">{html.escape(r["identifier"])}</span>'
-            f'<span class="rem-status" style="color:{fg};background:{bg}">{html.escape(status)} · '
+            f'<div class="rem-top"><span class="plate">{html.escape(r["identifier"])}</span>'
+            f'<span class="rem-status" style="color:{fg};background:{bg}"><i class="dot" style="background:{fg}"></i>'
+            f'{html.escape(status)} · '
             f'{html.escape(logic.days_left_text(r.get("days_left")))}</span></div>'
             f'<div class="rem-meta">Утас: <b>{html.escape(r.get("phone") or "—")}</b>'
             f' · {html.escape(r.get("driver_name") or "")} · {html.escape(r.get("company") or "")}<br>'
@@ -97,7 +102,9 @@ except api_client.ApiError as exc:
 
 if due is not None:
     if due.get("contact_is_placeholder"):
-        st.warning("Мессеж дэх холбоо барих утас түр дугаар байна (API-д GEO_EXPERT_PHONE тохируулаагүй).")
+        st.markdown('<div class="note-line"><i class="dot" style="background:#A05A00"></i>'
+                    'Мессеж дэх утас түр дугаар байна (API-д GEO_EXPERT_PHONE тохируулаагүй).</div>',
+                    unsafe_allow_html=True)
     to_send, at_risk = logic.split_reminders(due.get("reminders") or [])
     st.button("Шинэчлэх", key="rem_refresh", type="tertiary")  # any click reruns -> reloads the list
     for title, group, empty in (

@@ -337,7 +337,7 @@ def test_back_button_goes_home(fake_api) -> None:
 def test_new_vehicle_full_flow(fake_api) -> None:
     at = type_plate(run_app(RECORD), "0001 ТЕС")
     assert step(at) == "confirm"
-    assert '<div class="plate-box">0001 ТЕС</div>' in html_blocks(at)
+    assert '<span class="plate">0001 ТЕС</span>' in html_blocks(at)
     assert "Шинэ машин" in html_blocks(at)
 
     at = click(at, "Зөв, үргэлжлүүлэх")
@@ -577,11 +577,11 @@ def test_single_match_opens_card(fake_api) -> None:
     assert not at.exception
     assert texts(at.title) == ["Машины карт"]
     page = html_blocks(at)
-    assert '<div class="plate-box">0002 ТЕС</div>' in page
+    assert '<span class="plate">0002 ТЕС</span>' in page
     assert "Таамаглал удахгүй нэмэгдэнэ" in page               # prediction null -> grey card
-    assert ":blue-badge[Шинэ]" in page                         # segment
-    assert "ердийн 32 л" in page                               # usual liters
-    assert "Сүүлд солисон" in page and "10W-40 · 32 л" in page  # 3 tiles
+    assert "Шинэ · 1 удаа</span>" in page                       # grey segment chip next to the plate (T7)
+    assert "Говь Тест ХХК" in page                             # one line company · model
+    assert "Сүүлд солисон" in page and "10W-40 · 32 л" in page  # info pairs
     assert "Жолооч Д. · 99110002" in page and "Залгах" not in page  # driver tile, no call button (T6)
 
 
@@ -591,7 +591,7 @@ def test_card_shows_prediction(fake_api) -> None:
     at = search(run_app(SEARCH), "0002 ТЕС")
     card = next(t for t in texts(at.markdown) if 'class="pc"' in t)
     assert "9 хоног" in card and "үлдсэн" in card and "Удахгүй" in card and "2026-10-21" in card
-    assert "#FBEFD6" in card and "Дараагийн солилт: 2026-10-21" in card
+    assert "#FFF4E0" in card and "Дараагийн солилт: 2026-10-21" in card
 
 
 def test_search_by_phone_and_recent(fake_api) -> None:
@@ -649,12 +649,12 @@ def test_save_then_find_by_plate_and_phone(fake_api) -> None:
     at = click(fill_new_vehicle(to_form(run_app(RECORD), "0001 ТЕС")), "Хадгалах")
     at = click(at, "Машины карт үзэх")
     assert texts(at.title) == ["Машины карт"]
-    assert '<div class="plate-box">0001 ТЕС</div>' in html_blocks(at)
+    assert '<span class="plate">0001 ТЕС</span>' in html_blocks(at)
 
     at = search(run_app(SEARCH), "0001 ТЕС")
-    assert '<div class="plate-box">0001 ТЕС</div>' in html_blocks(at)
+    assert '<span class="plate">0001 ТЕС</span>' in html_blocks(at)
     at = search(run_app(SEARCH), "99110099")
-    assert '<div class="plate-box">0001 ТЕС</div>' in html_blocks(at)
+    assert '<span class="plate">0001 ТЕС</span>' in html_blocks(at)
     assert "Туршилт Тээвэр ХХК" in html_blocks(at)
 
 
@@ -676,6 +676,20 @@ def test_home_has_reminders_link(fake_api) -> None:
     assert any(link.label == "Сануулга" for link in at.get("page_link"))
 
 
+def test_home_reminder_summary(fake_api) -> None:
+    """T7: the «Сануулга» card shows today's counts from GET /reminders/due."""
+    fake_api.reminders = [reminder(1, "0001 ТЕС", 5, "due_soon"), reminder(3, "0003 ТЕС", -20, "overdue")]
+    at = run_app()
+    assert "Өнөөдөр сануулах: 1" in html_blocks(at)
+
+
+def test_home_without_predictions_still_works(fake_api) -> None:
+    fake_api.reminders = None  # -> 503 (model not loaded)
+    at = run_app()
+    assert not at.exception and not at.error
+    assert "Үйлчлүүлэгчдэд сануулга илгээх" in html_blocks(at)
+
+
 def test_dashboard_tiles_and_two_groups(fake_api) -> None:
     fake_api.reminders = [reminder(1, "0001 ТЕС", 5, "due_soon"), reminder(2, "0002 ТЕС", -3, "overdue"),
                           reminder(3, "0003 ТЕС", -20, "overdue")]
@@ -683,11 +697,11 @@ def test_dashboard_tiles_and_two_groups(fake_api) -> None:
     assert not at.exception
     page = html_blocks(at)
     for label, count in (("Шинэ", 2), ("Давтан", 3), ("Байнгын", 1), ("Эрсдэлтэй", 1)):
-        assert f'<div class="k">{label}</div><div class="v">{count}</div>' in page
+        assert f'{label}</div><div class="v">{count}</div>' in page
     assert texts(at.subheader) == ["Сегмент", "Илгээх (2)", "Эрсдэлтэй (1)"]
     assert "0003 ТЕС" in page and "Илгээх өдөр: <b>2026-09-25</b>" in page and "99110002" in page
     assert [c.value for c in at.code][0].startswith("Сайн байна уу! 0001 ТЕС")  # copyable text
-    assert any("GEO_EXPERT_PHONE" in t for t in texts(at.warning))  # placeholder contact
+    assert "GEO_EXPERT_PHONE" in page and not at.warning  # placeholder contact = one small line (T7)
 
 
 def test_mark_sent_removes_row(fake_api) -> None:

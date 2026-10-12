@@ -112,11 +112,11 @@ def test_screen_fits_phone(ui_url, phone_page, shot_dir, path) -> None:
 
 
 def test_theme_loaded(ui_url, phone_page) -> None:
-    """Started from src/ui/ -> .streamlit/config.toml applies (background #F4F5F7)."""
+    """Started from src/ui/ -> .streamlit/config.toml applies (background #F6F7F9)."""
     phone_page.goto(ui_url + "/")
     phone_page.wait_for_selector("text=Тос солилт", timeout=20000)
     bg = phone_page.evaluate("getComputedStyle(document.querySelector('.stApp')).backgroundColor")
-    assert bg == "rgb(244, 245, 247)"
+    assert bg == "rgb(246, 247, 249)"
 
 
 def test_vehicle_card_fits_phone(ui_url, phone_page, shot_dir) -> None:
@@ -127,19 +127,58 @@ def test_vehicle_card_fits_phone(ui_url, phone_page, shot_dir) -> None:
     phone_page.wait_for_selector("text=Камераар хайх", timeout=20000)
     phone_page.get_by_label("Улсын дугаар эсвэл утас").fill(plate)
     phone_page.get_by_role("button", name="Хайх", exact=True).click()
-    phone_page.wait_for_selector(".plate-box", timeout=15000)
+    phone_page.wait_for_selector(".plate", timeout=15000)
     _check_phone_width(phone_page, shot_dir, "screen_card")
 
 
-def test_header_not_hidden_and_dark_button_visible(ui_url, phone_page) -> None:
-    """CSS regressions AppTest cannot see (T6): the header row must sit below Streamlit's top
-    bar, and the dark «Камераар хайх» button must really be dark with white text."""
+def test_header_not_hidden_and_light_buttons(ui_url, phone_page) -> None:
+    """CSS regressions AppTest cannot see: the header row must sit below Streamlit's top bar
+    (T6), and secondary buttons in a card are borderless grey (T7: no outlines)."""
     phone_page.goto(ui_url + "/search")
     phone_page.wait_for_selector("text=Камераар хайх", timeout=20000)
     phone_page.wait_for_timeout(800)
     pill = phone_page.locator(".geo-pill").bounding_box()
     bar = phone_page.locator('[data-testid="stHeader"]').bounding_box()
     assert pill["y"] >= bar["y"] + bar["height"], "header row hidden under the top bar"
-    bg, fg = phone_page.locator(".st-key-btn_dark_cam button").evaluate(
-        "e => [getComputedStyle(e).backgroundColor, getComputedStyle(e).color]")
-    assert (bg, fg) == ("rgb(20, 23, 28)", "rgb(255, 255, 255)")
+    bg, border = phone_page.locator(".st-key-btn_cam button").evaluate(
+        "e => [getComputedStyle(e).backgroundColor, getComputedStyle(e).borderTopStyle]")
+    assert (bg, border) == ("rgb(243, 244, 246)", "none")
+
+
+MAX_WEIGHT_JS = """() => Math.max(0, ...[...document.querySelectorAll('.block-container *')]
+  .filter(e => [...e.childNodes].some(n => n.nodeType === 3 && n.textContent.trim()))
+  .map(e => parseInt(getComputedStyle(e).fontWeight)))"""
+
+
+@pytest.mark.parametrize("path", list(SCREENS))
+def test_max_font_weight_600(ui_url, phone_page, path) -> None:
+    """T7: lighter type, nothing heavier than 600."""
+    phone_page.goto(ui_url + path)
+    phone_page.wait_for_selector(f"text={SCREENS[path]}", timeout=20000)
+    phone_page.wait_for_timeout(800)
+    assert phone_page.evaluate(MAX_WEIGHT_JS) <= 600
+
+
+def test_home_card_tap_opens_screen(ui_url, phone_page) -> None:
+    """T7: the whole «Хайх» card is the tap target (button stretched over the HTML card)."""
+    phone_page.goto(ui_url + "/")
+    phone_page.wait_for_selector("text=Сайн байна уу", timeout=20000)
+    box = phone_page.locator(".st-key-act_search").bounding_box()
+    assert box["height"] >= 52
+    phone_page.mouse.click(box["x"] + box["width"] * 0.3, box["y"] + box["height"] / 2)
+    phone_page.wait_for_selector("text=Камераар хайх", timeout=10000)
+
+
+def test_selected_chip_is_primary(ui_url, phone_page) -> None:
+    """T7: selected chip = primary fill, white text (oil grade defaults to 15W-40 on a new truck)."""
+    phone_page.goto(ui_url + "/record")
+    phone_page.wait_for_selector("text=Дугаарыг гараар оруулах", timeout=20000)
+    phone_page.get_by_role("button", name="Дугаарыг гараар оруулах").click()
+    phone_page.get_by_label("Улсын дугаар").fill("0000 ТЕС")
+    phone_page.get_by_role("button", name="Шалгах").click()
+    phone_page.get_by_role("button", name="Зөв, үргэлжлүүлэх").click()
+    chip = phone_page.locator('[data-testid="stButtonGroup"] button[aria-checked="true"]', has_text="15W-40")
+    chip.wait_for(timeout=10000)
+    bg, fg, height = chip.evaluate(
+        "e => [getComputedStyle(e).backgroundColor, getComputedStyle(e).color, e.getBoundingClientRect().height]")
+    assert (bg, fg) == ("rgb(31, 78, 157)", "rgb(255, 255, 255)") and height >= 36

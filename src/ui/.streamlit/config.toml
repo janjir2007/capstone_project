@@ -1,23 +1,26 @@
-# Streamlit theme + client settings — DESIGN v3 (task T6 / 5.3d).
+# Streamlit theme + client settings — DESIGN v4 (task T7: calm, modern, light).
 # Streamlit reads .streamlit/config.toml from the CURRENT folder, so start the app
 # from src/ui/:   cd src/ui && streamlit run app.py   (docs/ui_run.md)
 # Primary color #1F4E9D is a placeholder until Geo-Expert's brand color is known.
-# Contrast (WCAG): text 18:1, muted text 7.3:1, white on primary 8:1 — all AAA.
+# Contrast (WCAG): text #111827 16:1, secondary #6B7280 4.8:1 on white, white on primary 8:1.
 
 [theme]
 base = "light"
 primaryColor = "#1F4E9D"
-backgroundColor = "#F4F5F7"
-secondaryBackgroundColor = "#ECEEF1"  # inputs, pills
-textColor = "#14171C"
-borderColor = "#DADDE2"
-baseRadius = "14px"
-buttonRadius = "16px"
-baseFontSize = 16
+backgroundColor = "#F6F7F9"
+secondaryBackgroundColor = "#F3F4F6"  # input fill (no border; primary border only on focus)
+textColor = "#111827"
+borderColor = "#E5E7EB"
+showWidgetBorder = false
+baseRadius = "12px"
+buttonRadius = "14px"
+baseFontSize = 15
+baseFontWeight = 400
 # Montserrat from Google Fonts. The CSS includes the cyrillic-ext subset, which has the
 # Mongolian letters Ө ө Ү ү (U+04E8/9, U+04AE/F); checked in the browser (docs/ui_handoff_t6.md).
-font = "Montserrat:https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&display=swap, sans-serif"
-headingFontWeights = [800, 700, 700, 700, 700, 700]
+# Only 400/500/600 are loaded: max weight anywhere = 600 (T7).
+font = "Montserrat:https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600&display=swap, sans-serif"
+headingFontWeights = [600, 600, 600, 600, 600, 600]
 
 [client]
 toolbarMode = "viewer"           # no "Deploy" button / developer menu

@@ -1,4 +1,4 @@
-"""Record screen (task 5.2, DESIGN v3 / T6): camera -> confirm plate -> form -> saved.
+"""Record screen (task 5.2, DESIGN v4 / T7): camera -> confirm plate -> form -> saved.
 
 Steps (st.session_state["rec_step"]):
 - capture: camera (or upload) -> POST /plates/recognize. Clear read -> lookup ->
@@ -20,6 +20,8 @@ never stored and never sent anywhere except POST /plates/recognize (D-070).
 Buttons use on_click callbacks: a callback runs BEFORE the screen is redrawn,
 so it may change widget values (pre-fill, reset) and the step.
 """
+
+import html
 
 import streamlit as st
 
@@ -268,7 +270,6 @@ elif step == "confirm" and checked:
     matches = checked["matches"]
     _photo_preview()
     with st.container(key="card_confirm"):
-        common.plate_box(checked["identifier"])
         if checked["identifier_type"] == "fleet_no" and matches:
             st.radio(
                 "Аль компанийн машин бэ?",
@@ -278,7 +279,7 @@ elif step == "confirm" and checked:
                 key="rec_choice",
             )
         card = _selected_card()
-        common.known_chip(card)
+        common.plate_box(checked["identifier"], common.known_chip_html(card))
         if card:
             facts = [(card.get("company") or {}).get("name"), card.get("vehicle_model")]
             st.markdown(f'<div class="muted">{" · ".join(f for f in facts if f)}</div>', unsafe_allow_html=True)
@@ -292,8 +293,7 @@ elif step == "form" and checked:
     last = (card or {}).get("last_service") or {}
 
     _photo_preview()
-    common.plate_box(checked["identifier"], small=True)
-    common.known_chip(card)
+    common.plate_box(checked["identifier"], common.known_chip_html(card))
 
     with st.container(key="card_fresh"):
         st.number_input("Гүйлт (км)", min_value=0, step=1000, key="f_odometer_km", placeholder="одоогийн км",
@@ -326,7 +326,7 @@ elif step == "form" and checked:
 
     with st.container(key="card_prev"):
         if is_new:
-            st.markdown("**Шинэ машин**")
+            st.markdown('<div class="sec">Шинэ машин</div>', unsafe_allow_html=True)
             st.text_input("Компани / эзэмшигч", key="f_company_name",
                           help="Хувь хүн бол эзэмшигчийн нэр")
             st.selectbox("Машины загвар", options=logic.model_options(st.session_state.get("rec_model_seed")),
@@ -337,7 +337,7 @@ elif step == "form" and checked:
             st.text_input("Жолоочийн нэр", key="f_driver_name")
             st.text_input("Жолоочийн утас", key="f_driver_phone", placeholder="99112233")
         else:
-            st.markdown("**Өмнөхөөс авсан**")
+            st.markdown('<div class="sec">Өмнөхөөс авсан</div>', unsafe_allow_html=True)
             st.markdown(f'<div class="muted">{logic.prev_summary(_form_values())}</div>', unsafe_allow_html=True)
             with st.expander("Засах"):
                 st.number_input("Литр", min_value=0.0, step=0.5, format="%.1f", key="f_liters")
@@ -357,7 +357,8 @@ elif step == "success" and st.session_state.get("rec_saved"):
     saved = st.session_state["rec_saved"]
     with st.container(key="card_success"):
         st.markdown('<div class="done">✓</div><div class="done-title">Хадгалагдлаа</div>', unsafe_allow_html=True)
-        common.plate_box(saved["identifier"], small=True)
+        st.markdown(f'<div class="center"><span class="plate">{html.escape(saved["identifier"])}</span></div>',
+                    unsafe_allow_html=True)
         if saved["vehicle_created"]:
             st.markdown('<div class="muted" style="text-align:center">Шинэ машин бүртгэгдлээ</div>',
                         unsafe_allow_html=True)
