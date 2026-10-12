@@ -1,6 +1,6 @@
 # UI screens — Streamlit frontend (tasks 5.1–5.4)
 
-- **Owner:** Frontend Engineer (iMac, branch `ui`, D-052) · **Version:** 0.6 (2026-10-12, T6: DESIGN v3 + simpler form)
+- **Owner:** Frontend Engineer (iMac, branch `ui`, D-052) · **Version:** 0.7 (2026-10-11, T7: DESIGN v4 — calm, modern, light)
 - Stack: Streamlit 1.64 (D-022), calls FastAPI over HTTP only (`docs/api_contract.md` v0.5).
 - UI text: Mongolian. Fake demo data only (RISK-06).
 
@@ -22,7 +22,7 @@ Streamlit `AppTest` and are skipped if Streamlit is not installed).
 | `src/ui/views/search.py` | Search (5.3) |
 | `src/ui/views/card.py` | Vehicle card (5.3) |
 | `src/ui/views/reminders.py` | «Сануулга» manager dashboard (5.4) |
-| `src/ui/common.py` | DESIGN v2 CSS, header, plate box, chips, card parts, navigation hand-off |
+| `src/ui/common.py` | DESIGN v4 CSS, header, plate chip, chips, home action cards, card parts, navigation hand-off |
 | `src/ui/api_client.py` | HTTP client (no Streamlit): one function per endpoint, `ApiError`, `DuplicateService` |
 | `src/ui/logic.py` | Pure helpers: labels, pre-fill, payload, prediction view, recognize outcome, errors |
 | `src/ui/auth.py` | `UI_PASSWORD` check (constant-time compare) |
@@ -32,32 +32,43 @@ The folder is `views/`, **not** `pages/`: Streamlit runs a folder named `pages/`
 which skips `app.py` (and the login gate) when a URL is opened directly. Guarded by
 `test_no_streamlit_pages_folder`.
 
-## DESIGN v3 (T6) — how it is built
+## DESIGN v4 (T7) — how it is built
 
-- **Font:** Montserrat (Google Fonts via `theme.font` in config.toml). Mongolian Ө ө Ү ү render in
-  Montserrat (Chrome DevTools: all glyphs from Montserrat, no fallback font; control text in
-  `sans-serif` → Helvetica).
-- **Colors** (WCAG contrast computed): text #14171C 18:1, muted #4A5160 7.3:1, white on primary
-  #1F4E9D 8:1 (placeholder brand color). Status, the same everywhere (card, dashboard), always with
-  the word next to the color: Хэвийн #14532D on #E3F1E7 (7.8:1) · Удахгүй #6B3F00 on #FBEFD6 (7.9:1)
-  · Хэтэрсэн #8C1D18 on #F9E3E1 (7.4:1) · no prediction #3F4552 on #ECEEF1 (8.3:1). All AAA,
-  for outdoor light. `tests/test_ui_logic.py::test_status_colors_are_aaa_contrast` guards it.
-- **Spacing** 4/8/12/16/24/32 px · **type** title 28/800, section 18/700, body 16/500, small 14
-  (nothing smaller) · **tap targets** buttons ≥ 56 px, pills ≥ 48 px, links ≥ 44 px, gaps ≥ 8 px.
-- White cards = `st.container(key="card_…")` (radius 20, soft shadow); dark button = key `btn_dark…`;
-  visible focus ring (3 px primary); `prefers-reduced-motion` respected.
-- No emoji: Material icons on buttons (camera, search, keyboard) and in the browser tab.
-- Header on every screen: «Гео-Эксперт» pill + big title; inner screens have «‹ Буцах».
-  Top padding 64 px keeps it below Streamlit's top bar (checked in `tests/test_ui_browser.py`).
-- Toolbar: `client.toolbarMode = "viewer"` (no Deploy / developer menu; the ⋮ viewer menu stays).
+Goal (Ari): "understandable but elegant, like a modern banking/delivery app — less ink, more space".
+
+- **Font:** Montserrat (Google Fonts via `theme.font`), only weights 400/500/600 loaded. Mongolian
+  Ө ө Ү ү render in Montserrat (checked in T6 with Chrome DevTools).
+- **Type:** page title 22/600 · section 15/600 · body 15/400 · labels 13/500 grey #6B7280 · big
+  numbers 28/600 (status) and 24/600 (dashboard). **Max weight anywhere = 600**
+  (`tests/test_ui_browser.py::test_max_font_weight_600`).
+- **Colors:** background #F6F7F9, cards white, text #111827 (16.5:1), secondary #6B7280 (4.8:1 on
+  white). Primary #1F4E9D (placeholder) only for main buttons, the «Бүртгэх» home card and selected
+  chips. Status = soft tint + small dot + the word, the same on card and dashboard:
+  Хэвийн #1E7A4C on #E8F5EE (4.75:1) · Удахгүй #A05A00 on #FFF4E0 (4.87:1) · Хэтэрсэн #B42318 on
+  #FDECEC (5.76:1) · no prediction #4B5563 on #F3F4F6 (6.9:1). WCAG AA, guarded by
+  `test_status_colors_are_readable` (≥ 4.5:1).
+- **Surfaces, almost no borders:** cards = `st.container(key="card_…")`, white, radius 16, shadow
+  `0 1px 3px rgba(0,0,0,.06)`. Inputs = grey fill #F3F4F6, no border (`theme.showWidgetBorder =
+  false`), 1 px primary border only on focus. Info pairs in a card = label + value, 2 columns, no
+  boxes. Plate = small chip (grey fill, 1 px #E5E7EB, 19/600, letter-spacing .05em).
+- **Spacing** 8/16/24/32 · **buttons** 52 px, radius 14, 16/600; secondary = white + soft shadow
+  (grey fill inside a card); text buttons (tertiary) 14/600 in primary color, ≥ 44 px tap height ·
+  **chips** 36 px, 14 px, wrap, 8 px gaps.
+- Visible focus ring (3 px primary), `prefers-reduced-motion` respected, no emoji (Material icons;
+  inline SVG in HTML blocks).
+- Header: «‹ Буцах» (inner screens) + small «Гео-Эксперт» + title. Top padding 64 px keeps it below
+  Streamlit's top bar (browser test). Toolbar `client.toolbarMode = "viewer"`.
 
 ## Screens
 
 **Login** (only if `UI_PASSWORD` set): password card → «Нэвтрэх». Until logged in only this page
 exists, so a direct URL cannot skip it.
 
-**Нүүр (Home)**: big primary card «Бүртгэх» with a camera icon (opens the camera step), white card «Хайх»,
-link «Сануулга» → dashboard.
+**Нүүр (Home)**: «Сайн байна уу · 10-р сарын 11, Ням» (today, Mongolian weekday) and three row cards
+with icon + title + 1-line subtitle + chevron: «Бүртгэх» — «Зураг авч бүртгэх» (primary color, opens
+the camera step), «Хайх» — «Дугаар эсвэл утсаар», «Сануулга» — «Өнөөдөр сануулах: N» (the «Илгээх»
+count from `GET /reminders/due`; plain subtitle if the API has no predictions). The real
+`st.button` / `st.page_link` is stretched over each card, so the whole card is one tap target.
 
 **Бүртгэх (Record)**
 1. *Capture*: camera (+ upload jpg/png/heic/heif, also upper-case `IMG_0001.HEIC` from an iPhone,
@@ -67,10 +78,10 @@ link «Сануулга» → dashboard.
    «Дугааргүй машин» → manual in **fleet-number mode** (D-005; no radio on the main form).
 2. *Manual*: «Улсын дугаар» (or «Парк дугаар») → «Шалгах» → lookup → confirm. «Дугааргүй машин» /
    «Улсын дугаартай машин» toggles the mode. A phone typed here → hint to use «Хайх».
-3. *Confirm*: **photo preview** + plate large in a bordered box + chip «Бүртгэлтэй · N удаа ирсэн» /
+3. *Confirm*: **photo preview** (120 px thumbnail, radius 12) + plate chip + chip «Бүртгэлтэй · N удаа ирсэн» /
    «Шинэ машин»; fleet number in several companies → company radio. «Зөв, үргэлжлүүлэх» /
    «Буруу байна — засах».
-4. *Form*: photo preview, small plate box + chip.
+4. *Form*: photo thumbnail, plate chip + chip. «Дугааргүй машин» / «Зураг авах» are text buttons.
    - Card 1 (always fresh, D-033): «Гүйлт (км)» (numeric keypad; hint = previous km), «Моторын цаг»
      (fleet numbers, or if the truck had hours before), «Дараа нь хаашаа явах вэ?» tap pills from
      `GET /destinations` (`name_mn` when present, else `name`, D-071) + «Бусад» → place + route,
@@ -96,25 +107,27 @@ upload; clear read searches, `needs_manual` fills the field). One match → card
 list (plate · company · segment); none → «Олдсонгүй» + «Шинэ машин бүртгэх» (form, new truck).
 «Сүүлд үзсэн»: cards opened in this session (max 5).
 
-**Машины карт (Card)** (fresh `GET /vehicles/{id}`), ordered by importance: **plate** large →
-**status block**, the biggest colored block: status word (Хэвийн / Удахгүй / Хэтэрсэн), big «N хоног
-үлдсэн/хэтэрсэн», «Дараагийн солилт: date», progress bar, small method note; `null` → grey
-«Таамаглал удахгүй нэмэгдэнэ» → segment badge (Шинэ / Давтан / Байнгын / Эрсдэлтэй) + company ·
-model · N удаа · ердийн L → **4 tiles** (2×2): Сүүлд солисон, Тос (grade · liters), Чиглэл, Жолооч
-(name · phone) → «Түүх (N)» collapsed → primary «Тос солилт бүртгэх». No «Залгах» button (T6).
+**Машины карт (Card)** (fresh `GET /vehicles/{id}`): **plate chip** + small grey segment chip with a
+colored dot («Давтан · 2 удаа») → one line company · model → compact **status block** on a soft tint:
+dot + status word (Хэвийн / Удахгүй / Хэтэрсэн), «N хоног» 28/600 + үлдсэн/хэтэрсэн, «Дараагийн
+солилт: date», 4 px bar, method note 12 px grey; `null` → grey «Таамаглал удахгүй нэмэгдэнэ» →
+**4 info pairs** (2 columns, no boxes): Сүүлд солисон, Тос (grade · liters), Чиглэл, Жолооч (name ·
+phone) → «Түүх (N)» collapsed → primary «Тос солилт бүртгэх». No «Залгах», no separate badge (T7).
 
 **Сануулга (Manager dashboard, 5.4)** — wider on desktop (max 1100 px), 2×2 tiles on a phone.
-- 4 segment tiles from `GET /stats/segments` (Шинэ / Давтан / Байнгын / Эрсдэлтэй) + total, as_of.
+- 4 segment tiles from `GET /stats/segments`: colored dot + word (Шинэ / Давтан / Байнгын /
+  Эрсдэлтэй), number 24/600; + total, as_of.
 - `GET /reminders/due` split in two groups, API order kept (oldest `send_on` first):
   **«Илгээх»** and **«Эрсдэлтэй»** = at_risk by D-007 (`days_left < −7`, i.e. predicted date +
   7 days grace already passed; same rule and number as the API).
-- Row (white card): plate box, status chip (same colors as the card) + «N хоног үлдсэн/хэтэрсэн»,
-  📞 phone · driver · company, «Илгээх өдөр» (send_on) · predicted date · last change, the
+- Row (white card): plate chip, status chip (dot + word, same colors as the card) + «N хоног үлдсэн/хэтэрсэн»,
+  «Утас:» phone · driver · company, «Илгээх өдөр» (send_on) · predicted date · last change, the
   `message_mn` text in a code box whose built-in button copies it to the clipboard, and
   «Илгээсэн» → `POST /reminders/{service_id}/sent`: new → «Илгээсэн гэж тэмдэглэлээ» and the row
   leaves the list; `already_sent` → «Өмнө нь илгээсэн гэж тэмдэглэгдсэн (time)»;
   409 `not_latest_service` → «шинэ үйлчилгээтэй болсон» + list reloaded.
-- `contact_is_placeholder` → warning that the contact phone in the text is a placeholder.
+- `contact_is_placeholder` → one small grey line (amber dot) that the contact phone in the text is a
+  placeholder.
   503 → «Таамаглалын загвар ачаалагдаагүй». The API sends no SMS: the manager copies and sends.
 
 ## Streamlit limits (accepted, "close is enough")
