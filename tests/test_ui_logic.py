@@ -118,7 +118,7 @@ def test_prediction_overdue_and_fallback_note() -> None:
     pred = {**PREDICTION, "days_left": -5, "status": "overdue", "method": "b0",
             "fallback_reason": "route_not_modelled", "today": "2026-10-26"}
     view = logic.prediction_view(pred)
-    assert (view["big"], view["sub"], view["status_label"]) == ("5 хоног", "хэтэрсэн", "Хэтэрсэн")
+    assert (view["big"], view["sub"], view["status_label"]) == ("5 хоног", "хоцорсон", "Хэтэрсэн")  # T9 mockup wording
     assert view["fg"] == "#B42318"
     assert view["progress"] == 1.0  # clipped
     assert view["note"] == "Дундаж хугацаа (энэ маршрутад загвар байхгүй)"
@@ -309,7 +309,7 @@ def test_password_checked(monkeypatch) -> None:
     assert not auth.check_password(None)
 
 
-VIEWS = ("home.py", "record.py", "search.py", "card.py", "reminders.py")
+VIEWS = ("home.py", "record.py", "search.py", "dashboard.py", "card.py", "reminders.py")
 
 
 def test_no_streamlit_pages_folder() -> None:
@@ -396,3 +396,49 @@ def test_status_colors_are_readable() -> None:
     for fg, bg in [*logic.STATUS_COLORS.values(), logic.PENDING_COLORS]:
         hi, lo = sorted((lum(fg), lum(bg)), reverse=True)
         assert (hi + 0.05) / (lo + 0.05) >= 4.5, (fg, bg)
+
+
+# --- T9 (mockup) helpers ---------------------------------------------------------------
+
+def test_month_day_and_phone_text() -> None:
+    assert logic.month_day_text("2026-10-07") == "10-р сарын 7"
+    assert logic.month_day_text(None) == "—" and logic.month_day_text("bad") == "—"
+    assert logic.phone_text("99110008") == "9911 0008"
+    assert logic.phone_text("+97699") == "+97699" and logic.phone_text(None) == ""
+    assert logic.driver_text("Түмэн О.", "99110008") == "Түмэн О. · 9911 0008"
+    assert logic.driver_text(None, None) == "—"
+
+
+def test_prediction_date_line() -> None:
+    late = logic.prediction_view({**PREDICTION, "days_left": -5, "status": "overdue", "predicted_date": "2026-10-07"})
+    assert late["date_line"] == "Солих ёстой байсан: 10-р сарын 7"
+    soon = logic.prediction_view({**PREDICTION, "days_left": 9, "predicted_date": "2026-10-21"})
+    assert soon["date_line"] == "Дараагийн солилт: 10-р сарын 21"
+
+
+def test_arrival_view() -> None:
+    assert logic.arrival_view(None) is None
+    on_time = logic.arrival_view({**PREDICTION, "days_left": 2, "predicted_date": "2026-10-14"})
+    assert (on_time["label"], on_time["big"], on_time["sub"], on_time["date"]) == (
+        "Цагтаа ирсэн", "2 хоног", "эрт ирсэн", "10-р сарын 14")
+    assert logic.arrival_view({**PREDICTION, "days_left": 0})["sub"] == "хугацаандаа"
+    assert logic.arrival_view({**PREDICTION, "days_left": 30})["label"] == "Эрт ирсэн"
+    late = logic.arrival_view({**PREDICTION, "days_left": -4})
+    assert (late["label"], late["big"], late["fg"]) == ("Хоцорсон", "4 хоног", logic.STATUS_COLORS["overdue"][0])
+
+
+def test_prev_visit_and_destination_note() -> None:
+    last = {"service_date": "2026-08-19", "odometer_km": 186300,
+            "destination": {"id": 2, "name": "Zamyn-Uud", "name_mn": "Замын-Үүд"}}
+    assert logic.prev_visit_text(last) == "08-19 · 186 300 км · Замын-Үүд"
+    assert logic.prev_visit_text(None) == "—"
+    assert logic.destination_change_note(last, 5) == "Өмнө нь Замын-Үүд байсан → шинэ чиглэлээр дахин таамаглана"
+    assert logic.destination_change_note(last, 2) is None      # same place
+    assert logic.destination_change_note(last, None) is None   # nothing chosen yet
+    assert logic.destination_change_note({"destination_raw": "x"}, 5) is None  # nothing to compare
+
+
+def test_reminder_counts() -> None:
+    rows = [{"days_left": 5}, {"days_left": -3}, {"days_left": -20}]
+    assert logic.reminder_counts(rows) == {"to_send": 2, "at_risk": 1, "overdue": 2}
+    assert logic.reminder_counts([]) == {"to_send": 0, "at_risk": 0, "overdue": 0}

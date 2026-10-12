@@ -197,8 +197,8 @@ def fake_api(monkeypatch):
     api_client.set_transport(None)
 
 
-HOME, RECORD, SEARCH, CARD, REMINDERS = (
-    "views/home.py", "views/record.py", "views/search.py", "views/card.py", "views/reminders.py")
+HOME, RECORD, SEARCH, CARD, REMINDERS, DASHBOARD = (
+    "views/home.py", "views/record.py", "views/search.py", "views/card.py", "views/reminders.py", "views/dashboard.py")
 
 PREDICTION = {
     "method": "ridge", "fallback_reason": None, "model_version": "ridge-0000abcd",
@@ -241,7 +241,7 @@ def step(at: AppTest) -> str:
 
 
 def type_plate(at: AppTest, plate: str, kind: str = "plate") -> AppTest:
-    """Record: manual entry -> «Шалгах» -> confirm step."""
+    """Record: manual entry -> «Шалгах» -> form (T9; a fleet number found in a company -> confirm)."""
     at = click(at, "Дугаарыг гараар оруулах")
     if kind == "fleet_no":
         at = click(at, "Дугааргүй машин")
@@ -250,7 +250,8 @@ def type_plate(at: AppTest, plate: str, kind: str = "plate") -> AppTest:
 
 
 def to_form(at: AppTest, plate: str, kind: str = "plate") -> AppTest:
-    return click(type_plate(at, plate, kind), "Зөв, үргэлжлүүлэх")
+    at = type_plate(at, plate, kind)
+    return click(at, "Зөв, үргэлжлүүлэх") if step(at) == "confirm" else at
 
 
 def fill_new_vehicle(at: AppTest, company: str | None = None) -> AppTest:
@@ -282,8 +283,8 @@ def upload_photo(at: AppTest, key: str) -> AppTest:
 def test_no_password_env_opens_home(fake_api) -> None:
     at = run_app()
     assert not at.exception
-    assert texts(at.title) == ["Тос солилт"]
-    assert {"Бүртгэх", "Хайх"} <= {b.label for b in at.button}
+    assert texts(at.title) == ["Сайн байна уу"]
+    assert {"Үйлчилгээ бүртгэх", "Хайх"} <= {b.label for b in at.button}
     assert "Гео-Эксперт" in html_blocks(at)
 
 
@@ -296,10 +297,10 @@ def test_login_required_and_works(fake_api, monkeypatch) -> None:
     assert "Нууц үг буруу байна." in texts(at.error)
     at.text_input[0].set_value("demo-pass")
     at = click(at, "Нэвтрэх")
-    assert texts(at.title) == ["Тос солилт"]
+    assert texts(at.title) == ["Сайн байна уу"]
 
 
-ALL_VIEWS = [HOME, RECORD, SEARCH, CARD, REMINDERS]
+ALL_VIEWS = [HOME, RECORD, SEARCH, CARD, REMINDERS, DASHBOARD]
 
 
 @pytest.mark.parametrize("view", ALL_VIEWS)
@@ -322,27 +323,25 @@ def test_logged_in_can_open_every_view(fake_api, view) -> None:
 
 
 def test_home_buttons_open_screens(fake_api) -> None:
-    at = click(run_app(), "Бүртгэх")
-    assert texts(at.title) == ["Бүртгэх"] and step(at) == "capture"
+    at = click(run_app(), "Үйлчилгээ бүртгэх")
+    assert texts(at.title) == ["Үйлчилгээ бүртгэх"] and step(at) == "capture"
     at = click(run_app(), "Хайх")
     assert texts(at.title) == ["Хайх"]
 
 
 def test_back_button_goes_home(fake_api) -> None:
-    at = click(run_app(SEARCH), "‹ Буцах")
-    assert texts(at.title) == ["Тос солилт"]
+    at = click(run_app(SEARCH), "Буцах")
+    assert texts(at.title) == ["Сайн байна уу"]
 
 
 # --- record flow (5.2 / DESIGN v2) ------------------------------------------------------
 
 def test_new_vehicle_full_flow(fake_api) -> None:
     at = type_plate(run_app(RECORD), "0001 ТЕС")
-    assert step(at) == "confirm"
-    assert '<span class="plate">0001 ТЕС</span>' in html_blocks(at)
+    assert step(at) == "form"                                    # T9: no separate confirm step for a plate
+    assert texts(at.title) == ["Үйлчилгээ бүртгэх"]
+    assert '<div class="vh-id">0001 ТЕС</div>' in html_blocks(at)
     assert "Шинэ машин" in html_blocks(at)
-
-    at = click(at, "Зөв, үргэлжлүүлэх")
-    assert step(at) == "form"
     at = click(fill_new_vehicle(at), "Хадгалах")
     assert not at.exception, at.exception
     body, force = fake_api.posts[-1]
@@ -364,20 +363,21 @@ def test_new_vehicle_full_flow(fake_api) -> None:
 def test_existing_vehicle_confirm_chip_and_prefill(fake_api) -> None:
     seed_existing(fake_api)
     at = type_plate(run_app(RECORD), "0002тес")
+    assert step(at) == "form" and texts(at.title) == ["Үйлчилгээ бүртгэх"]  # typed -> full form (mockup p3)
     assert "Бүртгэлтэй · 1 удаа ирсэн" in html_blocks(at)
-    at = click(at, "Зөв, үргэлжлүүлэх")
     state = at.session_state
     assert (state["f_oil_choice"], state["f_liters"], state["f_driver_phone"]) == ("10W-40", 32.0, "99110002")
     assert state["f_odometer_km"] is None and state["f_destination_id"] is None  # D-033 fresh
-    assert "Өмнөхөөс авсан" in html_blocks(at)
-    assert "32 л · Жолооч Д. · 99110002" in html_blocks(at)       # oil has its own tap row now
-    assert at.expander[0].label == "Засах"
+    assert texts(at.subheader) == ["Энэ удаа", "Жолооч"]
+    assert "Өмнөх үйлчилгээнээс бөглөгдсөн" in html_blocks(at)
+    assert "Өмнөх: 200 000 км" in html_blocks(at)
+    assert {"Засах", "Хадгалах"} <= {b.label for b in at.button}
 
 
 def test_new_vehicle_defaults_and_hidden_fields(fake_api) -> None:
     at = to_form(run_app(RECORD), "0001 ТЕС")
     assert at.session_state["f_oil_choice"] == "15W-40"                # default oil grade
-    assert at.pills(key="f_oil_choice").options == ["15W-40", "10W-40", "20W-50", "Бусад"]
+    assert at.segmented_control(key="f_oil_choice").options == ["15W-40", "10W-40", "20W-50", "Бусад"]
     assert "Компани / эзэмшигч" not in [w.label for w in at.text_input]  # plate: no company field (T8)
     assert "Volvo FH" in at.selectbox(key="f_model_choice").options
 
@@ -416,7 +416,7 @@ def test_other_oil_grade_and_other_model_saved_as_typed(fake_api) -> None:
     at.number_input(key="f_odometer_km").set_value(1000)
     at.pills(key="f_destination_id").set_value(1)
     at.number_input(key="f_liters").set_value(30.0)
-    at.pills(key="f_oil_choice").set_value("Бусад")
+    at.segmented_control(key="f_oil_choice").set_value("Бусад")
     at.selectbox(key="f_model_choice").set_value("Бусад").run()
     at.text_input(key="f_oil_other").set_value("5W-30")
     at.text_input(key="f_model_other").set_value("Sitrak C7H").run()
@@ -445,11 +445,11 @@ def test_photo_preview_on_confirm_and_form(fake_api) -> None:
     fake_api.recognize = (200, RECOGNIZED)
     at = run_app(RECORD)
     at = at.file_uploader(key="rec_upload").upload("truck.jpg", buf.getvalue(), "image/jpeg").run()
-    assert step(at) == "confirm" and len(at.get("image")) == 1      # preview shown
-    at = click(at, "Зөв, үргэлжлүүлэх")
-    assert len(at.get("image")) == 1                                 # still on the form
+    assert step(at) == "form" and texts(at.title) == ["Машин танигдлаа"]
+    assert 'src="data:image/jpeg;base64,' in html_blocks(at)        # plate strip from the photo (T9)
+    assert "Автоматаар уншсан" in html_blocks(at)
     assert len(fake_api.uploads) == 1                               # sent once, to /plates/recognize only
-    at = click(at, "‹ Буцах")                                        # leave; photo stays session-only
+    at = click(at, "Буцах")                                        # leave; photo stays session-only
 
 
 def test_unreadable_photo_shows_text_not_crash(fake_api) -> None:
@@ -461,7 +461,7 @@ def test_unreadable_photo_shows_text_not_crash(fake_api) -> None:
 
 
 def test_wrong_plate_goes_back_to_edit(fake_api) -> None:
-    at = click(type_plate(run_app(RECORD), "0001 ТЕС"), "Буруу байна — засах")
+    at = click(type_plate(run_app(RECORD), "0001 ТЕС"), "Засах")
     assert step(at) == "manual"
     assert at.text_input(key="rec_manual").value == "0001 ТЕС"
 
@@ -541,15 +541,34 @@ def test_api_down_shows_message(fake_api) -> None:
 
 # --- photo -> recognize ------------------------------------------------------------------
 
-def test_photo_recognized_goes_to_confirm(fake_api) -> None:
+def test_photo_recognized_existing_truck(fake_api) -> None:
+    """T9 mockup «Машин танигдлаа»: truck line, arrival block, previous visit, oil/driver rows."""
     seed_existing(fake_api)
-    fake_api.recognize = (200, RECOGNIZED)
+    fake_api.prediction = PREDICTION
+    fake_api.recognize = (200, {**RECOGNIZED, "detection": {"box": [1, 1, 30, 10], "confidence": 0.9}})
     at = upload_photo(run_app(RECORD), "rec_upload")
     assert not at.exception
     assert b'name="file"' in fake_api.uploads[0]
-    assert step(at) == "confirm"
-    assert "Дугаар уншигдлаа: 0002ТЕС" in texts(at.info)
-    assert "Бүртгэлтэй · 1 удаа ирсэн" in html_blocks(at)
+    assert step(at) == "form" and texts(at.title) == ["Машин танигдлаа"]
+    page = html_blocks(at)
+    assert "Шинэ · 1 удаа · Говь Тест ХХК" in page
+    assert "Цагтаа ирсэн" in page and "Таамаглаж байсан огноо: 10-р сарын 21" in page
+    assert "09-01 · 200 000 км · Замын-Үүд" in page                 # «Өмнөх удаа»
+    assert "10W-40 · 32 л" in page and "Жолооч Д. · 9911 0002" in page
+    assert at.expander[0].label == "Тос, жолооч өөрчлөх"
+    at.pills(key="f_destination_id").set_value(5).run()
+    assert "Өмнө нь Замын-Үүд байсан → шинэ чиглэлээр дахин таамаглана" in html_blocks(at)
+    at.number_input(key="f_odometer_km").set_value(215000)
+    at = click(at, "Хадгалах")
+    assert step(at) == "success" and fake_api.posts[-1][0]["destination_id"] == 5
+    assert "company_name" not in fake_api.posts[-1][0]             # existing plate: no company (T8)
+
+
+def test_recognized_wrong_goes_back_to_edit(fake_api) -> None:
+    seed_existing(fake_api)
+    fake_api.recognize = (200, RECOGNIZED)
+    at = click(upload_photo(run_app(RECORD), "rec_upload"), "Буруу")
+    assert step(at) == "manual" and at.text_input(key="rec_manual").value == "0002ТЕС"
 
 
 def test_photo_needs_manual_opens_manual_with_text(fake_api) -> None:
@@ -572,7 +591,8 @@ def test_iphone_heic_upload_is_sent(fake_api) -> None:
     body = fake_api.uploads[0]
     assert b'name="file"; filename="IMG_0001.HEIC"' in body
     assert b"Content-Type: image/heic" in body
-    assert step(at) == "confirm"
+    assert step(at) == "form"
+    assert "Автоматаар уншсан" in html_blocks(at)                   # strip without the undecodable photo
 
 
 def test_recognizer_down_falls_back_to_manual(fake_api) -> None:
@@ -595,12 +615,13 @@ def test_single_match_opens_card(fake_api) -> None:
     assert not at.exception
     assert texts(at.title) == ["Машины карт"]
     page = html_blocks(at)
-    assert '<span class="plate">0002 ТЕС</span>' in page
+    assert '<span class="plate lg">0002 ТЕС</span>' in page
     assert "Таамаглал удахгүй нэмэгдэнэ" in page               # prediction null -> grey card
     assert "Шинэ · 1 удаа</span>" in page                       # grey segment chip next to the plate (T7)
     assert "Говь Тест ХХК" in page                             # one line company · model
     assert "Сүүлд солисон" in page and "10W-40 · ердийн\u00a032\u00a0л" in page  # usual liters back (T8)
-    assert "Жолооч Д. · 99110002" in page and "Залгах" not in page  # driver tile, no call button (T6)
+    assert "Жолооч Д. · 9911 0002" in page and "Залгах" not in page  # driver row, no call button (T6)
+    assert texts(at.subheader) == ["Түүх"] and '<div class="tl">' in page  # history timeline, open (T9)
 
 
 def test_card_shows_prediction(fake_api) -> None:
@@ -608,15 +629,15 @@ def test_card_shows_prediction(fake_api) -> None:
     fake_api.prediction = PREDICTION
     at = search(run_app(SEARCH), "0002 ТЕС")
     card = next(t for t in texts(at.markdown) if 'class="pc"' in t)
-    assert "9 хоног" in card and "үлдсэн" in card and "Удахгүй" in card and "2026-10-21" in card
-    assert "#FFF4E0" in card and "Дараагийн солилт: 2026-10-21" in card
+    assert "9 хоног" in card and "үлдсэн" in card and "Удахгүй" in card
+    assert "#FFF4E0" in card and "Дараагийн солилт: 10-р сарын 21" in card
 
 
 def test_search_by_phone_and_recent(fake_api) -> None:
     seed_existing(fake_api)
     at = search(run_app(SEARCH), "+976 9911-0002")
     assert texts(at.title) == ["Машины карт"]
-    at = click(on(at, CARD), "‹ Буцах")
+    at = click(on(at, CARD), "Буцах")
     assert texts(at.title) == ["Хайх"]
     assert "Сүүлд үзсэн" in texts(at.subheader)
     assert "0002 ТЕС · Говь Тест ХХК" in [b.label for b in at.button]
@@ -635,7 +656,7 @@ def test_unknown_offers_new_vehicle_form(fake_api) -> None:
     at = search(run_app(SEARCH), "0404 ТЕС")
     assert "Олдсонгүй" in html_blocks(at)
     at = click(at, "Шинэ машин бүртгэх")
-    assert texts(at.title) == ["Бүртгэх"]
+    assert texts(at.title) == ["Үйлчилгээ бүртгэх"]
     assert step(at) == "form"
     assert "Шинэ машин" in html_blocks(at)
 
@@ -656,8 +677,8 @@ def test_search_by_camera(fake_api) -> None:
 
 def test_card_record_button_opens_prefilled_form(fake_api) -> None:
     seed_existing(fake_api)
-    at = click(on(search(run_app(SEARCH), "0002 ТЕС"), CARD), "Тос солилт бүртгэх")
-    assert texts(at.title) == ["Бүртгэх"]
+    at = click(on(search(run_app(SEARCH), "0002 ТЕС"), CARD), "Үйлчилгээ бүртгэх")
+    assert texts(at.title) == ["Үйлчилгээ бүртгэх"]
     assert step(at) == "form"
     assert at.session_state["f_oil_choice"] == "10W-40"
 
@@ -667,12 +688,12 @@ def test_save_then_find_by_plate_and_phone(fake_api) -> None:
     at = click(fill_new_vehicle(to_form(run_app(RECORD), "0001 ТЕС")), "Хадгалах")
     at = click(at, "Машины карт үзэх")
     assert texts(at.title) == ["Машины карт"]
-    assert '<span class="plate">0001 ТЕС</span>' in html_blocks(at)
+    assert '<span class="plate lg">0001 ТЕС</span>' in html_blocks(at)
 
     at = search(run_app(SEARCH), "0001 ТЕС")
-    assert '<span class="plate">0001 ТЕС</span>' in html_blocks(at)
+    assert '<span class="plate lg">0001 ТЕС</span>' in html_blocks(at)
     at = search(run_app(SEARCH), "99110099")
-    assert '<span class="plate">0001 ТЕС</span>' in html_blocks(at)
+    assert '<span class="plate lg">0001 ТЕС</span>' in html_blocks(at)
     assert "Тодорхойгүй" in html_blocks(at)  # new plate vehicle saved with the default company (T8)
 
 
@@ -695,17 +716,23 @@ def test_home_has_reminders_link(fake_api) -> None:
 
 
 def test_home_reminder_summary(fake_api) -> None:
-    """T7: the «Сануулга» card shows today's counts from GET /reminders/due."""
+    """T9: greeting line, 3 numbers and the red badge from GET /reminders/due (+ total from /stats/segments)."""
     fake_api.reminders = [reminder(1, "0001 ТЕС", 5, "due_soon"), reminder(3, "0003 ТЕС", -20, "overdue")]
     at = run_app()
-    assert "Өнөөдөр сануулах: 1" in html_blocks(at)
+    page = html_blocks(at)
+    assert "Өнөөдөр 1 машин сануулга хүлээж байна." in page
+    assert 'Сануулах</div><div class="v">1</div>' in page
+    assert 'Хэтэрсэн</div><div class="v" style="color:#B42318">1</div>' in page
+    assert 'Машин</div><div class="v">7</div>' in page
+    assert '<span class="badge">1</span>' in page
 
 
 def test_home_without_predictions_still_works(fake_api) -> None:
     fake_api.reminders = None  # -> 503 (model not loaded)
     at = run_app()
     assert not at.exception and not at.error
-    assert "Үйлчлүүлэгчдэд сануулга илгээх" in html_blocks(at)
+    assert "Тос солилтын бүртгэл, сануулга." in html_blocks(at)
+    assert '<span class="badge">' not in html_blocks(at)
 
 
 def test_dashboard_tiles_and_two_groups(fake_api) -> None:
@@ -714,10 +741,12 @@ def test_dashboard_tiles_and_two_groups(fake_api) -> None:
     at = run_app(REMINDERS)
     assert not at.exception
     page = html_blocks(at)
-    for label, count in (("Шинэ", 2), ("Давтан", 3), ("Байнгын", 1), ("Эрсдэлтэй", 1)):
-        assert f'{label}</div><div class="v">{count}</div>' in page
-    assert texts(at.subheader) == ["Сегмент", "Илгээх (2)", "Эрсдэлтэй (1)"]
-    assert "0003 ТЕС" in page and "Илгээх өдөр: <b>2026-09-25</b>" in page and "99110002" in page
+    for label, count in (("Өнөөдөр", 2), ("Эрсдэлтэй", 1)):
+        assert f'<div class="v">{count}</div><div class="k">{label}</div>' in page
+    assert '<div class="v" style="color:#B42318">2</div><div class="k">Хэтэрсэн</div>' in page
+    assert texts(at.subheader) == ["Өнөөдрийн дараалал (2)", "Эрсдэлтэй (1)"]
+    assert "0003 ТЕС" in page and "Тест Д." in page and "9911\u00a00002" in page
+    assert [b.url for b in at.get("link_button")][0] == "tel:99110002"     # «Залгах»
     assert [c.value for c in at.code][0].startswith("Сайн байна уу! 0001 ТЕС")  # copyable text
     assert "GEO_EXPERT_PHONE" in page and not at.warning  # placeholder contact = one small line (T7)
 
@@ -726,7 +755,7 @@ def test_mark_sent_removes_row(fake_api) -> None:
     fake_api.reminders = [reminder(1, "0001 ТЕС", 5, "due_soon")]
     at = click(run_app(REMINDERS), "Илгээсэн")
     assert any("Илгээсэн гэж тэмдэглэлээ" in t for t in texts(at.success))
-    assert texts(at.subheader)[1] == "Илгээх (0)"  # gone from the due list
+    assert texts(at.subheader)[0] == "Өнөөдрийн дараалал (0)"  # gone from the due list
 
 
 def test_mark_sent_twice_shows_already_sent(fake_api) -> None:
@@ -741,6 +770,15 @@ def test_mark_sent_not_latest_service(fake_api) -> None:
     fake_api.reminders = [reminder(999, "0009 ТЕС", 5, "due_soon")]
     at = click(run_app(REMINDERS), "Илгээсэн")
     assert any("шинэ үйлчилгээтэй" in t for t in texts(at.warning))
+
+
+def test_overview_segment_tiles(fake_api) -> None:
+    at = click(run_app(REMINDERS), "Машинуудын тойм харах")
+    assert texts(at.title) == ["Тойм"]
+    page = html_blocks(at)
+    for label, count in (("Шинэ", 2), ("Давтан", 3), ("Байнгын", 1), ("Эрсдэлтэй", 1)):
+        assert f'<div class="v">{count}</div><div class="k">' in page and f"</i>{label}</div>" in page
+    assert "Нийт 7 машин" in page
 
 
 def test_dashboard_without_model(fake_api) -> None:

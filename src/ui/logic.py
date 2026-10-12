@@ -190,7 +190,7 @@ def prediction_view(prediction: dict | None) -> dict[str, Any]:
     if days == 0:
         big, sub = "Өнөөдөр", ""
     else:
-        big, sub = f"{abs(days)} хоног", "үлдсэн" if days > 0 else "хэтэрсэн"
+        big, sub = f"{abs(days)} хоног", "үлдсэн" if days > 0 else "хоцорсон"  # T9 mockup wording
 
     progress = None
     start, end = _parse_date(prediction.get("last_service_date")), _parse_date(prediction.get("predicted_date"))
@@ -204,6 +204,8 @@ def prediction_view(prediction: dict | None) -> dict[str, Any]:
         note = f"{note} ({reason})" if note else reason
     view.update(
         pending=False, big=big, sub=sub, date=prediction.get("predicted_date"),
+        date_line=f"{'Солих ёстой байсан' if days < 0 else 'Дараагийн солилт'}: "
+                  f"{month_day_text(prediction.get('predicted_date'))}",
         status_label=PREDICTION_STATUS_LABELS.get(status, status), fg=fg, bg=bg,
         progress=progress, note=note, version=prediction.get("model_version") or "",
     )
@@ -292,6 +294,74 @@ def days_left_text(days_left: int | None) -> str:
     if days_left == 0:
         return "Өнөөдөр"
     return f"{abs(days_left)} хоног {'үлдсэн' if days_left > 0 else 'хэтэрсэн'}"
+
+
+# --- T9 (mockup): short Mongolian texts for the new layouts ---------------------------
+
+def month_day_text(text: str | None) -> str:
+    """'2026-10-07' -> '10-р сарын 7' (mockup date style); '—' when missing/invalid."""
+    day = _parse_date(text)
+    return f"{day.month}-р сарын {day.day}" if day else NOT_GIVEN
+
+
+def phone_text(phone: str | None) -> str:
+    """'99110008' -> '9911 0008' (easier to read aloud); anything else unchanged."""
+    if phone and len(phone) == 8 and phone.isdigit():
+        return f"{phone[:4]} {phone[4:]}"
+    return phone or ""
+
+
+def driver_text(name: str | None, phone: str | None) -> str:
+    """'Түмэн О. · 9911 0008' (only filled parts)."""
+    return " · ".join(p for p in (name, phone_text(phone)) if p) or NOT_GIVEN
+
+
+def prev_visit_text(service: dict | None) -> str:
+    """«Өмнөх удаа» line: '08-19 · 186 300 км · Замын-Үүд'."""
+    if not service:
+        return NOT_GIVEN
+    day = _parse_date(service.get("service_date"))
+    parts = [day.strftime("%m-%d") if day else None, service_meter_text(service), service_destination_text(service)]
+    return " · ".join(p for p in parts if p and p != NOT_GIVEN) or NOT_GIVEN
+
+
+def arrival_view(prediction: dict | None) -> dict[str, str] | None:
+    """How this visit compares with the prediction made after the last one (recognized truck).
+
+    days_left > 14 -> «Эрт ирсэн» · 0–14 -> «Цагтаа ирсэн» · < 0 -> «Хоцорсон». Same colors as
+    the status block (word + dot, never color alone). None when there is no prediction.
+    """
+    if not prediction or prediction.get("days_left") is None:
+        return None
+    days = int(prediction["days_left"])
+    if days < 0:
+        label, (fg, bg), big, sub = "Хоцорсон", STATUS_COLORS["overdue"], f"{-days} хоног", "хоцорсон"
+    elif days > 14:
+        label, (fg, bg), big, sub = "Эрт ирсэн", ("#1F4E9D", "#EAF0FA"), f"{days} хоног", "эрт ирсэн"
+    elif days == 0:
+        label, (fg, bg), big, sub = "Цагтаа ирсэн", STATUS_COLORS["ok"], "Яг", "хугацаандаа"
+    else:
+        label, (fg, bg), big, sub = "Цагтаа ирсэн", STATUS_COLORS["ok"], f"{days} хоног", "эрт ирсэн"
+    return {"label": label, "fg": fg, "bg": bg, "big": big, "sub": sub,
+            "date": month_day_text(prediction.get("predicted_date"))}
+
+
+def destination_change_note(last_service: dict | None, chosen_id: int | None) -> str | None:
+    """'Өмнө нь Замын-Үүд байсан → шинэ чиглэлээр дахин таамаглана' when the chosen
+    destination differs from the last service's; None otherwise (or nothing to compare)."""
+    if not last_service or chosen_id is None:
+        return None
+    before = (last_service.get("destination") or {}).get("id")
+    if before is None or before == chosen_id:
+        return None
+    return f"Өмнө нь {service_destination_text(last_service)} байсан → шинэ чиглэлээр дахин таамаглана"
+
+
+def reminder_counts(reminders: list[dict]) -> dict[str, int]:
+    """Home / «Сануулга» numbers: to send today («Илгээх» group), overdue, at risk."""
+    to_send, at_risk = split_reminders(reminders)
+    return {"to_send": len(to_send), "at_risk": len(at_risk),
+            "overdue": sum(1 for r in reminders if (r.get("days_left") or 0) < 0)}
 
 
 # --- Choice lists (T6): tap/select instead of typing ---------------------------------

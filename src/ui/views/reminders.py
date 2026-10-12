@@ -1,32 +1,23 @@
-"""Manager dashboard «Сануулга» (task 5.4, contract v0.5). Same 480 px column as the other screens (T8).
+"""«Сануулга» (task 5.4, DESIGN v5 / T9 mockup), contract v0.5.
 
-- Segment counts (GET /stats/segments): 4 tiles.
-- Due reminders (GET /reminders/due) in two groups: «Илгээх» and «Эрсдэлтэй»
-  (at_risk, D-007: overdue by more than logic.AT_RISK_GRACE_DAYS). Each row: plate, phone, send_on,
-  status, message text (st.code has a built-in copy button) and «Илгээсэн»
-  -> POST /reminders/{service_id}/sent (already_sent shown). The API sends no SMS:
-  the manager copies the text and sends it by phone.
+- How it works card: the API sends nothing; the manager copies the text, sends it and taps «Илгээсэн».
+- 3 numbers from GET /reminders/due: to send today, overdue, at risk (D-007).
+- «Өнөөдрийн дараалал» and «Эрсдэлтэй» (overdue by more than logic.AT_RISK_GRACE_DAYS): one card
+  per group, a row per truck = plate, driver, send day · phone, status pill; the message text
+  (st.code has a built-in copy button); «Залгах» (tel: link) and «Илгээсэн»
+  -> POST /reminders/{service_id}/sent (already_sent shown).
+- «Удахгүй»: GET /reminders/due?as_of=<API today + 7> minus today's list = scheduled this week.
+- Link to «Тойм» (segment counts, views/dashboard.py).
 """
 
 import html
+from datetime import date, timedelta
 
 import streamlit as st
 
 from src.ui import api_client, common, logic
 
-WIDE_CSS = """<style>
-.seg-grid {display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px;}  /* 2x2 in the 480 px column (T8) */
-.seg {background: #fff; border-radius: 16px; padding: 12px 16px; box-shadow: 0 1px 3px rgba(0,0,0,.06);}
-.seg .k {display: flex; align-items: center; gap: 6px;}
-.seg .v {font-size: 24px; font-weight: 600; margin-top: 2px;}
-.rem-top {display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px;}
-.rem-status {display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600;
-  border-radius: 999px; padding: 4px 10px;}
-.rem-meta {font-size: 13px; color: #4B5563; margin: 8px 0; line-height: 1.6;}
-.rem-meta b {color: #111827; font-weight: 500 !important;}
-.note-line {display: flex; align-items: center; gap: 6px; font-size: 13px; color: #6B7280; margin: 0 0 8px;}
-[data-testid="stCode"] pre {background: #F6F7F9; border: none; font-family: inherit; font-size: 14px;}
-</style>"""
+UPCOMING_DAYS = 7
 
 
 def on_sent(service_id: int) -> None:
@@ -44,50 +35,47 @@ def on_sent(service_id: int) -> None:
             st.session_state["rem_msg"] = ("success", f"Илгээсэн гэж тэмдэглэлээ · {row.get('phone') or ''}")
 
 
-def segment_tiles(stats: dict) -> None:
-    counts = stats.get("counts") or {}
-    tiles = "".join(
-        f'<div class="seg"><div class="k"><i class="dot" style="background:{logic.SEGMENT_DOTS[s]}"></i>'
-        f'{logic.SEGMENT_LABELS[s]}</div><div class="v">{counts.get(s, 0)}</div></div>'
-        for s in logic.SEGMENT_ORDER
-    )
-    st.markdown(f'<div class="seg-grid">{tiles}</div>', unsafe_allow_html=True)
-    st.markdown(f'<span class="muted">Нийт {stats.get("total", 0)} машин · {stats.get("as_of", "")}</span>',
-                unsafe_allow_html=True)
-
-
-def reminder_row(r: dict) -> None:
+def reminder_row(r: dict, first: bool) -> None:
     fg, bg = logic.STATUS_COLORS.get(r.get("status"), logic.PENDING_COLORS)
     status = logic.PREDICTION_STATUS_LABELS.get(r.get("status"), r.get("status") or "")
-    with st.container(key=f"card_rem_{r['service_id']}"):
-        st.markdown(
-            f'<div class="rem-top"><span class="plate">{html.escape(r["identifier"])}</span>'
-            f'<span class="rem-status" style="color:{fg};background:{bg}"><i class="dot" style="background:{fg}"></i>'
-            f'{html.escape(status)} · '
-            f'{html.escape(logic.days_left_text(r.get("days_left")))}</span></div>'
-            f'<div class="rem-meta">Утас: <b>{html.escape(r.get("phone") or "—")}</b>'
-            f' · {html.escape(r.get("driver_name") or "")} · {html.escape(r.get("company") or "")}<br>'
-            f'Илгээх өдөр: <b>{html.escape(r.get("send_on", ""))}</b> · Таамаг: {html.escape(r.get("predicted_date", ""))}'
-            f' · Сүүлд: {html.escape(r.get("last_change_date", ""))}</div>',
-            unsafe_allow_html=True,
-        )
-        st.code(r.get("message_mn", ""), language=None, wrap_lines=True)
+    meta = " · ".join(t.replace(" ", "\u00a0") for t in  # number + unit / phone never split
+                      (logic.days_left_text(r.get("days_left")), logic.phone_text(r.get("phone")) or "утасгүй"))
+    common.html_block(
+        f'<div class="rem{"" if first else " sep"}"><span class="plate">{html.escape(r["identifier"])}</span>'
+        f'<div class="who"><div class="n">{html.escape(r.get("driver_name") or r.get("company") or "—")}</div>'
+        f'<div class="m">{html.escape(meta)}</div></div>'
+        f'<span class="pill-st" style="color:{fg};background:{bg}">{html.escape(status)}</span></div>'
+    )
+    st.code(r.get("message_mn", ""), language=None, wrap_lines=True)
+    with st.container(horizontal=True, key=f"rem_act_{r['service_id']}"):
+        if r.get("phone"):
+            st.link_button("Залгах", f"tel:{r['phone']}", width="stretch", icon=":material/call:")
         st.button("Илгээсэн", key=f"sent_{r['service_id']}", on_click=on_sent, args=(r["service_id"],),
-                  type="primary", width="stretch")
+                  width="stretch", icon=":material/check:")
 
 
-st.markdown(WIDE_CSS, unsafe_allow_html=True)
+def upcoming(as_of: str, today_ids: set[int]) -> list[dict]:
+    """Reminders due within UPCOMING_DAYS after the API's today, not in today's list."""
+    start = date.fromisoformat(as_of) if as_of else date.today()
+    try:
+        later = api_client.reminders_due((start + timedelta(days=UPCOMING_DAYS)).isoformat())
+    except api_client.ApiError:
+        return []
+    return [r for r in later.get("reminders") or [] if r["service_id"] not in today_ids]
+
+
 common.header("Сануулга", back=common.HOME_PAGE)
 
 msg = st.session_state.pop("rem_msg", None)
 if msg:
     getattr(st, msg[0])(msg[1])
 
-st.subheader("Сегмент")
-try:
-    segment_tiles(api_client.segment_stats())
-except api_client.ApiError as exc:
-    common.show_api_error(exc)
+with st.container(key="card_how"):
+    common.html_block(
+        f'<div class="act"><span class="act-ic green">{common.icon("send")}</span><div>'
+        '<div class="act-t">Гараар илгээнэ</div>'
+        '<div class="act-s">Мессежийг хуулж Viber эсвэл SMS-ээр илгээгээд «Илгээсэн» дарна.</div></div></div>'
+    )
 
 try:
     due = api_client.reminders_due()
@@ -99,20 +87,45 @@ except api_client.ApiError as exc:
         common.show_api_error(exc)
 
 if due is not None:
+    reminders = due.get("reminders") or []
+    counts = logic.reminder_counts(reminders)
+    red = ' style="color:#B42318"' if counts["overdue"] else ""
+    common.html_block(
+        '<div class="tiles">'
+        f'<div><div class="v">{counts["to_send"]}</div><div class="k">Өнөөдөр</div></div>'
+        f'<div><div class="v"{red}>{counts["overdue"]}</div><div class="k">Хэтэрсэн</div></div>'
+        f'<div><div class="v">{counts["at_risk"]}</div><div class="k">Эрсдэлтэй</div></div></div>'
+    )
     if due.get("contact_is_placeholder"):
-        st.markdown('<div class="note-line"><i class="dot" style="background:#A05A00"></i>'
-                    'Мессеж дэх утас түр дугаар байна (API-д GEO_EXPERT_PHONE тохируулаагүй).</div>',
-                    unsafe_allow_html=True)
-    to_send, at_risk = logic.split_reminders(due.get("reminders") or [])
-    st.button("Шинэчлэх", key="rem_refresh", type="tertiary")  # any click reruns -> reloads the list
-    for title, group, empty in (
-        ("Илгээх", to_send, "Илгээх сануулга алга."),
-        ("Эрсдэлтэй", at_risk, "Эрсдэлтэй машин алга."),
+        common.html_block('<div class="note-line"><i class="dot" style="background:#A05A00"></i>'
+                          'Мессеж дэх утас түр дугаар байна (API-д GEO_EXPERT_PHONE тохируулаагүй).</div>')
+    to_send, at_risk = logic.split_reminders(reminders)
+    for key, title, group, empty in (
+        ("queue", "Өнөөдрийн дараалал", to_send, "Өнөөдөр илгээх сануулга алга."),
+        ("risk", "Эрсдэлтэй", at_risk, "Эрсдэлтэй машин алга."),
     ):
         st.subheader(f"{title} ({len(group)})")
-        if not group:
-            st.markdown(f'<span class="muted">{empty}</span>', unsafe_allow_html=True)
-        for r in group:
-            reminder_row(r)
+        with st.container(key=f"card_{key}"):
+            if not group:
+                common.html_block(f'<span class="muted">{empty}</span>')
+            for i, r in enumerate(group):
+                reminder_row(r, first=i == 0)
+
+    soon = upcoming(due.get("as_of", ""), {r["service_id"] for r in reminders})
+    if soon:
+        st.subheader("Удахгүй")
+        with st.container(key="card_soon"):
+            rows = "".join(
+                f'<div><span class="k"><span class="plate">{html.escape(r["identifier"])}</span>'
+                f'&nbsp; {html.escape(logic.month_day_text(r.get("send_on")))}</span>'
+                f'<span class="v muted" style="font-weight:400">Хуваарьт</span></div>'
+                for r in soon
+            )
+            common.html_block(f'<div class="kv sm">{rows}</div>')
+
+with st.container(key="link_center", horizontal=True, horizontal_alignment="center"):
+    if st.button("Машинуудын тойм харах", key="link_dashboard", type="tertiary"):
+        st.switch_page(common.DASHBOARD_PAGE)
+    st.button("Шинэчлэх", key="rem_refresh", type="tertiary")  # any click reruns -> reloads the list
 
 common.logout_button()

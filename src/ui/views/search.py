@@ -1,4 +1,4 @@
-"""Search screen (task 5.3 / DESIGN v4): plate, phone or fleet number -> vehicle card.
+"""Search screen (task 5.3 / DESIGN v5): plate, phone or fleet number -> vehicle card.
 
 GET /vehicles/lookup returns a LIST (a phone can match several trucks, a fleet
 number several companies). Exactly one match opens the card at once; several
@@ -87,11 +87,8 @@ if result:
                 if st.button(label, key=f"res_{v['id']}", width="stretch"):
                     common.go_card(v["id"])
 
-recent = st.session_state.get(common.RECENT, [])
-if recent:
+if st.session_state.get(common.RECENT):
     st.subheader("Сүүлд үзсэн")
-    for item in recent:
-        if st.button(f"{item['identifier']} · {item['company']}", key=f"recent_{item['id']}", width="stretch"):
-            common.go_card(item["id"])
+    common.recent_rows("recent")
 
 common.logout_button()

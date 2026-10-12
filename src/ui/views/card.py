@@ -1,8 +1,8 @@
-"""Vehicle card (task 5.3, DESIGN v4 / T7), fresh from GET /vehicles/{id}.
+"""Vehicle card (task 5.3, DESIGN v5 / T9 mockup), fresh from GET /vehicles/{id}.
 
-Order: plate chip + small grey segment chip («Давтан · 5 удаа»), one line company · model,
-compact status block (dot + word, days left, date, thin bar, method note), 4 info pairs,
-history collapsed, primary «Тос солилт бүртгэх».
+Order: big plate + grey segment chip («Байнгын · 3 удаа»), one line company · model, tinted
+status block (dot + word, «5 хоног хоцорсон», «Солих ёстой байсан: …», method note), fact rows
+(last change, oil, destination, driver), «Түүх» timeline, primary «Үйлчилгээ бүртгэх».
 """
 
 import html
@@ -25,14 +25,15 @@ else:
 
 if card:
     common.remember_viewed(card)
-    with st.container(key="card_vehicle"):
-        common.plate_box(card["identifier"], common.segment_chip_html(card.get("segment"), card.get("service_count")))
-        facts = [(card.get("company") or {}).get("name"), card.get("vehicle_model")]
-        st.markdown(f'<div class="line">{html.escape(" · ".join(f for f in facts if f))}</div>', unsafe_allow_html=True)
-        common.render_prediction(card.get("prediction"))
-        common.render_tiles(card)
-        common.render_history(card.get("history") or [])
-    if st.button("Тос солилт бүртгэх", type="primary", width="stretch", key="btn_record_service"):
+    common.plate_box(card["identifier"], common.segment_chip_html(card.get("segment"), card.get("service_count")),
+                     large=True)
+    facts = [(card.get("company") or {}).get("name"), card.get("vehicle_model")]
+    common.html_block(f'<div class="line">{html.escape(" · ".join(f for f in facts if f))}</div>')
+    common.render_prediction(card.get("prediction"))
+    common.render_tiles(card)
+    common.render_history(card.get("history") or [])
+    if st.button("Үйлчилгээ бүртгэх", type="primary", width="stretch", key="btn_record_service",
+                 icon=":material/add:"):
         common.go_record(card["identifier_type"], card["identifier"], card)
 else:
     if st.button("Хайх руу буцах", width="stretch"):
