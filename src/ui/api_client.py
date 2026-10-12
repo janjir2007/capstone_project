@@ -86,11 +86,6 @@ def _request(method: str, path: str, **kwargs: Any) -> Any:
     raise ApiError(response.status_code, detail)
 
 
-def health() -> dict:
-    """GET /health -> {status, db}."""
-    return _request("GET", "/health")
-
-
 def lookup(query: str) -> dict:
     """GET /vehicles/lookup?q= -> {query, match_type, normalized, vehicles: [VehicleCard]}.
 

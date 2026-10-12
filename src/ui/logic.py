@@ -100,10 +100,13 @@ def route_label(route: str | None) -> str:
 
 
 def destination_label(dest: dict | None) -> str:
-    """Name to show for a destination: name_mn if present (D-040), else name."""
+    """Name to show for a destination: name_mn if present, else name (D-040, D-071).
+
+    name_mn is nullable (contract v0.6): null, "" or spaces-only all mean "not labelled yet".
+    """
     if not dest:
         return NOT_GIVEN
-    return dest.get("name_mn") or dest.get("name") or NOT_GIVEN
+    return (dest.get("name_mn") or "").strip() or dest.get("name") or NOT_GIVEN
 
 
 def service_destination_text(service: dict) -> str:
@@ -207,6 +210,25 @@ def recognize_outcome(result: dict) -> tuple[str, bool, str]:
         message = RECOGNIZE_REASONS.get(result.get("reason") or "", "Дугаараа шалгаад засна уу.")
         return plate, True, message
     return plate, False, f"Дугаар уншигдлаа: {plate}"
+
+
+# Photo types for the uploaders. HEIC/HEIF = iPhone default (RISK-17); the API
+# converts them (pillow-heif, contract v0.5). Same list everywhere in the UI.
+UPLOAD_TYPES = ["jpg", "jpeg", "png", "heic", "heif"]
+_CONTENT_TYPES = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
+                  "heic": "image/heic", "heif": "image/heif"}
+
+
+def photo_content_type(filename: str | None, browser_type: str | None) -> str:
+    """Content type to send with the photo: the browser's, else from the extension.
+
+    Some browsers send HEIC with an empty type; the API decodes the bytes anyway,
+    but a correct label helps logs and debugging.
+    """
+    if browser_type:
+        return browser_type
+    ext = (filename or "").rsplit(".", 1)[-1].lower()
+    return _CONTENT_TYPES.get(ext, "image/jpeg")
 
 
 def recognize_error_message(status: int) -> str:

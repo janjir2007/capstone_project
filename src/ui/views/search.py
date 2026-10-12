@@ -43,7 +43,7 @@ with st.container(key="card_search"):
     if st.session_state.get("search_cam_open"):
         st.camera_input("Дугаарын зураг", key="search_cam", on_change=on_photo, args=("search_cam",),
                         label_visibility="collapsed")
-        st.file_uploader("Эсвэл зураг оруулах", type=["jpg", "jpeg", "png", "heic", "heif"],
+        st.file_uploader("Эсвэл зураг оруулах", type=logic.UPLOAD_TYPES,
                          key="search_upload", on_change=on_photo, args=("search_upload",))
 
 photo_msg = st.session_state.pop("search_photo_msg", None)
@@ -69,7 +69,10 @@ if result:
     vehicles = result.get("vehicles") or []
     with st.container(key="card_results"):
         if not vehicles:
-            st.markdown("**Олдсонгүй.** Энэ машин бүртгэлгүй байна.")
+            if result.get("match_type") == "phone":
+                st.markdown("**Олдсонгүй.** Энэ утасны дугаартай үйлчилгээ бүртгэгдээгүй байна.")
+            else:
+                st.markdown("**Олдсонгүй.** Энэ машин бүртгэлгүй байна.")
             if result.get("match_type") != "phone" and st.button("Шинэ машин бүртгэх", type="primary",
                                                                   width="stretch"):
                 common.go_record("plate", result.get("query", ""), None)

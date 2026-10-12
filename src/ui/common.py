@@ -173,7 +173,8 @@ def recognize_photo(photo) -> tuple[str, bool, str]:
     the oil changer types the plate, so recognition can never block the flow.
     """
     try:
-        result = api_client.recognize_plate(photo.getvalue(), photo.name or "photo.jpg", photo.type or "image/jpeg")
+        result = api_client.recognize_plate(photo.getvalue(), photo.name or "photo.jpg",
+                                            logic.photo_content_type(photo.name, photo.type))
     except api_client.ApiError as exc:
         return "", True, logic.recognize_error_message(exc.status)
     return logic.recognize_outcome(result)

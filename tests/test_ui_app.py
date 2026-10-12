@@ -25,6 +25,8 @@ TODAY = "2026-10-12"
 DESTINATIONS = [
     {"id": 1, "name": "Ulaanbaatar city (local work)", "route_category": "ub_city"},
     {"id": 2, "name": "Zamyn-Uud (MN–CN border)", "route_category": "mn_china", "name_mn": "Замын-Үүд"},
+    {"id": 5, "name": "Altanbulag (MN–RU border)", "route_category": "mn_russia", "name_mn": None},
+    {"id": 6, "name": "Kyakhta (RU side of border)", "route_category": "mn_russia", "name_mn": ""},
     {"id": 7, "name": "Other / several / unknown", "route_category": "mixed"},
 ]
 
@@ -389,7 +391,9 @@ def test_destination_pills_with_name_mn_and_other(fake_api) -> None:
     seed_existing(fake_api)
     at = to_form(run_app(RECORD), "0002 ТЕС")
     pills = at.pills(key="f_destination_id")
-    assert "Замын-Үүд" in pills.options and "Бусад" in pills.options
+    assert pills.options == [  # D-071: name_mn when present, else name (missing / null / "")
+        "Ulaanbaatar city (local work)", "Замын-Үүд", "Altanbulag (MN–RU border)",
+        "Kyakhta (RU side of border)", "Other / several / unknown", "Бусад"]
     at.number_input(key="f_odometer_km").set_value(215000)
     pills.set_value(-1).run()
     at.text_input(key="f_destination_raw").set_value("Сайншанд")
@@ -470,6 +474,20 @@ def test_photo_needs_manual_opens_manual_with_text(fake_api) -> None:
     assert any("шалгаад" in t for t in texts(at.warning))
 
 
+def test_iphone_heic_upload_is_sent(fake_api) -> None:
+    """RISK-17: an iPhone photo (upper-case .HEIC, browser sends no type) is accepted
+    by the uploader and sent to the API as image/heic in the "file" field."""
+    seed_existing(fake_api)
+    fake_api.recognize = (200, RECOGNIZED)
+    at = run_app(RECORD)
+    at = at.file_uploader(key="rec_upload").upload("IMG_0001.HEIC", b"fake-heic", "").run()
+    assert not at.exception
+    body = fake_api.uploads[0]
+    assert b'name="file"; filename="IMG_0001.HEIC"' in body
+    assert b"Content-Type: image/heic" in body
+    assert step(at) == "confirm"
+
+
 def test_recognizer_down_falls_back_to_manual(fake_api) -> None:
     at = upload_photo(run_app(RECORD), "rec_upload")  # default fake answer: 503
     assert not at.exception
@@ -533,6 +551,12 @@ def test_unknown_offers_new_vehicle_form(fake_api) -> None:
     assert texts(at.title) == ["Бүртгэх"]
     assert step(at) == "form"
     assert "Шинэ машин" in html_blocks(at)
+
+
+def test_unknown_phone_message_and_no_new_vehicle_button(fake_api) -> None:
+    at = search(run_app(SEARCH), "99119999")
+    assert "Энэ утасны дугаартай үйлчилгээ бүртгэгдээгүй" in html_blocks(at)
+    assert "Шинэ машин бүртгэх" not in [b.label for b in at.button]  # a phone is not a plate
 
 
 def test_search_by_camera(fake_api) -> None:

@@ -208,7 +208,7 @@ checked = st.session_state.get("rec_checked")
 if step == "capture":
     with st.container(key="card_capture"):
         st.camera_input("Машины дугаарын зураг авна уу", key="rec_cam", on_change=on_photo, args=("rec_cam",))
-        st.file_uploader("Эсвэл зураг оруулах", type=["jpg", "jpeg", "png", "heic", "heif"],
+        st.file_uploader("Эсвэл зураг оруулах", type=logic.UPLOAD_TYPES,
                          key="rec_upload", on_change=on_photo, args=("rec_upload",))
         st.markdown('<span class="muted">Зураг хадгалагдахгүй.</span>', unsafe_allow_html=True)
     st.button("Дугаарыг гараар оруулах", on_click=on_manual_open, width="stretch")

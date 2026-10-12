@@ -48,7 +48,7 @@ def test_lookup_sends_query(requests_seen) -> None:
 def test_uses_api_url_env(requests_seen, monkeypatch) -> None:
     seen, _ = requests_seen
     monkeypatch.setenv("API_URL", "https://api.example.test")
-    api_client.health()
+    api_client.destinations()
     assert seen[0].url.host == "api.example.test"
 
 
@@ -114,7 +114,7 @@ def test_connection_error_is_status_0() -> None:
     api_client.set_transport(httpx.MockTransport(handler))
     try:
         with pytest.raises(api_client.ApiError) as info:
-            api_client.health()
+            api_client.destinations()
         assert info.value.status == 0
     finally:
         api_client.set_transport(None)

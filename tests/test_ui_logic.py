@@ -55,6 +55,9 @@ def test_destination_label_prefers_name_mn() -> None:
     assert logic.destination_label(dest) == "Zamyn-Uud"
     assert logic.destination_label({**dest, "name_mn": "Замын-Үүд"}) == "Замын-Үүд"
     assert logic.destination_label({**dest, "name_mn": None}) == "Zamyn-Uud"
+    assert logic.destination_label({**dest, "name_mn": ""}) == "Zamyn-Uud"     # D-071: empty -> name
+    assert logic.destination_label({**dest, "name_mn": "   "}) == "Zamyn-Uud"
+    assert logic.destination_label({**dest, "name_mn": " Замын-Үүд "}) == "Замын-Үүд"
     assert logic.destination_label(None) == logic.NOT_GIVEN
 
 
@@ -326,3 +329,12 @@ def test_days_left_text() -> None:
     assert logic.days_left_text(-3) == "3 хоног хэтэрсэн"
     assert logic.days_left_text(0) == "Өнөөдөр"
     assert logic.days_left_text(None) == "—"
+
+
+def test_photo_content_type() -> None:
+    assert logic.photo_content_type("IMG_0001.HEIC", "") == "image/heic"   # iPhone, empty browser type
+    assert logic.photo_content_type("IMG_0001.heif", None) == "image/heif"
+    assert logic.photo_content_type("truck.png", None) == "image/png"
+    assert logic.photo_content_type("truck.jpg", "image/jpeg") == "image/jpeg"  # browser type wins
+    assert logic.photo_content_type(None, None) == "image/jpeg"
+    assert {"heic", "heif"} <= set(logic.UPLOAD_TYPES)
