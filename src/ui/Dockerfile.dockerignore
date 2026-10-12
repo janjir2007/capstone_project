@@ -1,0 +1,9 @@
+# Build context allow-list for src/ui/Dockerfile (BuildKit uses this file instead
+# of the root .dockerignore). Everything is excluded except the UI code and its
+# requirements, so data, models, photos and .env can never enter the UI image (RISK-06).
+*
+!requirements-ui.txt
+!src/__init__.py
+!src/ui/
+src/ui/**/__pycache__
+src/ui/Dockerfile*
