@@ -1,6 +1,6 @@
 # UI screens — Streamlit frontend (tasks 5.1–5.4)
 
-- **Owner:** Frontend Engineer (iMac, branch `ui`, D-052) · **Version:** 0.7 (2026-10-11, T7: DESIGN v4 — calm, modern, light)
+- **Owner:** Frontend Engineer (iMac, branch `ui`, D-052) · **Version:** 0.8 (2026-10-12, T8: no company field for plates + exact spacing)
 - Stack: Streamlit 1.64 (D-022), calls FastAPI over HTTP only (`docs/api_contract.md` v0.5).
 - UI text: Mongolian. Fake demo data only (RISK-06).
 
@@ -56,8 +56,14 @@ Goal (Ari): "understandable but elegant, like a modern banking/delivery app — 
   **chips** 36 px, 14 px, wrap, 8 px gaps.
 - Visible focus ring (3 px primary), `prefers-reduced-motion` respected, no emoji (Material icons;
   inline SVG in HTML blocks).
-- Header: «‹ Буцах» (inner screens) + small «Гео-Эксперт» + title. Top padding 64 px keeps it below
-  Streamlit's top bar (browser test). Toolbar `client.toolbarMode = "viewer"`.
+- Header: «‹ Буцах» (inner screens) + small «Гео-Эксперт» + title. Streamlit's own top bar
+  (incl. the ⋮ menu) is hidden (T8).
+- **Spacing (T8, exact values, `src/ui/common.py`, checked at 390 px by the browser test):** page
+  padding 16 top / 20 sides / 32 bottom, content max 480 px centered (all screens, dashboard too) ·
+  top row 44 px → 8 px → title 22/600 → 16 px · element → element 12 px · before/after a card or
+  section 20 px · card padding 16 · label → input 6 px · field → field 14 px · «Хадгалах» 20 px
+  below the last card, full width, no frame · no empty blocks (CSS-only markdown blocks are taken
+  out of the layout).
 
 ## Screens
 
@@ -88,9 +94,12 @@ count from `GET /reminders/due`; plain subtitle if the API has no predictions). 
      **«Тосны төрөл»: 15W-40 · 10W-40 · 20W-50 · «Бусад»** (free text); default = last service value
      (not in the 3 → «Бусад» with it as text), else 15W-40.
    - Card 2, existing truck: «Өмнөхөөс авсан» one line (liters · driver · phone) + «Засах».
-     **No company field** (the API ignores it for an existing plate; for a fleet number the UI sends
+     **No company field** (existing truck) (the API ignores it for an existing plate; for a fleet number the UI sends
      the chosen truck's company, D-042).
-   - Card 2, new truck: «Компани / эзэмшигч» (required, D-042, no default), **«Машины загвар»
+   - Card 2, new truck: «Компани / эзэмшигч» **only in «Дугааргүй машин» (fleet_no) mode** (required:
+     fleet numbers are unique per company). New plate vehicle: no field, the UI sends
+     `company_name = "Тодорхойгүй"` (`logic.UNKNOWN_COMPANY`, T8; API still requires it, D-042;
+     remove the default if backend makes company_name optional). Then **«Машины загвар»
      searchable list** (26 models, `logic.VEHICLE_MODELS`) + «Бусад» (free text; an old value not in
      the list still shows, D-019), liters, driver, phone.
    - **«Тос солигч» removed** (optional in the contract; not sent).
@@ -111,7 +120,7 @@ list (plate · company · segment); none → «Олдсонгүй» + «Шинэ
 colored dot («Давтан · 2 удаа») → one line company · model → compact **status block** on a soft tint:
 dot + status word (Хэвийн / Удахгүй / Хэтэрсэн), «N хоног» 28/600 + үлдсэн/хэтэрсэн, «Дараагийн
 солилт: date», 4 px bar, method note 12 px grey; `null` → grey «Таамаглал удахгүй нэмэгдэнэ» →
-**4 info pairs** (2 columns, no boxes): Сүүлд солисон, Тос (grade · liters), Чиглэл, Жолооч (name ·
+**4 info pairs** (2 columns, no boxes): Сүүлд солисон, Тос («15W-40 · ердийн 30 л»; last liters if no usual, T8), Чиглэл, Жолооч (name ·
 phone) → «Түүх (N)» collapsed → primary «Тос солилт бүртгэх». No «Залгах», no separate badge (T7).
 
 **Сануулга (Manager dashboard, 5.4)** — wider on desktop (max 1100 px), 2×2 tiles on a phone.
