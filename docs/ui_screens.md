@@ -1,6 +1,6 @@
 # UI screens — Streamlit frontend (tasks 5.1–5.4)
 
-- **Owner:** Frontend Engineer (iMac, branch `ui`, D-052) · **Version:** 0.5 (2026-10-12, T5: Docker, HEIC, name_mn)
+- **Owner:** Frontend Engineer (iMac, branch `ui`, D-052) · **Version:** 0.6 (2026-10-12, T6: DESIGN v3 + simpler form)
 - Stack: Streamlit 1.64 (D-022), calls FastAPI over HTTP only (`docs/api_contract.md` v0.5).
 - UI text: Mongolian. Fake demo data only (RISK-06).
 
@@ -32,55 +32,76 @@ The folder is `views/`, **not** `pages/`: Streamlit runs a folder named `pages/`
 which skips `app.py` (and the login gate) when a URL is opened directly. Guarded by
 `test_no_streamlit_pages_folder`.
 
-## DESIGN v2 (how it is built)
+## DESIGN v3 (T6) — how it is built
 
-- Theme (config.toml): grey background, white cards, black text, primary #1F4E9D, one column
-  (max 560 px).
-- White cards = `st.container(key="card_…")`; CSS hooks on Streamlit's `st-key-card_…` class:
-  radius 24, soft shadow. All buttons ≥ 56 px, radius 18. Black button = key `btn_black…`.
+- **Font:** Montserrat (Google Fonts via `theme.font` in config.toml). Mongolian Ө ө Ү ү render in
+  Montserrat (Chrome DevTools: all glyphs from Montserrat, no fallback font; control text in
+  `sans-serif` → Helvetica).
+- **Colors** (WCAG contrast computed): text #14171C 18:1, muted #4A5160 7.3:1, white on primary
+  #1F4E9D 8:1 (placeholder brand color). Status, the same everywhere (card, dashboard), always with
+  the word next to the color: Хэвийн #14532D on #E3F1E7 (7.8:1) · Удахгүй #6B3F00 on #FBEFD6 (7.9:1)
+  · Хэтэрсэн #8C1D18 on #F9E3E1 (7.4:1) · no prediction #3F4552 on #ECEEF1 (8.3:1). All AAA,
+  for outdoor light. `tests/test_ui_logic.py::test_status_colors_are_aaa_contrast` guards it.
+- **Spacing** 4/8/12/16/24/32 px · **type** title 28/800, section 18/700, body 16/500, small 14
+  (nothing smaller) · **tap targets** buttons ≥ 56 px, pills ≥ 48 px, links ≥ 44 px, gaps ≥ 8 px.
+- White cards = `st.container(key="card_…")` (radius 20, soft shadow); dark button = key `btn_dark…`;
+  visible focus ring (3 px primary); `prefers-reduced-motion` respected.
+- No emoji: Material icons on buttons (camera, search, keyboard) and in the browser tab.
 - Header on every screen: «Гео-Эксперт» pill + big title; inner screens have «‹ Буцах».
-- Navigation menu is hidden; screens are linked by their big buttons.
+  Top padding 64 px keeps it below Streamlit's top bar (checked in `tests/test_ui_browser.py`).
+- Toolbar: `client.toolbarMode = "viewer"` (no Deploy / developer menu; the ⋮ viewer menu stays).
 
 ## Screens
 
 **Login** (only if `UI_PASSWORD` set): password card → «Нэвтрэх». Until logged in only this page
 exists, so a direct URL cannot skip it.
 
-**Нүүр (Home)**: big primary card «📷 Бүртгэх» (opens the camera step), white card «🔍 Хайх»,
+**Нүүр (Home)**: big primary card «Бүртгэх» with a camera icon (opens the camera step), white card «Хайх»,
 link «Сануулга» → dashboard.
 
 **Бүртгэх (Record)**
 1. *Capture*: camera (+ upload jpg/png/heic/heif, also upper-case `IMG_0001.HEIC` from an iPhone,
-   sent as `image/heic` even when the browser gives no type, RISK-17). New photo → `POST /plates/recognize` (field `file`,
-   not stored). Clear read → lookup → confirm. `needs_manual` or recognizer down → manual step
-   with the read text and a reason message. «Дугаарыг гараар оруулах» → manual.
-2. *Manual*: Улсын дугаар / Парк дугаар + «Дугаар» → «Шалгах» → lookup → confirm. A phone typed
-   here → hint to use «Хайх».
-3. *Confirm*: plate large in monospace in a bordered box + chip «Бүртгэлтэй · N удаа ирсэн» (green)
-   or «Шинэ машин» (blue); fleet number in several companies → company radio. «Зөв, үргэлжлүүлэх»
-   / «Буруу байна — засах» (back to manual, plate kept).
-4. *Form*: small plate box + chip. Card 1 (always fresh, D-033): «Гүйлт (км)» (hint = previous km),
-   «Моторын цаг» (fleet numbers, or if the truck had hours before), «Дараа нь хаашаа явах вэ?» as tap
-   pills from `GET /destinations` (`name_mn` when present; null / "" / spaces → `name`, D-071) + «Бусад» → place name + route pills
-   (D-039). Card 2: existing truck → «Өмнөхөөс авсан» one line (oil · liters · driver · phone) +
-   «Засах» expander; new truck → company, model, oil, liters, driver, phone, oil changer.
-   «Хадгалах» → `POST /services` (no date: API = today). 409 duplicate → warning +
-   «Ингээд хадгалах» (`force=true`) / «Болих». 422 → Mongolian messages.
-5. *Success*: ✓ «Хадгалагдлаа», plate, «Дараагийн машин» (back to camera; oil changer remembered),
-   «Машины карт үзэх».
+   sent as `image/heic` when the browser gives no type, RISK-17). New photo → `POST /plates/recognize`
+   (field `file`). Clear read → lookup → confirm. `needs_manual` or recognizer down → manual step
+   with the read text and a reason message. «Дугаарыг гараар оруулах» → manual; small
+   «Дугааргүй машин» → manual in **fleet-number mode** (D-005; no radio on the main form).
+2. *Manual*: «Улсын дугаар» (or «Парк дугаар») → «Шалгах» → lookup → confirm. «Дугааргүй машин» /
+   «Улсын дугаартай машин» toggles the mode. A phone typed here → hint to use «Хайх».
+3. *Confirm*: **photo preview** + plate large in a bordered box + chip «Бүртгэлтэй · N удаа ирсэн» /
+   «Шинэ машин»; fleet number in several companies → company radio. «Зөв, үргэлжлүүлэх» /
+   «Буруу байна — засах».
+4. *Form*: photo preview, small plate box + chip.
+   - Card 1 (always fresh, D-033): «Гүйлт (км)» (numeric keypad; hint = previous km), «Моторын цаг»
+     (fleet numbers, or if the truck had hours before), «Дараа нь хаашаа явах вэ?» tap pills from
+     `GET /destinations` (`name_mn` when present, else `name`, D-071) + «Бусад» → place + route,
+     **«Тосны төрөл»: 15W-40 · 10W-40 · 20W-50 · «Бусад»** (free text); default = last service value
+     (not in the 3 → «Бусад» with it as text), else 15W-40.
+   - Card 2, existing truck: «Өмнөхөөс авсан» one line (liters · driver · phone) + «Засах».
+     **No company field** (the API ignores it for an existing plate; for a fleet number the UI sends
+     the chosen truck's company, D-042).
+   - Card 2, new truck: «Компани / эзэмшигч» (required, D-042, no default), **«Машины загвар»
+     searchable list** (26 models, `logic.VEHICLE_MODELS`) + «Бусад» (free text; an old value not in
+     the list still shows, D-019), liters, driver, phone.
+   - **«Тос солигч» removed** (optional in the contract; not sent).
+   - «Хадгалах» → `POST /services`; 409 duplicate → «Ингээд хадгалах» (`force=true`) / «Болих».
+5. *Success*: check mark «Хадгалагдлаа», plate, «Дараагийн машин», «Машины карт үзэх».
 
-**Хайх (Search)**: white card with input + «Хайх» (primary) and black «📷 Камераар хайх» (camera +
+The photo lives only in this browser session for the preview; it is never stored and never sent
+anywhere except `POST /plates/recognize` (D-070). A photo the UI cannot decode (iPhone HEIC: the API
+converts it, the UI has no HEIC decoder) shows «Зураг: … (урьдчилж харах боломжгүй)», never an error.
+
+**Хайх (Search)**: white card with «Улсын дугаар эсвэл утас» + «Хайх» (primary; the API still matches
+fleet numbers) and dark «Камераар хайх» (camera +
 upload; clear read searches, `needs_manual` fills the field). One match → card opens; several →
 list (plate · company · segment); none → «Олдсонгүй» + «Шинэ машин бүртгэх» (form, new truck).
 «Сүүлд үзсэн»: cards opened in this session (max 5).
 
-**Машины карт (Card)** (fresh `GET /vehicles/{id}`): plate box + segment badge (Шинэ / Давтан /
-Байнгын / Эрсдэлтэй), company · model · N удаа · ердийн L; **status card** from `prediction`:
-ok #1e6b34 on #e3f1e7 «Хэвийн», due_soon #8a5300 on #fbefd6 «Удахгүй», overdue #b3261e on
-#f9e3e1 «Хэтэрсэн»; big «N хоног үлдсэн/хэтэрсэн», `predicted_date`, progress bar (share of
-last_service_date → predicted_date used), note = method + fallback_reason; `null` → grey
-«Таамаглал удахгүй нэмэгдэнэ». 3 tiles: Сүүлд солисон, Тос (grade · liters), Чиглэл. Call row
-«Жолооч · утас — Залгах» (`tel:` link). «Түүх (N)» expander. Primary «Тос солилт бүртгэх».
+**Машины карт (Card)** (fresh `GET /vehicles/{id}`), ordered by importance: **plate** large →
+**status block**, the biggest colored block: status word (Хэвийн / Удахгүй / Хэтэрсэн), big «N хоног
+үлдсэн/хэтэрсэн», «Дараагийн солилт: date», progress bar, small method note; `null` → grey
+«Таамаглал удахгүй нэмэгдэнэ» → segment badge (Шинэ / Давтан / Байнгын / Эрсдэлтэй) + company ·
+model · N удаа · ердийн L → **4 tiles** (2×2): Сүүлд солисон, Тос (grade · liters), Чиглэл, Жолооч
+(name · phone) → «Түүх (N)» collapsed → primary «Тос солилт бүртгэх». No «Залгах» button (T6).
 
 **Сануулга (Manager dashboard, 5.4)** — wider on desktop (max 1100 px), 2×2 tiles on a phone.
 - 4 segment tiles from `GET /stats/segments` (Шинэ / Давтан / Байнгын / Эрсдэлтэй) + total, as_of.
@@ -98,8 +119,11 @@ last_service_date → predicted_date used), note = method + fallback_reason; `nu
 
 ## Streamlit limits (accepted, "close is enough")
 
+- The phone field opens the full keyboard: `st.text_input` cannot set `inputmode="tel"` (km and
+  liters are number inputs → numeric keypad).
 - Built-in widget text stays English: camera permission prompt ("This app would like to use your
   camera", "Take Photo"), uploader ("Upload", "15MB per file" — limit set to the API's 15 MB in config.toml).
-- The copy button's tooltip says "Copy to clipboard" (built-in).
+- The copy button's tooltip says "Copy to clipboard"; help icons are announced as "Help for …"
+  (built-in).
 - Pills wrap to several rows on a phone (7 destinations).
 - No real "card" component: white cards are keyed containers + CSS.
