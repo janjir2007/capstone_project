@@ -261,6 +261,7 @@ def build_report(cfg: dict, train: pd.DataFrame, test: pd.DataFrame, split, mode
                               for n, (g, lo, hi) in gains.items()])
     params_rows = pd.DataFrame([{"Model": n, "CV MAE (train)": f"{r.oof_scores['MAE']:.2f}",
                                  "Best hyperparameters": _params_text(r.best_params)} for n, r in models.items()])
+    serving = m.get("serving_model", best)
     best_val, b0_val = val_scores[best], val_scores["B0 (median)"]
     best_test, b0_test = test_scores[best], test_scores["B0 (median)"]
     g, lo, hi = gains[best]
@@ -326,8 +327,9 @@ sent on predicted day − buffer. "Hit rate, no buffer" = same prediction sent o
 - The buffer matters as much as the model for the business metric: compare "Hit rate,
   no buffer" with the tuned column.
 - Test has {len(test)} visits from {test[vc].nunique()} trucks; read small differences with the intervals above.
-- Saved: `{m['model_dir']}/{MODEL_FILE}` (git-ignored) = {best} pipeline + its buffer
-  ({buffers[best]} days) + feature list. SHAP is task 2.4.
+- Saved: `{m['model_dir']}/{MODEL_FILE}` (git-ignored) = {serving} pipeline (serving model,
+  `models.serving_model` in configs/ml.yaml) + its buffer ({buffers[serving]} days) + feature list.
+  SHAP and the full evaluation: docs/ml_evaluation.md (task 2.4).
 """
 
 
@@ -349,7 +351,7 @@ def b1_check_text(cfg: dict) -> str:
 
 
 def save_model(result: TrainResult, cfg: dict, split) -> Path:
-    """Best pipeline + buffer + feature list -> models/ (git-ignored)."""
+    """Serving pipeline + buffer + feature list -> models/ (git-ignored)."""
     out = Path(cfg["models"]["model_dir"])
     out.mkdir(parents=True, exist_ok=True)
     meta = {"model": result.name, "buffer_days": result.buffer_days, "features": FEATURE_COLUMNS,
@@ -362,7 +364,7 @@ def save_model(result: TrainResult, cfg: dict, split) -> Path:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Tune on TRAIN, then score all five on test once, write report, chart and model."""
+    """Tune on TRAIN, then score all five on test once, write report, chart and the serving model."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--config", type=Path, default=Path("configs/ml.yaml"))
     args = parser.parse_args(argv)
@@ -382,7 +384,7 @@ def main(argv: list[str] | None = None) -> int:
     text = build_report(cfg, train, test, split, models, val_scores, buffers, best, test_scores, gains,
                         b1_check_text(cfg))
     Path(cfg["models"]["results_path"]).write_text(text, encoding="utf-8")
-    path = save_model(models[best], cfg, split)
+    path = save_model(models[cfg["models"].get("serving_model", best)], cfg, split)
     print(results_table(test_scores).to_string(index=False))
     print(f"report -> {cfg['models']['results_path']}, model -> {path}")
     return 0

@@ -1,6 +1,6 @@
 # =====================================================================
 # ML settings — tasks 2.1–2.3a (EDA, split, baselines); 2.3b reuses the split.
-# Read by: src/ml/dataset.py, src/ml/baselines.py, notebooks/01_eda.ipynb
+# Read by: src/ml/dataset.py, src/ml/baselines.py, src/ml/train.py, src/ml/evaluate.py, notebooks/01_eda.ipynb
 # Tags as in configs/generator.yaml: [SOURCE: ...] checkable, [ESTIMATE] placeholder.
 # =====================================================================
 
@@ -31,9 +31,10 @@ baselines:
   b1_sensitivity_km: [15000]   # [SOURCE: D-030] recommended interval; shown, not the official B1
 
 reminder:
-  # D-036: hit = reminder lands this many days BEFORE the actual visit. Window TBD by Ari.
-  window_days_early: [3, 7]    # [ESTIMATE] from the 2.1–2.3a brief
-  buffer_days: 0               # reminder sent this many days before the predicted date
+  # D-036: hit = reminder lands this many days BEFORE the actual visit.
+  window_days_early: [1, 14]   # [SOURCE: D-051, PROPOSED — Ari to confirm] configurable; was [3, 7] in 2.1–2.3b (D-049 default)
+  sensitivity_windows: [[3, 7]]  # [SOURCE: D-049] old window, shown in docs/ml_evaluation.md for comparison
+  buffer_days: 0               # reminder sent this many days before the predicted date (baselines report only)
 
 report_path: docs/ml_baselines.md
 figures_dir: docs/figures
@@ -48,3 +49,19 @@ models:
   bootstrap_resamples: 2000    # test MAE difference vs B0, resampling whole trucks
   model_dir: models            # git-ignored
   results_path: docs/ml_results.md
+  serving_model: Ridge         # [SOURCE: PROJECT_STATE v2.1 / brief 2.4] saved to model_dir for the API
+
+# Task 2.4: explanation + evaluation (src/ml/explain.py, src/ml/evaluate.py).
+evaluation:
+  report_path: docs/ml_evaluation.md
+  d038_tolerance_days: 0.5    # [ESTIMATE] variation OFF: ML may beat calibrated B1 by at most this (MAE days)
+  status:
+    # D-007: OK > due_soon_days left; Due soon 0..due_soon_days; Overdue < 0 (adjustable, Ari).
+    due_soon_days: 14          # [SOURCE: D-007]
+    # The status is checked every N days after a service, until this many days after
+    # the actual next visit (true due date = actual next visit, the only one we observe).
+    check_every_days: 7        # [ESTIMATE] evaluation protocol, not a business fact
+    check_after_due_days: 14   # [ESTIMATE] evaluation protocol
+  shap:
+    top_features: 12           # columns shown in the beeswarm summary plots
+    example_min_prior_visits: 2  # example truck: needs this much history (choice uses predictions only, never the target)

@@ -110,8 +110,13 @@ def results_table(results: dict[str, dict[str, float]]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def mark_synthetic(fig: plt.Figure, text: str = "SYNTHETIC DATA — not real Geo-Expert customers") -> None:
+    """Stamp the data source in the top-right corner of a chart (task 2.4: on every chart)."""
+    fig.text(0.995, 0.995, text, ha="right", va="top", fontsize=8, color=ORANGE, fontweight="bold")
+
+
 def plot_baselines(results: dict[str, dict[str, float]], window: tuple[int, int], path: Path,
-                   outcome_title: str = "Reminder outcome (% of test visits)") -> None:
+                   outcome_title: str = "Reminder outcome (% of test visits)", synthetic_label: bool = False) -> None:
     """Two panels on separate axes (never a dual axis): MAE, and reminder outcome shares."""
     names = list(results)
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 3.6), facecolor=SURFACE,
@@ -149,6 +154,9 @@ def plot_baselines(results: dict[str, dict[str, float]], window: tuple[int, int]
         ax.grid(axis="x", color=GRID, linewidth=0.8)
         ax.set_axisbelow(True)
     fig.tight_layout()
+    if synthetic_label:
+        fig.subplots_adjust(top=0.85)
+        mark_synthetic(fig)
     path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, dpi=150, facecolor=SURFACE, metadata={"Software": None})
     plt.close(fig)

@@ -87,15 +87,23 @@ def split_by_vehicle_and_time(df: pd.DataFrame, vehicle_col: str, test_vehicle_s
     return Split(train=train, test=test, cutoff=cutoff, test_vehicles=test_vehicles)
 
 
-def build_dataset(cfg: dict) -> tuple[pd.DataFrame, dict[str, Route]]:
-    """Records + target + features in one table (all rows, also those without target)."""
+def build_dataset_from_records(records: pd.DataFrame, cfg: dict) -> tuple[pd.DataFrame, dict[str, Route]]:
+    """Records (already loaded) + target + features in one table (all rows, also those without target).
+
+    Used by ``build_dataset`` (cleaned CSV) and by the D-038 check (task 2.4), which
+    builds its records in memory with the generator's variation switched off.
+    """
     vehicle_col = cfg["vehicle_col"]
-    records = load_records(Path(cfg["input"]))
     routes = route_table(load_generator_config(Path(cfg["generator_config"])))
     features = build_features(records, routes, vehicle_col, late_km=cfg["features"]["late_km"])
     df = records[[vehicle_col, "record_id", "service_date", "odometer_km"]].join(features)
     df[TARGET] = add_target(records, vehicle_col)
     return df, routes
+
+
+def build_dataset(cfg: dict) -> tuple[pd.DataFrame, dict[str, Route]]:
+    """Cleaned CSV from configs/ml.yaml -> records + target + features."""
+    return build_dataset_from_records(load_records(Path(cfg["input"])), cfg)
 
 
 def make_split(df: pd.DataFrame, cfg: dict) -> Split:

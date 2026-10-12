@@ -45,3 +45,6 @@ scikit-learn==1.9.1
 xgboost==3.2.0  # macOS needs the OpenMP runtime: brew install libomp (Linux CI has libgomp)
 scipy==1.17.1  # search distributions (scipy.stats); installed by scikit-learn anyway
 joblib==1.6.0  # saves the model to models/; installed by scikit-learn anyway
+
+# --- ML explanation (src/ml/explain.py, task 2.4)
+shap==0.51.0  # newest release for Python 3.11 (0.52+ needs 3.12); installs numba + llvmlite
