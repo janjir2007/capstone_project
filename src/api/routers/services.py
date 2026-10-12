@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 
 from src.api.clock import get_today
 from src.api.db import get_session
-from src.api.matching import clean_company_name, company_key
+from src.api.matching import clean_company_name, company_key, fleet_no_key
 from src.api.models import Company, Destination, ServiceRecord, Vehicle
 from src.api.schemas import ServiceCreate, ServiceCreated, ServiceOut
 from src.common.plates import normalize_plate
@@ -94,13 +94,14 @@ def find_vehicle(session: Session, body: ServiceCreate) -> Vehicle | None:
     company = find_company(session, body.company_name)
     if company is None:
         return None
-    return session.scalar(
-        select(Vehicle).where(
-            Vehicle.company_id == company.id,
-            Vehicle.identifier_type == "fleet_no",
-            Vehicle.identifier == body.identifier,
-        )
-    )
+    # Same forgiving key as the lookup (src/api/matching.py, task 4.4): "ht 12" finds "HT-12".
+    key = fleet_no_key(body.identifier)
+    fleet = session.scalars(
+        select(Vehicle)
+        .where(Vehicle.company_id == company.id, Vehicle.identifier_type == "fleet_no")
+        .order_by(Vehicle.id)  # if old data has two spellings of one truck, the oldest wins
+    ).all()
+    return next((v for v in fleet if fleet_no_key(v.identifier) == key), None)
 
 
 def create_vehicle(session: Session, body: ServiceCreate) -> tuple[Vehicle, bool]:

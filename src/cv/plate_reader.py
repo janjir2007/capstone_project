@@ -3,7 +3,8 @@
 Same pipeline as the 3.3 evaluation, but both networks run as ONNX files on
 onnxruntime (CPU), so the API image needs neither torch nor ultralytics:
 
-1. Photo bytes -> upright RGB (EXIF orientation applied, as phones save it).
+1. Photo bytes (JPEG, PNG, or HEIC/HEIF = iPhone default, via pillow-heif, task 4.4)
+   -> upright RGB (EXIF orientation applied, as phones save it).
 2. Detector yolo26n (D-028), exported by ``src.cv.export_onnx``: most confident
    box with confidence >= 0.25 (task 3.2 operating threshold), plus the same 5 %
    margin as the 3.3 crops (``src.cv.ocr_data.padded_crop``).
@@ -29,6 +30,9 @@ import cv2
 import numpy as np
 import onnxruntime as ort
 from PIL import Image, ImageOps
+from pillow_heif import register_heif_opener
+
+register_heif_opener()  # lets PIL's Image.open read HEIC/HEIF (iPhone photos)
 
 from src.common.plates import DIGIT_COUNT, PlateReading, read_plate
 from src.cv.char_segment import segment

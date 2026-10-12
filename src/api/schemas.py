@@ -272,3 +272,56 @@ class SegmentStats(BaseModel):
     as_of: date
     total: int
     counts: SegmentCounts
+
+
+# --------------------------------------------------------------------------
+# Reminders (task 4.4)
+# --------------------------------------------------------------------------
+
+class DueReminder(BaseModel):
+    """One vehicle to remind today: GET /reminders/due."""
+
+    service_id: int = Field(description="Newest service = the reminder's id: POST /reminders/{service_id}/sent")
+    vehicle_id: int
+    identifier_type: Literal["plate", "fleet_no"]
+    identifier: str = Field(description="Plate or fleet number as confirmed, e.g. 1234 УБА")
+    plate_normalized: str | None
+    company: str
+    phone: str | None = Field(description="driver_phone of the newest service (D-004); null = no phone recorded")
+    driver_name: str | None
+    last_change_date: date
+    oil_grade: str
+    liters: float
+    method: PredictionMethod
+    buffer_days: int = Field(description="Days before predicted_date the reminder is sent (tuned per method on validation)")
+    predicted_date: date
+    send_on: date = Field(description="predicted_date − buffer_days")
+    days_left: int = Field(description="predicted_date − as_of")
+    status: Status
+    message_mn: str = Field(description="Mongolian reminder text (copy into the SMS / messenger)")
+
+
+class DueReminders(BaseModel):
+    """GET /reminders/due."""
+
+    as_of: date
+    contact_is_placeholder: bool = Field(description="true = GEO_EXPERT_PHONE is not set, the message has a fake number")
+    reminders: list[DueReminder] = Field(description="send_on <= as_of and not sent yet; oldest send_on first")
+
+
+class ReminderSentOut(BaseModel):
+    """POST /reminders/{service_id}/sent: the stored reminder."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    service_id: int
+    vehicle_id: int
+    phone: str | None
+    message_text: str
+    method: PredictionMethod
+    model_version: str
+    predicted_date: date
+    send_on: date
+    sent_at: datetime
+    already_sent: bool = Field(default=False, description="true = it was marked before; nothing changed")

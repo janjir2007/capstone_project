@@ -53,3 +53,4 @@ shap==0.51.0  # newest release for Python 3.11 (0.52+ needs 3.12); installs numb
 # --- Model serving (task 4.3): ONNX export on the Mac, onnxruntime in the API image
 onnx==1.23.2  # src/cv/export_onnx.py writes/reads ONNX files (export only, not in the API image)
 opencv-python-headless==5.0.0.93  # cv2 without GUI libraries for the API image; same version as opencv-python (already installed by easyocr)
+pillow-heif==1.8.1  # HEIC/HEIF photos (iPhone default) for POST /plates/recognize (task 4.4)

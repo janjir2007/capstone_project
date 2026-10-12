@@ -82,3 +82,25 @@ def model_dir(env: Mapping[str, str] | None = None) -> Path:
     """MODEL_DIR from the environment, else ./models. Needs no database settings."""
     env = os.environ if env is None else env
     return Path(env.get("MODEL_DIR", DEFAULT_MODEL_DIR))
+
+
+# Geo-Expert contact in the reminder message (task 4.4). Placeholder = the made-up number of
+# src/data/sample_data.sql; set the real one in .env / the host's settings before any real SMS.
+PLACEHOLDER_PHONE = "99000000"
+
+
+@dataclass(frozen=True)
+class Contact:
+    """Who the customer calls back: shown at the end of every reminder."""
+
+    name: str
+    phone: str
+    is_placeholder: bool
+
+
+def reminder_contact(env: Mapping[str, str] | None = None) -> Contact:
+    """GEO_EXPERT_NAME / GEO_EXPERT_PHONE from the environment (needs no database settings)."""
+    env = os.environ if env is None else env
+    phone = env.get("GEO_EXPERT_PHONE", "").strip() or PLACEHOLDER_PHONE
+    name = env.get("GEO_EXPERT_NAME", "").strip() or "Geo-Expert"
+    return Contact(name=name, phone=phone, is_placeholder=phone == PLACEHOLDER_PHONE)

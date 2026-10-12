@@ -20,3 +20,4 @@ joblib==1.6.0  # loads models/next_change_model.joblib
 onnxruntime==1.30.0
 opencv-python-headless==5.0.0.93
 pillow==12.3.0  # reads the uploaded photo + EXIF rotation
+pillow-heif==1.8.1  # HEIC/HEIF photos (iPhone default), task 4.4

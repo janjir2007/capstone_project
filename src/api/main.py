@@ -22,10 +22,10 @@ from src.api.config import load_settings
 from src.api.config import model_dir as model_dir_from_env
 from src.api.db import create_db_engine
 from src.api.prediction import load_predictor
-from src.api.routers import destinations, health, plates, services, stats, vehicles
+from src.api.routers import destinations, health, plates, reminders, services, stats, vehicles
 from src.cv.plate_reader import PlateRecognizer
 
-API_VERSION = "0.4.0"  # = docs/api_contract.md version
+API_VERSION = "0.5.0"  # = docs/api_contract.md version
 log = logging.getLogger("uvicorn.error")
 
 
@@ -63,6 +63,7 @@ def create_app(engine: Engine | None = None, model_dir: Path | None = None) -> F
     app.include_router(stats.router)
     app.include_router(destinations.router)
     app.include_router(plates.router)
+    app.include_router(reminders.router)
     return app
 
 

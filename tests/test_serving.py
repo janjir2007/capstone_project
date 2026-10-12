@@ -60,7 +60,8 @@ def model_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
                  "window_days_early": [1, 14], "best_params": {}, "split_cutoff": "2025-08-23", "seed": 42,
                  "data": "fake"}, folder / P.MODEL_FILE)
     (folder / P.PARAMS_FILE).write_text(json.dumps({"b0_days": 58.0, "b1_interval_km": 17_500.0, "late_km": 20_000.0,
-                                                     "routes": route_params(GEN_CFG)}), encoding="utf-8")
+                                                     "routes": route_params(GEN_CFG),
+                                                     "buffers": {"b0": 12, "b1": 1}}), encoding="utf-8")
     return folder
 
 

@@ -4,8 +4,9 @@ These classes only MAP the existing tables to Python objects. The tables
 themselves come from src/data/schema.sql + migrations (never create_all()), and
 the column names follow docs/data_dictionary.md (the contract).
 
-Not mapped yet: predictions, reminders (tasks 4.3/4.4). Computed objects
-(v_vehicle_service_summary, vehicle_segments()) are queried with SQL directly.
+Not mapped: predictions, reminders (schema.sql) — predictions are computed at read
+time (task 4.3), and sent reminders live in reminders_sent (migration 003, task 4.4).
+Computed objects (v_vehicle_service_summary, vehicle_segments()) are queried with SQL directly.
 
 server_default=func.now() / identity primary keys: the database fills these,
 so SQLAlchemy leaves them out of the INSERT and reads them back.
@@ -86,3 +87,20 @@ class ServiceRecord(Base):
 
     vehicle: Mapped[Vehicle] = relationship()
     destination: Mapped[Destination | None] = relationship()
+
+
+class ReminderSent(Base):
+    """reminders_sent: a reminder that went out for one (vehicle, newest service) (migration 003)."""
+
+    __tablename__ = "reminders_sent"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    vehicle_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("vehicles.id"))
+    service_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("service_records.id"))
+    phone: Mapped[str | None] = mapped_column(Text)
+    message_text: Mapped[str] = mapped_column(Text)
+    method: Mapped[str] = mapped_column(Text)
+    model_version: Mapped[str] = mapped_column(Text)
+    predicted_date: Mapped[date]
+    send_on: Mapped[date]
+    sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

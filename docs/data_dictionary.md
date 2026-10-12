@@ -178,6 +178,25 @@ Not stored (computed at read time): `days_left`, `status` (OK / due soon / overd
 | `created_at` | TIMESTAMPTZ | no | Asia/Ulaanbaatar | default `now()` | system |
 | `sent_at` | TIMESTAMPTZ | yes | Asia/Ulaanbaatar | **filled exactly when `status = 'sent'`** | system |
 
+### 2.6 `reminders_sent` — a reminder that went out (migration 003, task 4.4)
+
+One row per (vehicle, newest service): the oil changer sent the reminder for that service.
+The due list itself is computed by the API (`GET /reminders/due`), not stored. Used instead of
+`reminders` (2.5), which needs a stored prediction; the API does not store predictions.
+
+| Column | Type | Null | Example | Rule | Source |
+|---|---|---|---|---|---|
+| `id` | BIGINT | no | 1 | identity PK | DB |
+| `vehicle_id` | BIGINT | no | 4 | FK → `vehicles.id` | API |
+| `service_id` | BIGINT | no | 7 | the vehicle's newest service when sent; FK (`service_id`, `vehicle_id`) → `service_records (id, vehicle_id)`; **UNIQUE** (one reminder per service) | API |
+| `phone` | TEXT | yes | `99110005` | 8 digits; `driver_phone` of that service; NULL = no phone recorded | API |
+| `message_text` | TEXT | no | `Сайн байна уу! …` | not blank; the exact text sent | API |
+| `method` | TEXT | no | `b0` | `ridge` / `b1` / `b0` — which predictor gave the date | API |
+| `model_version` | TEXT | no | `ridge-c8b211cb` | not blank | API |
+| `predicted_date` | DATE | no | 2026-07-07 | | API |
+| `send_on` | DATE | no | 2026-06-25 | predicted_date − buffer of the method | API |
+| `sent_at` | TIMESTAMPTZ | no | now() | when it was marked sent | DB |
+
 ## 3. Computed objects (not stored)
 
 ### `v_vehicle_service_summary` (view)
@@ -261,6 +280,7 @@ databases use synthetic rows only.
 |---|---|---|
 | 0.1 | 2026-09-30 | First version (Task 1.1) |
 | 0.2 | 2026-10-06 | Task 1.1b, migration 001: new table `destinations`; `service_records.destination_id`, `destination_raw` (nullable) |
+| 0.3 | 2026-10-12 | Task 4.4, migration 003: new table `reminders_sent`. Segments in the API use the served prediction for `at_risk` (same D-007 rule as `vehicle_segments`) |
 
 ## 8. Migrations
 
@@ -272,6 +292,7 @@ databases use synthetic rows only.
 | # | File | What |
 |---|---|---|
 | 001 | `001_destinations.up.sql` / `.down.sql` | `destinations` table + seed; destination columns on `service_records` |
+| 003 | `003_reminders_sent.up.sql` / `.down.sql` | `reminders_sent` table (task 4.4). 002 is reserved for `destinations.name_mn` (D-040), not written yet. Tested by `tests/test_reminders.py` (up → down → up, constraints) |
 
 - **New dev DB** (`docker compose down -v && docker compose up -d db`): docker-compose runs
   `schema.sql` then every up migration automatically.

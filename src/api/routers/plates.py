@@ -29,7 +29,7 @@ def get_recognizer(request: Request) -> PlateRecognizer | None:
 
 @router.post("/recognize", response_model=PlateRecognitionOut)
 def recognize(
-    file: Annotated[UploadFile, File(description="Photo of the truck (JPEG or PNG; HEIC is not supported -> 422)")],
+    file: Annotated[UploadFile, File(description="Photo of the truck (JPEG, PNG or HEIC)")],
     recognizer: Annotated[PlateRecognizer | None, Depends(get_recognizer)],
 ) -> PlateRecognitionOut:
     """Read the plate on a photo.

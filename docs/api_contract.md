@@ -1,14 +1,14 @@
-# API contract — data + model endpoints (tasks 4.2, 4.2b, 4.3)
+# API contract — data, model and reminder endpoints (tasks 4.2, 4.2b, 4.3, 4.4)
 
-- **Version:** 0.4 (task 4.3, 2026-10-12) · **Owner:** Backend Engineer
+- **Version:** 0.5 (task 4.4, 2026-10-12) · **Owner:** Backend Engineer
 - Extends PROJECT_STATE §8 "API contract" with exact fields. The live, always
   current version is the OpenAPI page of the running API: `http://localhost:8000/docs`.
 - Field names follow [`data_dictionary.md`](data_dictionary.md). Code:
   [`src/api/schemas.py`](../src/api/schemas.py).
 - **"Today"** = current date in Ulaanbaatar (UTC+8), computed by the API, not by the database.
 - **Forgiving matching** (`src/api/matching.py`): company names ignore case and extra
-  spaces (`"  говь  ТЭЭВЭР ххк"` = `"Говь Тээвэр ХХК"`); fleet numbers ignore case and
-  all spaces, dashes count (`"ht - 12"` = `"HT-12"`, but `"HT12"` ≠ `"HT-12"`).
+  spaces (`"  говь  ТЭЭВЭР ххк"` = `"Говь Тээвэр ХХК"`); fleet numbers ignore case, all
+  spaces **and dashes** (v0.5): `"ht 12"` = `"HT12"` = `"HT-12"`, in lookup and in `POST /services`.
 
 ## Common shapes
 
@@ -39,7 +39,7 @@
 | `vehicle_model` | string \| null | |
 | `company` | `{id, name}` | |
 | `service_count` | int | |
-| `segment` | `new` \| `returning` \| `loyal` \| `at_risk` \| null | today, from `vehicle_segments()` |
+| `segment` | `new` \| `returning` \| `loyal` \| `at_risk` \| null | today; `at_risk` from the card's `prediction` (same rule as `GET /stats/segments`); without the model: `vehicle_segments()` |
 | `usual_liters` | number \| null | most frequent liters; tie → most recent |
 | `last_service` | ServiceOut \| null | pre-fills the recording form |
 | `history` | ServiceOut[] | newest first |
@@ -87,7 +87,7 @@ separators allowed). A valid phone is searched as a phone; anything else as a pl
     company, D-005); plate matches come first; phone → every vehicle the phone ever
     appeared on, newest service first
   - `match_type` = `fleet_no` only when every match is a fleet number (then `normalized` is
-    the fleet-number key, lower case, e.g. `ht-12`); no match → `plate`
+    the fleet-number key, lower case, no spaces or dashes, e.g. `ht12`); no match → `plate`
   - **unknown plate/phone → 200 with `vehicles: []`** (app opens the new-vehicle form)
 - **422** `q` missing or blank
 
@@ -99,7 +99,7 @@ separators allowed). A valid phone is searched as a phone; anything else as a pl
 - **404** unknown id, or the vehicle has no service yet · **503** model files not loaded
 
 ### `POST /plates/recognize`
-Multipart form upload, field **`file`** = the photo (JPEG/PNG; rotation from EXIF is applied).
+Multipart form upload, field **`file`** = the photo (JPEG, PNG or HEIC/HEIF — iPhone default, v0.5; rotation from EXIF is applied).
 The photo is processed in memory and **not stored**. Max 15 MB.
 
 - **200** — also when no plate is found (then `needs_manual: true`):
@@ -160,6 +160,45 @@ List for the "where are you heading next?" picker; send the chosen `id` as `dest
 `as_of` optional (default today).
 
 - **200** `{as_of, total, counts: {new, returning, loyal, at_risk}}`. All four keys are always present.
+- D-007: `new` 1 service · `returning` 2 · `loyal` 3+ · **`at_risk`** (wins) = predicted date + 7 days
+  grace < `as_of` and no newer service. v0.5: the predicted date is the served prediction, made from
+  services up to `as_of`. Without the model files: `vehicle_segments()` (count-based only on real data).
+
+### `GET /reminders/due?as_of=`
+Vehicles to remind: **`send_on` ≤ `as_of`** and the reminder for the vehicle's newest service is
+not marked sent. `send_on = predicted_date − buffer`, buffer per method, tuned on validation
+(now ridge 7, b0 12, b1 1 days; read from the model files, D-036). `as_of` optional (default today);
+only services up to `as_of` are used.
+
+- **200** `{as_of, contact_is_placeholder, reminders: DueReminder[]}`, oldest `send_on` first.
+  `contact_is_placeholder: true` = `GEO_EXPERT_PHONE` is not set (the message shows a fake number).
+- **503** model files not loaded
+
+**DueReminder**
+
+| Field | Type | Note |
+|---|---|---|
+| `service_id` | int | the vehicle's newest service = the reminder's id for `POST /reminders/{service_id}/sent` |
+| `vehicle_id` | int | |
+| `identifier_type`, `identifier`, `plate_normalized` | | as on the card |
+| `company` | string | company name |
+| `phone`, `driver_name` | string \| null | from the newest service (D-004); null = not recorded |
+| `last_change_date`, `oil_grade`, `liters` | | the newest service |
+| `method` | `ridge` \| `b1` \| `b0` | |
+| `buffer_days` | int | days early for this method |
+| `predicted_date`, `send_on` | date | |
+| `days_left` | int | `predicted_date − as_of` |
+| `status` | `ok` \| `due_soon` \| `overdue` | D-007 |
+| `message_mn` | string | Mongolian text: plate, last change date + oil, Geo-Expert contact (`GEO_EXPERT_NAME`, `GEO_EXPERT_PHONE`). Wording: draft, Ari to approve |
+
+### `POST /reminders/{service_id}/sent`
+Marks the reminder for this (vehicle, newest service) as sent; stores phone, exact message, method,
+model version, predicted date and send day (`reminders_sent`, migration 003). No SMS is sent by the API.
+
+- **201** stored → `{id, service_id, vehicle_id, phone, message_text, method, model_version, predicted_date, send_on, sent_at, already_sent: false}`
+- **200** already marked before → the same stored row, `already_sent: true` (idempotent; nothing changes)
+- **404** unknown service · **409** `{code: "not_latest_service", message, latest_service_id}` — the
+  truck has a newer service (reload the due list) · **503** model files not loaded
 
 ## Change log
 
@@ -169,3 +208,4 @@ List for the "where are you heading next?" picker; send the chosen `id` as `dest
 | 0.2 | 2026-10-06 | Task 4.2: exact fields of lookup / vehicle card / POST /services / segments. Lookup returns a **list** of cards (a phone can match several trucks). Unknown plate → 200 + empty list |
 | 0.3 | 2026-10-06 | Task 4.2b: `GET /destinations`; lookup also matches fleet numbers (`match_type` adds `fleet_no`); company name match ignores case + extra spaces; same vehicle + same date → 409 `duplicate_service` unless `?force=true` |
 | 0.4 | 2026-10-12 | Task 4.3: card `prediction` filled (Prediction object with `method` + `model_version`); `GET /vehicles/{id}/prediction`; `POST /plates/recognize`. Model files are mounted from `./models` (not in the image); without them the API runs and these answer null / 503 |
+| 0.5 | 2026-10-12 | Task 4.4: `GET /reminders/due`, `POST /reminders/{service_id}/sent`; segments + card `at_risk` from the served prediction; fleet numbers ignore dashes (lookup + `POST /services`, `normalized` e.g. `ht12`); HEIC photos accepted |

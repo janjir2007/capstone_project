@@ -8,6 +8,9 @@ two fallbacks get their numbers from here, computed exactly as in training:
 - route table = ``dataset.route_table`` (configs/generator.yaml [ESTIMATE] midpoints), the same
   numbers ``build_features`` got in training. The destinations table has no round-trip days yet
   (TO FILL, migration 001), so the API cannot build them from the database.
+- reminder buffers for B0 and B1 (task 4.4) = ``train.tune_buffer`` on their TRAIN validation
+  predictions (``train.baseline_validation``), the same numbers as docs/ml_evaluation.md §4.
+  Ridge's buffer is already in the model file (``buffer_days``).
 
 Run after training (no retraining here):
 
@@ -22,6 +25,7 @@ from pathlib import Path
 
 from src.data.generator import load_config as load_generator_config
 from src.ml.dataset import TARGET, build_dataset, load_ml_config, make_split, route_table
+from src.ml.train import baseline_validation, tune_buffer
 
 PARAMS_FILE = "serving_params.json"
 
@@ -36,11 +40,17 @@ def serving_params(cfg: dict) -> dict:
     """B0 days, B1 km and the route table, from the same data/split/config as training."""
     df, _ = build_dataset(cfg)
     split = make_split(df, cfg)
+    train = df.loc[split.train]
+    window, buffer_range = tuple(cfg["reminder"]["window_days_early"]), tuple(cfg["models"]["buffer_range_days"])
+    b0_val, b1_val = baseline_validation(train, cfg).values()  # order: B0, B1
     return {
         "b0_days": float(df.loc[split.train, TARGET].median()),
         "b1_interval_km": float(cfg["baselines"]["b1_interval_km"]),
         "routes": route_params(load_generator_config(Path(cfg["generator_config"]))),
         "late_km": float(cfg["features"]["late_km"]),
+        "buffers": {"b0": tune_buffer(train[TARGET], b0_val, window, buffer_range),
+                    "b1": tune_buffer(train[TARGET], b1_val, window, buffer_range),
+                    "window_days_early": list(window)},
         "source": {"data": cfg["input"], "split_cutoff": f"{split.cutoff:%Y-%m-%d}", "seed": cfg["seed"],
                    "generator_config": cfg["generator_config"]},
     }

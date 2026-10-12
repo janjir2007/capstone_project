@@ -17,13 +17,14 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import func, select, text
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session
 
 from src.api.clock import get_today
 from src.api.db import get_session
+from src.api.history import service_records, visits_oldest_first
 from src.api.matching import fleet_no_key
 from src.api.models import ServiceRecord, Vehicle
-from src.api.prediction import Predictor, Visit
+from src.api.prediction import Predictor, segment_of
 from src.api.schemas import CompanyOut, LookupResult, PredictionOut, ServiceOut, VehicleCard, normalize_phone
 from src.common.plates import normalize_plate
 
@@ -62,26 +63,6 @@ def vehicle_segment(session: Session, vehicle_id: int, as_of: date) -> str | Non
     ).scalar_one_or_none()
 
 
-def service_records(session: Session, vehicle_id: int) -> Sequence[ServiceRecord]:
-    """All services of a vehicle, newest first (same order as v_vehicle_service_summary; id breaks ties)."""
-    return session.scalars(
-        select(ServiceRecord)
-        .options(selectinload(ServiceRecord.destination))  # load destinations in 1 extra query
-        .where(ServiceRecord.vehicle_id == vehicle_id)
-        .order_by(ServiceRecord.service_date.desc(), ServiceRecord.id.desc())
-    ).all()
-
-
-def visits_oldest_first(records_newest_first: Sequence[ServiceRecord]) -> list[Visit]:
-    """Service rows -> the prediction's input, oldest first (newest service = last row, as in training)."""
-    return [
-        Visit(id=r.id, service_date=r.service_date, odometer_km=r.odometer_km, route=r.route,
-              destination_id=r.destination_id, destination_name=r.destination.name if r.destination else None,
-              destination_raw=r.destination_raw)
-        for r in reversed(records_newest_first)
-    ]
-
-
 def predict(predictor: Predictor | None, vehicle_id: int, records: Sequence[ServiceRecord],
             today: date) -> PredictionOut | None:
     """Prediction for the card; None without model or without services."""
@@ -96,6 +77,11 @@ def build_card(session: Session, vehicle: Vehicle, today: date, predictor: Predi
     records = service_records(session, vehicle.id)
     history = [ServiceOut.model_validate(record) for record in records]
     liters = usual_liters([record.liters for record in records])
+    prediction = predict(predictor, vehicle.id, records, today)
+    # Same rule as GET /stats/segments: with a prediction, at_risk comes from it (D-007, task 4.4);
+    # without the model, the database function (count-based) answers.
+    segment = (segment_of(len(records), prediction.predicted_date, today) if prediction is not None
+               else vehicle_segment(session, vehicle.id, today))
     return VehicleCard(
         id=vehicle.id,
         identifier_type=vehicle.identifier_type,
@@ -104,11 +90,11 @@ def build_card(session: Session, vehicle: Vehicle, today: date, predictor: Predi
         vehicle_model=vehicle.vehicle_model,
         company=CompanyOut.model_validate(vehicle.company),
         service_count=len(history),
-        segment=vehicle_segment(session, vehicle.id, today),
+        segment=segment if records else None,
         usual_liters=None if liters is None else float(liters),
         last_service=history[0] if history else None,
         history=history,
-        prediction=predict(predictor, vehicle.id, records, today),
+        prediction=prediction,
     )
 
 

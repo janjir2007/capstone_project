@@ -29,9 +29,10 @@ def company_key(name: str) -> str:
 
 
 def fleet_no_key(identifier: str) -> str:
-    """Comparison key for a fleet number: all whitespace removed, case ignored.
+    """Comparison key for a fleet number: whitespace and dashes removed, case ignored.
 
-    "ht 12", "HT12" -> "ht12"; "ht-12" -> "ht-12" (dashes are kept: "HT-12"
-    and "HT12" could be different trucks).
+    "ht 12", "HT12", "ht-12", "H-T 12" -> "ht12". Task 4.4 (D-043 follow-up): dashes
+    are typed inconsistently, so "HT-12" and "HT12" are the same truck. Fleet numbers
+    are unique only per company (D-005), so the company still separates trucks.
     """
-    return "".join(identifier.split()).casefold()
+    return "".join(identifier.split()).replace("-", "").casefold()
