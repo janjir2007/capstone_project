@@ -9,6 +9,20 @@ import streamlit as st
 
 from src.ui import api_client, common
 
+
+def on_photo(key: str) -> None:
+    """'Камераар хайх': read the plate; clear read -> search, else ask to check."""
+    photo = st.session_state.get(key)
+    if photo is None:
+        return
+    plate, needs_manual, message = common.recognize_photo(photo)
+    st.session_state["lookup_photo_msg"] = ("warning" if needs_manual else "info", message)
+    if needs_manual:
+        st.session_state["lookup_q"] = plate
+    else:
+        st.session_state[common.LOOKUP_PENDING] = plate
+
+
 st.title("🔍 Машин хайх")
 common.nav_link(to_lookup=False)
 
@@ -24,6 +38,18 @@ with st.form("lookup_form", border=False):
         placeholder="1234 УБА · 99112233 · HT-12",
     )
     searched = st.form_submit_button("Хайх", width="stretch", type="primary")
+
+with st.expander("📷 Камераар хайх"):
+    if st.toggle("Камер нээх", key="lookup_camera_on"):
+        st.camera_input("Дугаарын зураг", key="lookup_cam", on_change=on_photo, args=("lookup_cam",))
+    st.file_uploader(
+        "Эсвэл зураг оруулах", type=["jpg", "jpeg", "png", "heic", "heif"],
+        key="lookup_upload", on_change=on_photo, args=("lookup_upload",),
+    )
+
+photo_msg = st.session_state.pop("lookup_photo_msg", None)
+if photo_msg:
+    getattr(st, photo_msg[0])(photo_msg[1])
 
 query = (st.session_state.get("lookup_q") or "").strip()
 if (searched or pending) and query:

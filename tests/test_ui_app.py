@@ -36,6 +36,9 @@ class FakeApi:
         self.vehicles: list[dict] = []
         self.services: list[dict] = []
         self.posts: list[tuple[dict, bool]] = []  # (body, force)
+        self.prediction: dict | None = None        # returned on every card (None = model not loaded)
+        self.recognize: tuple[int, dict] = (503, {"detail": "plate recognizer not loaded"})
+        self.uploads: list[bytes] = []              # raw multipart bodies sent to /plates/recognize
 
     # -- data ---------------------------------------------------------------
     def add_vehicle(self, identifier: str, company: str, identifier_type: str = "plate", **service) -> dict:
@@ -92,7 +95,7 @@ class FakeApi:
             "usual_liters": history[0]["liters"] if history else None,
             "last_service": history[0] if history else None,
             "history": history,
-            "prediction": None,
+            "prediction": {**self.prediction, "vehicle_id": vehicle["id"]} if self.prediction and n else None,
         }
 
     # -- endpoints ----------------------------------------------------------
@@ -102,6 +105,10 @@ class FakeApi:
             return httpx.Response(200, json=DESTINATIONS)
         if path == "/vehicles/lookup":
             return self._lookup(request.url.params["q"])
+        if path == "/plates/recognize" and request.method == "POST":
+            self.uploads.append(request.read())
+            status, body = self.recognize
+            return httpx.Response(status, json=body)
         if path == "/services" and request.method == "POST":
             return self._post(json.loads(request.content), request.url.params.get("force") == "true")
         return httpx.Response(404, json={"detail": "not found"})
@@ -156,7 +163,6 @@ class FakeApi:
 def fake_api(monkeypatch):
     """Fake backend behind the UI's HTTP client; login off; fresh cache."""
     monkeypatch.delenv("UI_PASSWORD", raising=False)
-    monkeypatch.delenv("UI_ENABLE_RECOGNIZE", raising=False)
     fake = FakeApi()
     api_client.set_transport(httpx.MockTransport(fake.handle))
     st.cache_data.clear()
@@ -228,9 +234,55 @@ def test_login_required_and_works(fake_api, monkeypatch) -> None:
 
 # --- recording (5.2) ---------------------------------------------------------------
 
-def test_recognize_button_hidden_by_default(fake_api) -> None:
+PREDICTION = {
+    "method": "ridge", "fallback_reason": None, "model_version": "ridge-0000abcd",
+    "based_on_service_id": 1, "last_service_date": "2026-09-01", "predicted_days": 50.0,
+    "predicted_date": "2026-10-21", "today": TODAY, "days_left": 9, "status": "due_soon",
+}
+RECOGNIZED = {"plate_raw": "0002ТЕС", "plate_normalized": "0002ТЕС", "confidence": 0.95,
+              "needs_manual": False, "reason": None, "detection": None,
+              "detector": "yolo26n (onnx)", "recognizer": "char_cnn (onnx)", "ms": 80.0}
+
+
+def upload_photo(at: AppTest, key: str) -> AppTest:
+    return at.file_uploader(key=key).upload("truck.jpg", b"fake-jpeg", "image/jpeg").run()
+
+
+def test_photo_recognized_is_looked_up(fake_api) -> None:
+    seed_existing(fake_api)
+    fake_api.recognize = (200, RECOGNIZED)
+    at = upload_photo(run_app(), "rec_upload")
+    assert not at.exception
+    assert b'name="file"' in fake_api.uploads[0]
+    assert at.session_state["rec_identifier"] == "0002ТЕС"
+    assert "Дугаар уншигдлаа: 0002ТЕС" in texts(at.info)
+    assert any("Бүртгэлтэй машин" in t for t in texts(at.success))  # looked up at once
+    assert at.session_state["f_oil_grade"] == "10W-40"
+
+
+def test_photo_needs_manual_fills_field_but_waits(fake_api) -> None:
+    fake_api.recognize = (200, {**RECOGNIZED, "plate_normalized": None, "plate_raw": "0002ТЕ",
+                                "needs_manual": True, "reason": "invalid_format"})
+    at = upload_photo(run_app(), "rec_upload")
+    assert at.session_state["rec_identifier"] == "0002ТЕ"
+    assert any("шалгаад" in t for t in texts(at.warning))
+    assert "💾 Хадгалах" not in [b.label for b in at.button]  # not checked yet
+
+
+def test_recognizer_down_falls_back_to_manual(fake_api) -> None:
+    at = upload_photo(run_app(), "rec_upload")  # default fake answer: 503
+    assert not at.exception
+    assert any("гараар" in t for t in texts(at.warning))
+    assert at.text_input(key="rec_identifier").value == ""
+
+
+def test_search_by_camera(fake_api) -> None:
+    seed_existing(fake_api)
+    fake_api.recognize = (200, RECOGNIZED)
     at = run_app()
-    assert "🔎 Дугаар таних" not in [b.label for b in at.button]
+    at.switch_page("views/lookup.py").run()
+    at = upload_photo(at, "lookup_upload")
+    assert "#### 0002 ТЕС" in texts(at.markdown)
 
 
 def test_new_vehicle_saved(fake_api) -> None:
@@ -364,7 +416,7 @@ def test_lookup_by_plate_shows_card(fake_api) -> None:
     at = open_lookup("0002 тес")
     assert not at.exception
     assert "#### 0002 ТЕС" in texts(at.markdown)
-    assert "Таамаглал удахгүй нэмэгдэнэ" in " ".join(texts(at.info))
+    assert any("Таамаглал удахгүй нэмэгдэнэ" in t for t in texts(at.markdown))  # null -> grey card
     grid = next(t for t in texts(at.markdown) if 'class="vc-grid"' in t)
     assert "32 л" in grid            # usual liters
     assert "200 000 км" in grid      # last odometer
@@ -409,3 +461,13 @@ def test_save_then_find_by_plate_and_phone(fake_api) -> None:
     at = click(at, "Хайх")
     assert "#### 0001 ТЕС" in texts(at.markdown)
     assert any("Туршилт Тээвэр ХХК" in t for t in texts(at.caption))
+
+
+def test_card_shows_prediction(fake_api) -> None:
+    seed_existing(fake_api)
+    fake_api.prediction = PREDICTION
+    at = open_lookup("0002 ТЕС")
+    card = next(t for t in texts(at.markdown) if 'class="pc"' in t)
+    assert "9 хоног" in card and "үлдсэн" in card
+    assert "Удахгүй" in card and "2026-10-21" in card
+    assert "#fbefd6" in card  # due-soon tint

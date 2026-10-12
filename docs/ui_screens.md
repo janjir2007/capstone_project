@@ -1,7 +1,7 @@
 # UI screens — Streamlit frontend (tasks 5.1–5.3)
 
-- **Owner:** Frontend Engineer (iMac, branch `ui`, D-052) · **Version:** 0.1 (2026-10-11)
-- Stack: Streamlit 1.64 (D-022), calls FastAPI over HTTP only (`docs/api_contract.md` v0.3).
+- **Owner:** Frontend Engineer (iMac, branch `ui`, D-052) · **Version:** 0.2 (2026-10-12, T2 / 5.3b: contract v0.5)
+- Stack: Streamlit 1.64 (D-022), calls FastAPI over HTTP only (`docs/api_contract.md` v0.5).
 - UI text: Mongolian. Fake demo data only (RISK-06).
 
 ## Run
@@ -17,7 +17,6 @@ streamlit run src/ui/app.py --client.toolbarMode minimal
 |---|---|---|
 | `API_URL` | `http://localhost:8000` | FastAPI base URL |
 | `UI_PASSWORD` | unset | Set → password screen (D-061). Unset/empty → no login (local dev) |
-| `UI_ENABLE_RECOGNIZE` | off | `1` shows the "🔎 Дугаар таних" button. Keep off until task 4.3 merges `POST /plates/recognize` |
 
 Tests: `pytest -v tests/test_ui_*.py` (API mocked with `httpx.MockTransport`; screen tests use
 Streamlit `AppTest` and are skipped if Streamlit is not installed).
@@ -45,9 +44,12 @@ exists in the navigation, so `/lookup` cannot be opened by URL. «Гарах» a
 
 ## Screen 1 — Үйлчилгээ бүртгэх (Recording, 5.2)
 
-1. **📷 Зураг** (folded): «Камер нээх» toggle → camera; or upload jpg/png. The photo is only
-   shown, not stored or sent (no endpoint yet). With the flag on, «Дугаар таних» calls
-   `POST /plates/recognize` and fills the plate field.
+1. **📷 Зургаар таних** (folded): «Камер нээх» → camera, or upload jpg/png/heic. A new photo is
+   sent at once to `POST /plates/recognize` (field `file`; the API does not store it).
+   - Clear read → plate field = `plate_normalized`, looked up immediately («Дугаар уншигдлаа: …»).
+   - `needs_manual` → field filled with what was read (may be empty) + warning by `reason`;
+     the oil changer fixes it and presses «Шалгах».
+   - 503 (recognizer not loaded) / 413 / 422 / no connection → «… гараар оруулна уу», manual entry.
 2. **Төрөл**: Улсын дугаар / Парк дугаар. **Дугаар** + «Шалгах» → `GET /vehicles/lookup`.
    - Found → «Бүртгэлтэй машин · N удаа · segment», folded «Машины карт», form pre-filled from
      the last service: oil grade, liters (fallback `usual_liters`), driver, phone. Company is
@@ -68,14 +70,18 @@ exists in the navigation, so `/lookup` cannot be opened by URL. «Гарах» a
 
 ## Screen 2 — Машин хайх (Lookup + card, 5.3)
 
-One field: plate / phone / fleet number → `GET /vehicles/lookup`. Caption tells how it was matched
+One field: plate / phone / fleet number → `GET /vehicles/lookup`. **📷 Камераар хайх**: photo →
+recognize → clear read searches at once; `needs_manual` fills the field and waits for «Хайх». Caption tells how it was matched
 and how many trucks. Phone/fleet number can return several cards (one under another).
 Unknown → «Олдсонгүй» + «➕ Шинэ машин бүртгэх» (opens Screen 1 with the plate filled).
 
 **Vehicle card:** plate · segment badge (Шинэ / Давтан / Байнгын / Эрсдэлтэй) · company · model;
 2×3 tiles (service count, usual liters, last date, last km/engine hours, oil, destination);
-driver + phone; prediction box (`null` → «Таамаглал удахгүй нэмэгдэнэ»; when 4.3 lands it shows
-date · days left · status); «Түүх (N)» one line per service, newest first;
+driver + phone; **prediction card** from `prediction` (v0.5): tinted by `status` — ok #1e6b34 on
+#e3f1e7 «Хэвийн», due_soon #8a5300 on #fbefd6 «Удахгүй», overdue #b3261e on #f9e3e1 «Хэтэрсэн»;
+big «N хоног үлдсэн / хэтэрсэн» (or «Өнөөдөр»), `predicted_date`, progress bar = share of
+`last_service_date → predicted_date` already used, small note = `method` (Загварын таамаглал /
+Маршрутын тооцоо / Дундаж хугацаа) + `fallback_reason`. `null` → grey card «Таамаглал удахгүй нэмэгдэнэ»; «Түүх (N)» one line per service, newest first;
 «➕ Үйлчилгээ бүртгэх» opens Screen 1 pre-filled.
 
 ## Phone width (~390 px)

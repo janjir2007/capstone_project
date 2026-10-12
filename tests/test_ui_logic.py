@@ -44,8 +44,9 @@ CARD = {
 
 # --- labels / formatting ---------------------------------------------------------
 
-def test_segment_label_known_and_null() -> None:
-    assert logic.segment_label("at_risk") == "Эрсдэлтэй"
+def test_segment_labels_match_pm_list() -> None:
+    assert [logic.segment_label(s) for s in ("new", "returning", "loyal", "at_risk")] == [
+        "Шинэ", "Давтан", "Байнгын", "Эрсдэлтэй"]
     assert logic.segment_label(None) == logic.NOT_GIVEN
 
 
@@ -83,13 +84,67 @@ def test_service_meter_text_engine_hours_only() -> None:
     assert logic.service_meter_text(mine) == "1 200.5 мц"
 
 
-def test_prediction_null_shows_coming_soon() -> None:
-    assert logic.prediction_text(None) == "Таамаглал удахгүй нэмэгдэнэ"
+PREDICTION = {  # shape from docs/api_contract.md v0.5
+    "vehicle_id": 1, "method": "ridge", "fallback_reason": None, "model_version": "ridge-0000abcd",
+    "based_on_service_id": 1, "last_service_date": "2026-09-01", "predicted_days": 50.0,
+    "predicted_date": "2026-10-21", "today": "2026-10-11", "days_left": 10, "status": "due_soon",
+}
 
 
-def test_prediction_present_is_shown() -> None:
-    text = logic.prediction_text({"predicted_date": "2026-11-01", "days_left": 5, "status": "due_soon"})
-    assert text == "Дараагийн солилт: 2026-11-01 · 5 хоног үлдсэн · Удахгүй"
+def test_prediction_null_is_grey_pending() -> None:
+    view = logic.prediction_view(None)
+    assert view["pending"] is True
+    assert view["big"] == "Таамаглал удахгүй нэмэгдэнэ"
+    assert (view["fg"], view["bg"]) == logic.PENDING_COLORS
+
+
+def test_prediction_due_soon() -> None:
+    view = logic.prediction_view(PREDICTION)
+    assert view["pending"] is False
+    assert (view["big"], view["sub"]) == ("10 хоног", "үлдсэн")
+    assert view["status_label"] == "Удахгүй"
+    assert (view["fg"], view["bg"]) == ("#8a5300", "#fbefd6")
+    assert view["date"] == "2026-10-21"
+    assert view["progress"] == 0.8  # 40 of 50 days used
+    assert view["note"] == "Загварын таамаглал"
+    assert view["version"] == "ridge-0000abcd"
+
+
+def test_prediction_overdue_and_fallback_note() -> None:
+    pred = {**PREDICTION, "days_left": -5, "status": "overdue", "method": "b0",
+            "fallback_reason": "route_not_modelled", "today": "2026-10-26"}
+    view = logic.prediction_view(pred)
+    assert (view["big"], view["sub"], view["status_label"]) == ("5 хоног", "хэтэрсэн", "Хэтэрсэн")
+    assert view["fg"] == "#b3261e"
+    assert view["progress"] == 1.0  # clipped
+    assert view["note"] == "Дундаж хугацаа (энэ маршрутад загвар байхгүй)"
+
+
+def test_prediction_ok_and_today() -> None:
+    ok = logic.prediction_view({**PREDICTION, "days_left": 30, "status": "ok"})
+    assert ok["status_label"] == "Хэвийн" and ok["fg"] == "#1e6b34"
+    today = logic.prediction_view({**PREDICTION, "days_left": 0, "status": "due_soon"})
+    assert (today["big"], today["sub"]) == ("Өнөөдөр", "")
+
+
+def test_recognize_outcome_clear_read() -> None:
+    result = {"plate_raw": "0001ТЕС", "plate_normalized": "0001ТЕС", "confidence": 0.93,
+              "needs_manual": False, "reason": None}
+    assert logic.recognize_outcome(result) == ("0001ТЕС", False, "Дугаар уншигдлаа: 0001ТЕС")
+
+
+def test_recognize_outcome_needs_manual() -> None:
+    low = {"plate_raw": "0001ТЕ5", "plate_normalized": None, "needs_manual": True, "reason": "low_confidence"}
+    plate, manual, msg = logic.recognize_outcome(low)
+    assert (plate, manual) == ("0001ТЕ5", True)  # raw text kept for the oil changer to fix
+    assert "шалгаад" in msg
+    none = {"plate_raw": "", "plate_normalized": None, "needs_manual": True, "reason": "no_plate"}
+    assert logic.recognize_outcome(none) == ("", True, logic.RECOGNIZE_REASONS["no_plate"])
+
+
+def test_recognize_error_messages_say_type_it() -> None:
+    for status in (0, 413, 422, 500, 503):
+        assert "гараар" in logic.recognize_error_message(status)
 
 
 # --- form pre-fill -------------------------------------------------------------------

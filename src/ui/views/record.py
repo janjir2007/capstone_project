@@ -1,9 +1,8 @@
 """Recording mode (task 5.2): photo -> plate -> check -> pre-filled form -> save.
 
 Flow:
-1. Photo (camera or upload). Automatic plate reading needs POST /plates/recognize
-   (task 4.3), so its button is hidden unless UI_ENABLE_RECOGNIZE=1. Until then
-   the oil changer types the plate.
+1. Photo (camera or upload) -> POST /plates/recognize. A clear read is looked up
+   at once; needs_manual (or recognizer down) -> the oil changer checks/types it.
 2. "Шалгах" looks the plate up. Existing vehicle -> form pre-filled from the last
    service; new vehicle -> empty form + company/model fields.
 3. Odometer / engine hours and destination are always entered fresh (D-033).
@@ -142,23 +141,21 @@ def on_cancel_dup() -> None:
     st.session_state.pop("rec_dup", None)
 
 
-def on_recognize() -> None:
-    """Send the photo to POST /plates/recognize (only when the flag is on)."""
-    photo = st.session_state.get("rec_cam") or st.session_state.get("rec_upload")
+def on_photo(key: str) -> None:
+    """New photo -> POST /plates/recognize. Clear read -> fill + look up;
+    needs_manual -> fill what was read and ask to check (contract v0.5)."""
+    photo = st.session_state.get(key)
     if photo is None:
         return
-    try:
-        result = api_client.recognize_plate(photo.getvalue(), photo.name, photo.type or "image/jpeg")
-    except api_client.ApiError as exc:
-        for message in logic.error_messages(exc.status, exc.detail):
-            _say("error", message)
-        return
+    plate, needs_manual, message = common.recognize_photo(photo)
     st.session_state["rec_identifier_type"] = "plate"
-    st.session_state["rec_identifier"] = result.get("plate_raw") or result.get("plate_normalized") or ""
-    if result.get("needs_manual"):
-        _say("warning", "Дугаар тодорхой уншигдсангүй — шалгаад засна уу.")
+    st.session_state["rec_identifier"] = plate
+    if needs_manual:
+        st.session_state.pop("rec_checked", None)
+        _say("warning", message)
     else:
-        _say("info", "Дугаар уншигдлаа — зөв эсэхийг шалгана уу.")
+        _say("info", message)
+        on_check()
 
 
 # --- page ----------------------------------------------------------------------
@@ -193,19 +190,15 @@ if saved:
     if st.button("Картыг харах", width="stretch"):
         common.go_lookup(saved["identifier"])
 
-# 1. Photo -----------------------------------------------------------------------
-with st.expander("📷 Зураг", expanded=False):
+# 1. Photo -> automatic plate reading ---------------------------------------------
+with st.expander("📷 Зургаар таних", expanded=False):
     if st.toggle("Камер нээх", key="rec_camera_on"):
-        st.camera_input("Дугаарын зураг авах", key="rec_cam")
-    st.file_uploader("Эсвэл зураг оруулах", type=["jpg", "jpeg", "png"], key="rec_upload")
-    photo = st.session_state.get("rec_cam") or st.session_state.get("rec_upload")
-    if photo is not None:
-        st.image(photo, width=240)
-        if common.recognize_enabled():
-            st.button("🔎 Дугаар таних", on_click=on_recognize, width="stretch")
-        else:
-            st.caption("Автомат таних удахгүй нэмэгдэнэ — дугаараа доор бичнэ үү.")
-    st.caption("Зураг хадгалагдахгүй.")
+        st.camera_input("Дугаарын зураг авах", key="rec_cam", on_change=on_photo, args=("rec_cam",))
+    st.file_uploader(
+        "Эсвэл зураг оруулах", type=["jpg", "jpeg", "png", "heic", "heif"],
+        key="rec_upload", on_change=on_photo, args=("rec_upload",),
+    )
+    st.caption("Зураг хадгалагдахгүй. Уншигдсан дугаарыг доор шалгана уу.")
 
 # 2. Plate / fleet number -----------------------------------------------------------
 st.radio(

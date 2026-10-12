@@ -9,7 +9,6 @@ widgets that were not drawn in the last run.
 """
 
 import html
-import os
 
 import streamlit as st
 
@@ -34,6 +33,13 @@ h1 {font-size: 1.9rem !important;}
 .vc-tile {border: 1px solid rgba(128,128,128,.3); border-radius: .5rem; padding: .45rem .6rem;}
 .vc-tile .k {font-size: .78rem; opacity: .7;}
 .vc-tile .v {font-size: 1.05rem; font-weight: 600; overflow-wrap: anywhere;}
+.pc {border-radius: 1rem; padding: .8rem 1rem; margin: .25rem 0 .75rem;}
+.pc-top {display: flex; justify-content: space-between; font-size: .85rem; font-weight: 600;}
+.pc-big {font-size: 1.9rem; font-weight: 700; line-height: 1.2; margin: .15rem 0;}
+.pc-sub {font-size: 1rem; font-weight: 500;}
+.pc-bar {height: 6px; border-radius: 3px; background: rgba(0,0,0,.08); margin: .35rem 0;}
+.pc-bar > div {height: 100%; border-radius: 3px;}
+.pc-note {font-size: .78rem; opacity: .85;}
 .vc-line {font-size: .9rem; padding: .3rem 0; border-bottom: 1px solid rgba(128,128,128,.2);}
 </style>
 """
@@ -52,9 +58,39 @@ def nav_link(to_lookup: bool) -> None:
         st.page_link(RECORD_PAGE, label="Үйлчилгээ бүртгэх", icon=":material/add_circle:")
 
 
-def recognize_enabled() -> bool:
-    """Feature flag for the 'recognize plate' button (off until task 4.3 merges)."""
-    return os.environ.get("UI_ENABLE_RECOGNIZE", "").strip().lower() in {"1", "true", "yes"}
+def recognize_photo(photo) -> tuple[str, bool, str]:
+    """Send an uploaded/camera photo to POST /plates/recognize.
+
+    Returns (plate, needs_manual, message). Any API failure -> ("", True, message):
+    the oil changer types the plate, so recognition can never block the flow.
+    """
+    try:
+        result = api_client.recognize_plate(photo.getvalue(), photo.name or "photo.jpg", photo.type or "image/jpeg")
+    except api_client.ApiError as exc:
+        return "", True, logic.recognize_error_message(exc.status)
+    return logic.recognize_outcome(result)
+
+
+def render_prediction(prediction: dict | None) -> None:
+    """Status card: tinted by status, big 'N хоног', date, progress bar; grey if null."""
+    v = logic.prediction_view(prediction)
+    if v["pending"]:
+        body = f'<div class="pc-big" style="font-size:1.05rem">{html.escape(v["big"])}</div>'
+    else:
+        bar = ""
+        if v["progress"] is not None:
+            bar = (f'<div class="pc-bar"><div style="width:{v["progress"] * 100:.0f}%;'
+                   f'background:{v["fg"]}"></div></div>')
+        body = (
+            f'<div class="pc-top"><span class="pc-label">{html.escape(v["status_label"])}</span>'
+            f'<span class="pc-date">{html.escape(v["date"] or "")}</span></div>'
+            f'<div class="pc-big">{html.escape(v["big"])} <span class="pc-sub">{html.escape(v["sub"])}</span></div>'
+            f'{bar}<div class="pc-note">{html.escape(v["note"])}</div>'
+        )
+    st.markdown(
+        f'<div class="pc" style="color:{v["fg"]};background:{v["bg"]}">{body}</div>',
+        unsafe_allow_html=True,
+    )
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -123,7 +159,7 @@ def render_vehicle_card(card: dict, key: str, show_record_button: bool = True) -
             driver = " · ".join(x for x in (last.get("driver_name"), last.get("driver_phone")) if x)
             st.markdown(f"**Жолооч:** {driver}")
 
-        st.info(f"🔮 {logic.prediction_text(card.get('prediction'))}")
+        render_prediction(card.get("prediction"))
 
         history = card.get("history") or []
         with st.expander(f"Түүх ({len(history)})"):

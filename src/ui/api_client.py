@@ -112,10 +112,9 @@ def create_service(payload: dict, force: bool = False) -> dict:
 
 
 def recognize_plate(image: bytes, filename: str, content_type: str = "image/jpeg") -> dict:
-    """POST /plates/recognize -> {plate_raw, plate_normalized, confidence, bbox, needs_manual}.
+    """POST /plates/recognize (multipart field "file", contract v0.5).
 
-    The endpoint does not exist yet (task 4.3). The multipart field name
-    "image" is an ASSUMPTION — verify against the 4.3 contract before enabling
-    the UI flag UI_ENABLE_RECOGNIZE.
+    -> {plate_raw, plate_normalized, confidence, needs_manual, reason, detection, ...}.
+    200 also when no plate is found (needs_manual=true). 413 > 15 MB, 503 recognizer not loaded.
     """
-    return _request("POST", "/plates/recognize", files={"image": (filename, image, content_type)})
+    return _request("POST", "/plates/recognize", files={"file": (filename, image, content_type)})

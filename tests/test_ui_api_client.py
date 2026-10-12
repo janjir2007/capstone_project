@@ -134,3 +134,4 @@ def test_recognize_plate_sends_multipart(requests_seen) -> None:
     api_client.recognize_plate(b"fake-jpeg-bytes", "truck.jpg")
     assert seen[0].url.path == "/plates/recognize"
     assert seen[0].headers["content-type"].startswith("multipart/form-data")
+    assert b'name="file"; filename="truck.jpg"' in seen[0].read()  # contract v0.5 field name

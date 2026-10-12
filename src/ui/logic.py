@@ -7,6 +7,7 @@ message; the API stays the source of truth. Plate and phone normalization are
 NOT repeated here (they live in the backend / src/common/plates.py).
 """
 
+from datetime import date
 from typing import Any
 
 # --- Labels (UI text in Mongolian) ------------------------------------------
@@ -41,7 +42,35 @@ IDENTIFIER_TYPE_LABELS: dict[str, str] = {
 PREDICTION_STATUS_LABELS: dict[str, str] = {
     "ok": "Хэвийн",
     "due_soon": "Удахгүй",
-    "overdue": "Хугацаа хэтэрсэн",
+    "overdue": "Хэтэрсэн",
+}
+# (text color, background) per status — DESIGN v2
+STATUS_COLORS: dict[str, tuple[str, str]] = {
+    "ok": ("#1e6b34", "#e3f1e7"),
+    "due_soon": ("#8a5300", "#fbefd6"),
+    "overdue": ("#b3261e", "#f9e3e1"),
+}
+PENDING_COLORS = ("#5f6368", "#eceef1")  # grey card while prediction is null
+
+# Prediction.method / fallback_reason (contract v0.5) -> short Mongolian note
+METHOD_LABELS: dict[str, str] = {
+    "ridge": "Загварын таамаглал",
+    "b1": "Маршрутын тооцоо",
+    "b0": "Дундаж хугацаа",
+}
+FALLBACK_LABELS: dict[str, str] = {
+    "first_visit": "анхны үйлчилгээ",
+    "destination_raw_only": "газрыг гараар бичсэн",
+    "route_not_modelled": "энэ маршрутад загвар байхгүй",
+    "unknown_destination": "очих газар тодорхойгүй",
+}
+
+# POST /plates/recognize reason -> what the oil changer should do
+RECOGNIZE_REASONS: dict[str, str] = {
+    "no_plate": "Зурган дээр дугаар олдсонгүй — гараар оруулна уу.",
+    "empty": "Дугаар уншигдсангүй — гараар оруулна уу.",
+    "invalid_format": "Дугаар бүрэн уншигдсангүй — шалгаад засна уу.",
+    "low_confidence": "Дугаар тодорхой биш — шалгаад засна уу.",
 }
 
 PREDICTION_PENDING = "Таамаглал удахгүй нэмэгдэнэ"
@@ -119,22 +148,78 @@ def service_line(service: dict) -> str:
     )
 
 
-def prediction_text(prediction: dict | None) -> str:
-    """Card text for the prediction. null (until task 4.3) -> 'coming soon' message.
+def _parse_date(text: str | None) -> date | None:
+    try:
+        return date.fromisoformat(text) if text else None
+    except ValueError:
+        return None
 
-    Expected shape when present (PROJECT_STATE §8):
-    {predicted_date, days_left, status, model_version}. Missing keys are skipped.
+
+def prediction_view(prediction: dict | None) -> dict[str, Any]:
+    """Everything the prediction card shows, from a Prediction (contract v0.5) or null.
+
+    Keys: pending, big ("5 хоног" / "Өнөөдөр"), sub ("үлдсэн" / "хэтэрсэн"),
+    date, status_label, fg, bg, progress (0–1 share of the interval used),
+    note (method + fallback reason), version.
     """
-    if not prediction:
-        return PREDICTION_PENDING
-    parts = []
-    if prediction.get("predicted_date"):
-        parts.append(f"Дараагийн солилт: {prediction['predicted_date']}")
-    if prediction.get("days_left") is not None:
-        parts.append(f"{prediction['days_left']} хоног үлдсэн")
-    if prediction.get("status"):
-        parts.append(PREDICTION_STATUS_LABELS.get(prediction["status"], prediction["status"]))
-    return " · ".join(parts) or PREDICTION_PENDING
+    fg, bg = PENDING_COLORS
+    view: dict[str, Any] = {
+        "pending": True, "big": PREDICTION_PENDING, "sub": "", "date": None,
+        "status_label": "", "fg": fg, "bg": bg, "progress": None, "note": "", "version": "",
+    }
+    if not prediction or prediction.get("days_left") is None:
+        return view
+    days = int(prediction["days_left"])
+    status = prediction.get("status") or ("overdue" if days < 0 else "ok")
+    fg, bg = STATUS_COLORS.get(status, PENDING_COLORS)
+    if days == 0:
+        big, sub = "Өнөөдөр", ""
+    else:
+        big, sub = f"{abs(days)} хоног", "үлдсэн" if days > 0 else "хэтэрсэн"
+
+    progress = None
+    start, end = _parse_date(prediction.get("last_service_date")), _parse_date(prediction.get("predicted_date"))
+    today = _parse_date(prediction.get("today"))
+    if start and end and today and end > start:
+        progress = min(max((today - start).days / (end - start).days, 0.0), 1.0)
+
+    note = METHOD_LABELS.get(prediction.get("method", ""), "")
+    reason = FALLBACK_LABELS.get(prediction.get("fallback_reason") or "")
+    if reason:
+        note = f"{note} ({reason})" if note else reason
+    view.update(
+        pending=False, big=big, sub=sub, date=prediction.get("predicted_date"),
+        status_label=PREDICTION_STATUS_LABELS.get(status, status), fg=fg, bg=bg,
+        progress=progress, note=note, version=prediction.get("model_version") or "",
+    )
+    return view
+
+
+def recognize_outcome(result: dict) -> tuple[str, bool, str]:
+    """(plate to put in the field, needs_manual, message) from POST /plates/recognize.
+
+    Contract: pre-fill with plate_normalized (else plate_raw); needs_manual -> the
+    oil changer must check/type the plate before it is looked up.
+    """
+    plate = result.get("plate_normalized") or result.get("plate_raw") or ""
+    needs_manual = bool(result.get("needs_manual")) or not plate
+    if needs_manual:
+        message = RECOGNIZE_REASONS.get(result.get("reason") or "", "Дугаараа шалгаад засна уу.")
+        return plate, True, message
+    return plate, False, f"Дугаар уншигдлаа: {plate}"
+
+
+def recognize_error_message(status: int) -> str:
+    """Mongolian message when POST /plates/recognize fails; always ends in 'type it'."""
+    if status == 503:
+        return "Автомат таних одоогоор ажиллахгүй байна — дугаараа гараар оруулна уу."
+    if status == 413:
+        return "Зураг хэт том байна (15 MB-аас их) — гараар оруулна уу."
+    if status == 422:
+        return "Зураг уншигдсангүй — дахин авах эсвэл гараар оруулна уу."
+    if status == 0:
+        return "Сервертэй холбогдож чадсангүй — дугаараа гараар оруулна уу."
+    return f"Таних үед алдаа гарлаа ({status}) — гараар оруулна уу."
 
 
 # --- Recording form ----------------------------------------------------------
