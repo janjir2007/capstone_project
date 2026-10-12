@@ -1,6 +1,6 @@
 # PROJECT_STATE — Capstone "Oil Change Predictor" (Geo-Expert LLC)
 
-- **Version:** 2.0
+- **Version:** 2.2
 - **Last updated:** 2026-10-10
 - **Deadline (defense day):** 2026-10-20 (20 days from 2026-09-30)
 - **Current phase:** P3 done (detector) → P1 synthetic data (redesigned around destination, D-033–D-036) + P4 backend URGENT
@@ -99,8 +99,9 @@ Status: ✅ covered by plan · 🟡 covered but at risk · 🔴 gap — action n
 | 1.4c | Real record intake template / Excel column mapping | Data Eng | LATER (post-defense; not needed for real test, which uses 1.4b intervals) |
 | 1.5 | External API evaluation (1 source) | Data Eng | TODO |
 | 2.1–2.3a | EDA + `features.py` + vehicle/time split + baselines B0, B1 (one session; clean file first, switch to cleaned later) | ML Eng | ✅ DONE Oct 10 — 6 EDA charts, features.py, split (46 test trucks / 202 visits), B0 MAE 12.3 hit 9.4%, B1 worse (MAE 17.8); history features weak (|r| ≤ 0.16); 313 tests pass |
-| 2.3b | Verify B1 km/day includes waiting; Ridge / RF / XGBoost + RandomizedSearchCV; reminder buffer tuned on validation (not test) | ML Eng | ▶ BRIEF ISSUED Oct 10 |
-| 2.4 | Evaluation (regression + derived classification + reminder hit rate D-036) + D-038 variation-off check + SHAP | ML Eng | TODO (Oct 12–13) |
+| 2.3b | Verify B1 km/day includes waiting; Ridge / RF / XGBoost + RandomizedSearchCV; reminder buffer tuned on validation (not test) | ML Eng | ✅ DONE Oct 10 — B1 not a bug (route switching V6); test MAE: B0 12.3, Ridge 11.9, RF 12.1, XGB 12.1, B1 16.8; no model beats B0 beyond noise (95% CI incl. 0); buffer raises B0 hit 9.4% → 14.9%; 322 tests pass |
+| 2.5 | Calibration check vs real 1.4b intervals (D-050) + rerun 2.3b if generator changes | ML Eng | WAITS on Ari's dates |
+| 2.4 | SHAP (Ridge + XGBoost) + D-038 variation-off check + derived status F1/ROC-AUC (D-007) + reminder metric with D-051 window | ML Eng | ▶ BRIEF ISSUED Oct 10 |
 | 3.1 | Labeling setup (Label Studio local, box + plate_type + plate_text) | CV Eng | ✅ DONE (export tested) |
 | 3.1c | Pre-label with pretrained detector (oim YOLOv9-t, thr 0.6) → import as predictions | CV Eng | ✅ DONE |
 | 3.1d | Ari checks boxes + types Cyrillic plate text | Ari | ✅ DONE — 183 labeled, 9 skipped, 135 trucks, 35 repeat trucks (83 photos), all 183 match 4 digits + 3 Cyrillic |
@@ -112,10 +113,8 @@ Status: ✅ covered by plan · 🟡 covered but at risk · 🔴 gap — action n
 | 4.2b | GET /destinations (dropdown, name_mn when 002 lands), lookup by fleet_no, case/space-insensitive company match, same-vehicle same-day duplicate guard (409 + force flag) | Backend Eng | ✅ DONE Oct 6 — api_contract v0.3, src/api/matching.py, 232 tests pass |
 | 4.3 | Model + CV serving | Backend Eng | TODO |
 | 4.4 | Segments + reminders. Small fixes: fleet_no matching ignores dashes (lookup + POST /services uses matching.py, not exact) | Backend Eng | TODO |
-| 5.1 | UX flow + wireframes | Frontend | TODO |
-| 5.2 | Recording mode | Frontend | TODO |
-| 5.3 | Lookup + vehicle card | Frontend | TODO |
-| 5.4 | Dashboard (segments, due list, reminders) | Frontend | TODO |
+| 5.1–5.3 | Streamlit skeleton + Recording mode + Lookup/vehicle card (prediction null-safe) — on iMac, branch `ui` (D-052) | Frontend (iMac) | ▶ BRIEF ISSUED Oct 10 |
+| 5.4 | Dashboard (segments, due list, reminders) | Frontend (iMac) | TODO (after 4.4) |
 | 6.1 | Docker + compose | Backend Eng | TODO |
 | 6.2 | CI/CD GitHub Actions (+ Postgres service so DB tests run in CI) | Backend Eng | TODO |
 | 6.3 | Cloud deploy + public URL (Supabase DB + backend host + Vercel) + schema_migrations table & apply script (D-041) | Backend Eng | TODO |
@@ -180,6 +179,8 @@ Status: ✅ covered by plan · 🟡 covered but at risk · 🔴 gap — action n
 | D-048 | 2026-10-10 | 1.4 cleaning accepted: reuses plates/phone normalizers; missing values kept empty (never impute phones); destination alias → transliteration → fuzzy ≥ 0.8; duplicate = same plate + date (D-043), keep most complete; odometer plausibility ≤ 1,500 km/day [ESTIMATE], ×10/÷10 repair only if ≥5× off. Slide wording must say the 100% scores are on our OWN injected noise — real data will be harder | 1.4 handoff | APPROVED (PM) |
 | D-049 | 2026-10-10 | Baselines: official B1 uses 17,500 km (expected ACTUAL behavior, D-030) — we predict when the truck really returns; 15,000 km shown as sensitivity. B0 = median train interval. Reminder hit window 3–7 days early (default until Ari decides, D-036); buffer tuned on validation only | Fair baseline; 2.1–2.3a handoff | APPROVED (PM) |
 | D-050 | 2026-10-10 | If ML ≈ B0 on synthetic data: do NOT inflate generator variation to make ML win. Only calibrate generator to REAL repeat-truck intervals (1.4b): if real trucks are consistent per vehicle, raise per-vehicle variation to match real spread — documented before/after. Otherwise report "ML ≈ baseline on synthetic; value grows with real history" honestly | Integrity; RISK-03 | APPROVED (PM) |
+| D-051 | 2026-10-10 | Serving model = Ridge (not XGBoost): validation MAE tie (12.4 vs 12.5, within noise) → simplest wins; Ridge has best test MAE (11.9), no OpenMP/torch clash, tiny, explainable. XGBoost + RF stay in the comparison and SHAP. Reminder: "useful" window widened to 1–14 days early (PROPOSED, Ari to confirm) — 3–7 is narrower than the ±12-day error of any method; applied to ALL methods equally; buffer objective = maximize useful rate, ties → fewer late (late worse, D-036) | 2.3b handoff | APPROVED (PM); window PROPOSED |
+| D-052 | 2026-10-10 | Two devices: Mac = ML/backend/data on `main`; iMac (separate Claude account) = Streamlit frontend on branch `ui`, merged to main by GitHub PR after PM accepts. iMac owns only src/ui/, tests/test_ui*, docs/ui_*, requirements-ui.txt; never edits PROJECT_STATE/CLAUDE.md/requirements.txt. UI talks to backend only via docs/api_contract.md. One PM chat for both. Context file: docs/IMAC_BRIEFING.md. Private data copied by hand (AirDrop/USB), never via git | Ari works on 2 Macs | APPROVED by Ari |
 
 ---
 
@@ -214,7 +215,7 @@ Status: ✅ covered by plan · 🟡 covered but at risk · 🔴 gap — action n
 | RISK-09 | Licensing: Ultralytics YOLO is AGPL-3.0; pre-label weights license unstated. Fine for capstone; Geo-Expert production use may need Ultralytics commercial license or a permissive alternative | Med | Med | Decide after defense; document in model card |
 | RISK-11 | Detector baseline comparison biased: GT boxes started as oim pre-labels → oim mAP50-95/IoU inflated (0.97/0.997). Compare on precision/false boxes, state on slide | — | Low | Stated in docs/cv_detection_results.md |
 | RISK-10 | Real prediction test set is tiny (repeat trucks only, dates entered manually) | High | Med | Report honestly; add photos_new over time; synthetic holdout as main metric |
-| RISK-13 | ML may not beat B0: synthetic history features weak (|r| ≤ 0.16), noise large vs per-vehicle signal | High | High | D-050: calibrate to real 1.4b intervals (Ari dates = now critical); honest reporting; buffer tuning improves business metric |
+| RISK-13 | ML may not beat B0: synthetic history features weak (|r| ≤ 0.16), noise large vs per-vehicle signal | High | HIT (2.3b: ML ≈ B0) | D-050: calibrate to real 1.4b intervals (Ari dates = now critical); honest reporting; buffer tuning improves business metric |
 | RISK-12 | Critical path blocked on Ari inputs A1–A4 | — | HIT | Resolved by D-045 (ranges). ML starts ~Oct 11 → 9 days left; cut list active if 2.x slips past Oct 14 |
 | RISK-08 | Plate letters misread (Cyrillic/Latin look-alikes) | High | Med | Normalization map + format regex + confirmation step |
 
