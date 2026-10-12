@@ -36,10 +36,11 @@ if pending:
 
 with st.container(key="card_search"):
     with st.form("search_form", border=False):
-        st.text_input("Улсын дугаар, утас эсвэл парк дугаар", key="search_q",
-                      placeholder="1234 УБА · 99112233 · HT-12")
+        # The API still matches fleet numbers too; the label names the two common cases (T6).
+        st.text_input("Улсын дугаар эсвэл утас", key="search_q", placeholder="1234 УБА · 99112233")
         searched = st.form_submit_button("Хайх", type="primary", width="stretch")
-    st.button("📷  Камераар хайх", key="btn_black_cam", width="stretch", on_click=on_toggle_camera)
+    st.button("Камераар хайх", key="btn_dark_cam", width="stretch", on_click=on_toggle_camera,
+              icon=":material/photo_camera:")
     if st.session_state.get("search_cam_open"):
         st.camera_input("Дугаарын зураг", key="search_cam", on_change=on_photo, args=("search_cam",),
                         label_visibility="collapsed")

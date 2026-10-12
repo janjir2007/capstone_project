@@ -12,8 +12,10 @@ screen, because Streamlit drops the state of widgets not drawn in the last run.
 """
 
 import html
+import io
 
 import streamlit as st
+from PIL import Image, UnidentifiedImageError  # pillow: installed with streamlit
 
 from src.ui import api_client, auth, logic
 
@@ -31,52 +33,64 @@ REC_RESET = "rec_reset"            # True -> record screen starts at the camera 
 CARD_ID = "card_id"                # vehicle shown on the card screen
 SEARCH_PENDING = "search_pending"  # query to search on arrival
 RECENT = "recent_vehicles"         # "Сүүлд үзсэн": [{id, identifier, company}], this session only
-OIL_CHANGER = "oil_changer_saved"  # remembered between saves (same person all day)
 RECENT_MAX = 5
 
+# DESIGN v3 (T6). Spacing scale 4/8/12/16/24/32 px · type: title 28/800, section 18/700,
+# body 16/500, small 14/500 (nothing smaller outdoors) · tap targets >= 56 px · colors
+# checked for WCAG contrast (text/buttons AAA, status chips AAA). Font = Montserrat (theme).
 CSS = """
 <style>
-.block-container {padding-top: 1.25rem; padding-bottom: 3rem; padding-left: 1rem; padding-right: 1rem; max-width: 560px;}
-h1 {font-size: 2rem !important; font-weight: 800 !important; padding: .25rem 0 .5rem !important;}
-.stButton button, .stFormSubmitButton button {min-height: 56px; border-radius: 18px; font-size: 1.05rem; font-weight: 600;}
-[class*="st-key-card_"] {background: #fff; border-radius: 24px; padding: 1.1rem 1rem;
-  box-shadow: 0 1px 2px rgba(16,24,40,.05), 0 6px 18px rgba(16,24,40,.06);}
-[class*="st-key-btn_black"] button {background: #111; color: #fff; border-color: #111;}
-[class*="st-key-btn_black"] button:hover {background: #333; color: #fff; border-color: #333;}
-.st-key-back button {min-height: 40px; padding: 0 .25rem; font-size: 1rem;}
-.st-key-home_record button {min-height: 150px; border-radius: 24px; font-size: 1.6rem;}
-.st-key-home_search button {min-height: 110px; border-radius: 24px; font-size: 1.4rem; background: #fff; border: none;
-  box-shadow: 0 1px 2px rgba(16,24,40,.05), 0 6px 18px rgba(16,24,40,.06);}
-.st-key-home_record button p {font-size: 1.7rem !important; font-weight: 800 !important;}
-.st-key-home_search button p {font-size: 1.45rem !important; font-weight: 800 !important;}
-.stButton button p, .stFormSubmitButton button p {font-size: 1.05rem; font-weight: 600;}
-.geo-pill {display: inline-block; font-size: .75rem; font-weight: 700; padding: .25rem .7rem; border-radius: 999px;
+.block-container {padding-top: 64px; padding-bottom: 48px; padding-left: 16px; padding-right: 16px; max-width: 560px;}
+h1 {font-size: 28px !important; font-weight: 800 !important; letter-spacing: -.01em; padding: 4px 0 12px !important;}
+h3 {font-size: 18px !important; font-weight: 700 !important;}
+p, li, label, .stMarkdown {font-weight: 500;}
+.stButton button, .stFormSubmitButton button {min-height: 56px; border-radius: 16px; padding: 8px 16px;}
+.stButton button p, .stFormSubmitButton button p {font-size: 17px; font-weight: 700;}
+.stButton button[kind="secondary"], .stFormSubmitButton button[kind="secondaryFormSubmit"] {
+  background: #fff; border: 1.5px solid #DADDE2;}
+[class*="st-key-card_"] {background: #fff; border-radius: 20px; padding: 16px;
+  box-shadow: 0 1px 2px rgba(20,23,28,.06), 0 4px 16px rgba(20,23,28,.06);}
+/* keyed buttons must beat the generic secondary-button rule above (same specificity, later + !important) */
+[class*="st-key-btn_dark"] .stButton button {background: #14171C !important; color: #fff !important; border-color: #14171C !important;}
+[class*="st-key-btn_dark"] .stButton button:hover {background: #2B3039 !important;}
+[class*="st-key-link_"] button {min-height: 44px;}
+.st-key-back button {min-height: 44px; padding: 0 4px;}
+.st-key-home_record button {min-height: 152px; border-radius: 20px;}
+.st-key-home_search .stButton button {min-height: 104px; border-radius: 20px; background: #fff; border: none !important;
+  box-shadow: 0 1px 2px rgba(20,23,28,.06), 0 4px 16px rgba(20,23,28,.06);}
+.st-key-home_record button p {font-size: 26px !important; font-weight: 800 !important;}
+.st-key-home_search button p {font-size: 22px !important; font-weight: 800 !important;}
+[data-testid="stPills"] button, [data-testid="stButtonGroup"] button {min-height: 48px; padding: 8px 16px; font-size: 16px; font-weight: 600;}
+.geo-pill {display: inline-block; font-size: 13px; font-weight: 700; padding: 4px 12px; border-radius: 999px;
   background: #E6ECF7; color: #1F4E9D;}
-.plate-box {font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 2.1rem; font-weight: 700;
-  letter-spacing: .06em; text-align: center; border: 3px solid #111; border-radius: 12px; padding: .45rem .5rem;
-  background: #fff; margin: .25rem 0 .6rem; overflow-wrap: anywhere;}
-.plate-box.small {font-size: 1.5rem; border-width: 2px; padding: .3rem .4rem;}
-.chip {display: inline-block; padding: .3rem .8rem; border-radius: 999px; font-size: .9rem; font-weight: 600;}
-.chip.known {background: #e3f1e7; color: #1e6b34;} .chip.new {background: #E6ECF7; color: #1F4E9D;}
-.muted {color: #5f6368; font-size: .9rem;}
-.tiles {display: grid; grid-template-columns: repeat(3, 1fr); gap: .5rem; margin: .5rem 0;}
-.tile {background: #F4F5F7; border-radius: 14px; padding: .55rem .6rem;}
-.tile .k {font-size: .72rem; color: #5f6368;} .tile .v {font-size: .95rem; font-weight: 700; overflow-wrap: anywhere;}
-.call-row {display: flex; justify-content: space-between; align-items: center; gap: .5rem;
-  background: #F4F5F7; border-radius: 14px; padding: .55rem .6rem .55rem .8rem; margin: .5rem 0;}
-.call-row .who {font-size: .95rem; overflow-wrap: anywhere;}
-.call-row a {background: #1F4E9D; color: #fff !important; text-decoration: none; font-weight: 700;
-  border-radius: 14px; padding: .7rem 1rem; white-space: nowrap;}
-.pc {border-radius: 18px; padding: .85rem 1rem; margin: .25rem 0 .5rem;}
-.pc-top {display: flex; justify-content: space-between; font-size: .85rem; font-weight: 700;}
-.pc-big {font-size: 2.2rem; font-weight: 800; line-height: 1.15; margin: .15rem 0;}
-.pc-sub {font-size: 1rem; font-weight: 600;}
-.pc-bar {height: 8px; border-radius: 4px; background: rgba(0,0,0,.08); margin: .4rem 0;}
+.plate-box {font-size: 34px; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: .04em;
+  text-align: center; border: 3px solid #14171C; border-radius: 12px; padding: 8px 12px; background: #fff;
+  margin: 4px 0 12px; overflow-wrap: anywhere; line-height: 1.2;}
+.plate-box.small {font-size: 24px; border-width: 2px; padding: 4px 8px; margin-bottom: 8px;}
+.chip {display: inline-block; padding: 4px 12px; border-radius: 999px; font-size: 14px; font-weight: 700;}
+.chip.known {background: #E3F1E7; color: #14532D;} .chip.new {background: #E6ECF7; color: #1F4E9D;}
+.muted {color: #4A5160; font-size: 14px;}
+.photo-preview img {border-radius: 12px;}
+.tiles {display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 12px 0 8px;}
+.tile {background: #F4F5F7; border-radius: 12px; padding: 8px 12px;}
+.tile .k {font-size: 13px; font-weight: 600; color: #4A5160;}
+.tile .v {font-size: 16px; font-weight: 700; overflow-wrap: anywhere;}
+.pc {border-radius: 16px; padding: 16px; margin: 0 0 4px;}
+.pc-label {font-size: 15px; font-weight: 800; text-transform: none;}
+.pc-big {font-size: 34px; font-weight: 800; line-height: 1.1; margin: 4px 0;}
+.pc-sub {font-size: 18px; font-weight: 700;}
+.pc-date {font-size: 17px; font-weight: 700;}
+.pc-bar {height: 8px; border-radius: 4px; background: rgba(20,23,28,.10); margin: 12px 0 8px;}
 .pc-bar > div {height: 100%; border-radius: 4px;}
-.pc-note {font-size: .78rem;}
-.hist {font-size: .9rem; padding: .35rem 0; border-bottom: 1px solid #E3E5E9;}
-.done {text-align: center; font-size: 4rem; line-height: 1; color: #1e6b34;}
-.done-title {text-align: center; font-size: 1.6rem; font-weight: 800; margin: .25rem 0 .5rem;}
+.pc-note {font-size: 13px; font-weight: 600;}
+.hist {font-size: 14px; padding: 8px 0; border-bottom: 1px solid #DADDE2;}
+.done {width: 72px; height: 72px; margin: 4px auto 8px; border-radius: 50%; background: #E3F1E7; color: #14532D;
+  display: flex; align-items: center; justify-content: center; font-size: 40px; font-weight: 800;}
+.done-title {text-align: center; font-size: 24px; font-weight: 800; margin: 0 0 12px;}
+.seg-k {font-size: 14px;}
+/* ui-ux-pro-max checklist: visible focus ring (keyboard / switch users), reduced motion */
+button:focus-visible, input:focus-visible, [role="radio"]:focus-visible {outline: 3px solid #1F4E9D !important; outline-offset: 2px;}
+@media (prefers-reduced-motion: reduce) {* {transition: none !important; animation: none !important;}}
 </style>
 """
 
@@ -180,22 +194,40 @@ def recognize_photo(photo) -> tuple[str, bool, str]:
     return logic.recognize_outcome(result)
 
 
+def photo_preview(data: bytes | None, name: str | None = None) -> None:
+    """Small preview of the photo just taken/uploaded. Never crashes the flow: a photo the
+    browser-side decoder cannot read (e.g. iPhone HEIC — the API converts it, the UI has no
+    HEIC decoder) shows a text line instead."""
+    if not data:
+        return
+    try:
+        with Image.open(io.BytesIO(data)) as img:
+            img.verify()
+    except (UnidentifiedImageError, OSError, ValueError):
+        st.markdown(f'<span class="muted">Зураг: {html.escape(name or "")} (урьдчилж харах боломжгүй)</span>',
+                    unsafe_allow_html=True)
+        return
+    with st.container(key="photo_preview"):
+        st.image(data, width=200)
+
+
 # --- vehicle card parts ------------------------------------------------------------------
 
 def render_prediction(prediction: dict | None) -> None:
-    """Status card: tinted by status, big 'N хоног', date, progress bar; grey if null."""
+    """Status block = the biggest colored block on the card: status word (text, never color
+    alone), big «N хоног үлдсэн/хэтэрсэн», next change date, progress bar; grey when null."""
     v = logic.prediction_view(prediction)
     if v["pending"]:
-        body = f'<div class="pc-big" style="font-size:1.1rem">{html.escape(v["big"])}</div>'
+        body = f'<div class="pc-label">{html.escape(v["big"])}</div>'
     else:
         bar = ""
         if v["progress"] is not None:
             bar = (f'<div class="pc-bar"><div style="width:{v["progress"] * 100:.0f}%;'
                    f'background:{v["fg"]}"></div></div>')
         body = (
-            f'<div class="pc-top"><span>{html.escape(v["status_label"])}</span>'
-            f'<span>{html.escape(v["date"] or "")}</span></div>'
+            f'<div class="pc-label">{html.escape(v["status_label"])}</div>'
             f'<div class="pc-big">{html.escape(v["big"])} <span class="pc-sub">{html.escape(v["sub"])}</span></div>'
+            f'<div class="pc-date">Дараагийн солилт: {html.escape(v["date"] or "")}</div>'
             f'{bar}<div class="pc-note">{html.escape(v["note"])}</div>'
         )
     st.markdown(f'<div class="pc" style="color:{v["fg"]};background:{v["bg"]}">{body}</div>',
@@ -207,27 +239,17 @@ def _tile(label: str, value: str) -> str:
 
 
 def render_tiles(card: dict) -> None:
-    """3 small tiles: last change, oil · liters, destination."""
+    """4 tiles (2×2, readable at 390 px): last change, oil · liters, destination, driver."""
     last = card.get("last_service") or {}
     oil = f"{last.get('oil_grade', '')} · {logic.format_number(last.get('liters'), 'л')}" if last else logic.NOT_GIVEN
+    driver = " · ".join(x for x in (last.get("driver_name"), last.get("driver_phone")) if x) or logic.NOT_GIVEN
     tiles = [
         _tile("Сүүлд солисон", last.get("service_date") or logic.NOT_GIVEN),
         _tile("Тос", oil),
         _tile("Чиглэл", logic.service_destination_text(last) if last else logic.NOT_GIVEN),
+        _tile("Жолооч", driver),
     ]
     st.markdown(f'<div class="tiles">{"".join(tiles)}</div>', unsafe_allow_html=True)
-
-
-def render_call_row(service: dict | None) -> None:
-    """«Жолооч · утас — Залгах» with a tel: link (opens the phone's dialer)."""
-    service = service or {}
-    phone = service.get("driver_phone")
-    if not phone and not service.get("driver_name"):
-        return
-    who = " · ".join(x for x in (service.get("driver_name") or "Жолооч", phone) if x)
-    link = f'<a href="tel:{html.escape(phone)}">Залгах</a>' if phone else ""
-    st.markdown(f'<div class="call-row"><span class="who">{html.escape(who)}</span>{link}</div>',
-                unsafe_allow_html=True)
 
 
 def render_history(history: list[dict]) -> None:

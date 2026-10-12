@@ -1,7 +1,8 @@
-"""Vehicle card (task 5.3 / DESIGN v2), fresh from GET /vehicles/{id}.
+"""Vehicle card (task 5.3, DESIGN v3 / T6), fresh from GET /vehicles/{id}.
 
-Plate box + segment badge, status card (prediction), 3 tiles, «Залгах» row,
-history in an expander, primary «Тос солилт бүртгэх».
+Order = importance at a glance: large plate + segment badge, then the status block
+(biggest colored block: status word, «N хоног», next change date), 4 tiles, history
+collapsed, primary «Тос солилт бүртгэх».
 """
 
 import streamlit as st
@@ -24,6 +25,7 @@ if card:
     common.remember_viewed(card)
     with st.container(key="card_vehicle"):
         common.plate_box(card["identifier"])
+        common.render_prediction(card.get("prediction"))
         common.segment_badge(card.get("segment"))
         facts = [
             (card.get("company") or {}).get("name"),
@@ -32,9 +34,7 @@ if card:
             f"ердийн {logic.format_number(card['usual_liters'], 'л')}" if card.get("usual_liters") else None,
         ]
         st.markdown(f'<span class="muted">{" · ".join(f for f in facts if f)}</span>', unsafe_allow_html=True)
-        common.render_prediction(card.get("prediction"))
         common.render_tiles(card)
-        common.render_call_row(card.get("last_service"))
         common.render_history(card.get("history") or [])
     if st.button("Тос солилт бүртгэх", type="primary", width="stretch", key="btn_record_service"):
         common.go_record(card["identifier_type"], card["identifier"], card)

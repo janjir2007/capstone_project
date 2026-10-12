@@ -20,7 +20,7 @@ from src.ui import auth, common  # noqa: E402
 
 st.set_page_config(
     page_title="Тос солилт",
-    page_icon="🛢️",
+    page_icon=":material/oil_barrel:",
     layout="centered",
     initial_sidebar_state="collapsed",
 )

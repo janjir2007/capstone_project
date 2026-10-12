@@ -62,7 +62,7 @@ def reminder_row(r: dict) -> None:
             f'<div class="rem-top"><span class="rem-plate">{html.escape(r["identifier"])}</span>'
             f'<span class="rem-status" style="color:{fg};background:{bg}">{html.escape(status)} · '
             f'{html.escape(logic.days_left_text(r.get("days_left")))}</span></div>'
-            f'<div class="rem-meta">📞 {html.escape(r.get("phone") or "утасгүй")}'
+            f'<div class="rem-meta">Утас: <b>{html.escape(r.get("phone") or "—")}</b>'
             f' · {html.escape(r.get("driver_name") or "")} · {html.escape(r.get("company") or "")}<br>'
             f'Илгээх өдөр: <b>{html.escape(r.get("send_on", ""))}</b> · Таамаг: {html.escape(r.get("predicted_date", ""))}'
             f' · Сүүлд: {html.escape(r.get("last_change_date", ""))}</div>',

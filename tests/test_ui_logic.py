@@ -106,7 +106,7 @@ def test_prediction_due_soon() -> None:
     assert view["pending"] is False
     assert (view["big"], view["sub"]) == ("10 хоног", "үлдсэн")
     assert view["status_label"] == "Удахгүй"
-    assert (view["fg"], view["bg"]) == ("#8a5300", "#fbefd6")
+    assert (view["fg"], view["bg"]) == ("#6B3F00", "#FBEFD6")
     assert view["date"] == "2026-10-21"
     assert view["progress"] == 0.8  # 40 of 50 days used
     assert view["note"] == "Загварын таамаглал"
@@ -118,14 +118,14 @@ def test_prediction_overdue_and_fallback_note() -> None:
             "fallback_reason": "route_not_modelled", "today": "2026-10-26"}
     view = logic.prediction_view(pred)
     assert (view["big"], view["sub"], view["status_label"]) == ("5 хоног", "хэтэрсэн", "Хэтэрсэн")
-    assert view["fg"] == "#b3261e"
+    assert view["fg"] == "#8C1D18"
     assert view["progress"] == 1.0  # clipped
     assert view["note"] == "Дундаж хугацаа (энэ маршрутад загвар байхгүй)"
 
 
 def test_prediction_ok_and_today() -> None:
     ok = logic.prediction_view({**PREDICTION, "days_left": 30, "status": "ok"})
-    assert ok["status_label"] == "Хэвийн" and ok["fg"] == "#1e6b34"
+    assert ok["status_label"] == "Хэвийн" and ok["fg"] == "#14532D"
     today = logic.prediction_view({**PREDICTION, "days_left": 0, "status": "due_soon"})
     assert (today["big"], today["sub"]) == ("Өнөөдөр", "")
 
@@ -192,7 +192,7 @@ def _filled(**overrides) -> dict:
 
 
 def test_payload_new_vehicle() -> None:
-    payload, errors = logic.build_service_payload("plate", " 0001 ТЕС ", True, _filled(), "  A ")
+    payload, errors = logic.build_service_payload("plate", " 0001 ТЕС ", True, _filled())
     assert errors == []
     assert payload == {
         "identifier_type": "plate",
@@ -204,8 +204,8 @@ def test_payload_new_vehicle() -> None:
         "odometer_km": 120000,
         "destination_id": 2,
         "driver_phone": "99110001",
-        "oil_changer": "A",
     }
+    assert "oil_changer" not in payload  # T6: field removed (optional in the contract)
     assert "service_date" not in payload  # API uses today (Ulaanbaatar)
 
 
@@ -309,8 +309,8 @@ def test_no_streamlit_pages_folder() -> None:
 
 def test_prev_summary_only_filled_parts() -> None:
     form = logic.prefill_from_card(CARD)
-    assert logic.prev_summary(form) == "15W-40 · 30 л · Тест Д. · 99110001"
-    assert logic.prev_summary({**form, "driver_name": None, "driver_phone": ""}) == "15W-40 · 30 л"
+    assert logic.prev_summary(form) == "30 л · Тест Д. · 99110001"
+    assert logic.prev_summary({**form, "driver_name": None, "driver_phone": ""}) == "30 л"
     assert logic.prev_summary(logic.empty_form()) == "—"
 
 
@@ -338,3 +338,34 @@ def test_photo_content_type() -> None:
     assert logic.photo_content_type("truck.jpg", "image/jpeg") == "image/jpeg"  # browser type wins
     assert logic.photo_content_type(None, None) == "image/jpeg"
     assert {"heic", "heif"} <= set(logic.UPLOAD_TYPES)
+
+
+# --- T6 choice lists ----------------------------------------------------------------------
+
+def test_vehicle_model_list_and_old_value_still_shown() -> None:
+    assert len(logic.VEHICLE_MODELS) == 26 and "KAMAZ" in logic.VEHICLE_MODELS
+    opts = logic.model_options()
+    assert opts[-1] == "Бусад" and opts[0] == "Volvo FH"
+    old = logic.model_options("Howo A7")            # free-text DB value not in the list (D-019)
+    assert old[0] == "Howo A7" and old[-1] == "Бусад" and len(old) == 28
+
+
+def test_oil_grade_split_and_resolve() -> None:
+    assert logic.split_choice("10W-40", logic.OIL_GRADES, logic.DEFAULT_OIL_GRADE) == ("10W-40", None)
+    assert logic.split_choice("5W-30", logic.OIL_GRADES, logic.DEFAULT_OIL_GRADE) == ("Бусад", "5W-30")
+    assert logic.split_choice(None, logic.OIL_GRADES, logic.DEFAULT_OIL_GRADE) == ("15W-40", None)
+    assert logic.resolve_choice("20W-50", None) == "20W-50"
+    assert logic.resolve_choice("Бусад", " 5W-30 ") == "5W-30"
+    assert logic.resolve_choice("Бусад", "  ") is None
+
+
+def test_status_colors_are_aaa_contrast() -> None:
+    """T6: status text on its tint must stay readable outdoors (WCAG AAA, >= 7:1)."""
+    def lum(h: str) -> float:
+        c = [int(h[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+        c = [x / 12.92 if x <= 0.03928 else ((x + 0.055) / 1.055) ** 2.4 for x in c]
+        return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+
+    for fg, bg in [*logic.STATUS_COLORS.values(), logic.PENDING_COLORS]:
+        hi, lo = sorted((lum(fg), lum(bg)), reverse=True)
+        assert (hi + 0.05) / (lo + 0.05) >= 7, (fg, bg)

@@ -125,7 +125,21 @@ def test_vehicle_card_fits_phone(ui_url, phone_page, shot_dir) -> None:
         pytest.skip("set UI_BROWSER_PLATE to a plate in the DB to check the card")
     phone_page.goto(ui_url + "/search")
     phone_page.wait_for_selector("text=Камераар хайх", timeout=20000)
-    phone_page.get_by_label("Улсын дугаар, утас эсвэл парк дугаар").fill(plate)
+    phone_page.get_by_label("Улсын дугаар эсвэл утас").fill(plate)
     phone_page.get_by_role("button", name="Хайх", exact=True).click()
     phone_page.wait_for_selector(".plate-box", timeout=15000)
     _check_phone_width(phone_page, shot_dir, "screen_card")
+
+
+def test_header_not_hidden_and_dark_button_visible(ui_url, phone_page) -> None:
+    """CSS regressions AppTest cannot see (T6): the header row must sit below Streamlit's top
+    bar, and the dark «Камераар хайх» button must really be dark with white text."""
+    phone_page.goto(ui_url + "/search")
+    phone_page.wait_for_selector("text=Камераар хайх", timeout=20000)
+    phone_page.wait_for_timeout(800)
+    pill = phone_page.locator(".geo-pill").bounding_box()
+    bar = phone_page.locator('[data-testid="stHeader"]').bounding_box()
+    assert pill["y"] >= bar["y"] + bar["height"], "header row hidden under the top bar"
+    bg, fg = phone_page.locator(".st-key-btn_dark_cam button").evaluate(
+        "e => [getComputedStyle(e).backgroundColor, getComputedStyle(e).color]")
+    assert (bg, fg) == ("rgb(20, 23, 28)", "rgb(255, 255, 255)")

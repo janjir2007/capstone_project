@@ -243,7 +243,8 @@ def step(at: AppTest) -> str:
 def type_plate(at: AppTest, plate: str, kind: str = "plate") -> AppTest:
     """Record: manual entry -> «Шалгах» -> confirm step."""
     at = click(at, "Дугаарыг гараар оруулах")
-    at.radio(key="rec_type").set_value(kind)
+    if kind == "fleet_no":
+        at = click(at, "Дугааргүй машин")
     at.text_input(key="rec_manual").set_value(plate).run()
     return click(at, "Шалгах")
 
@@ -256,12 +257,10 @@ def fill_new_vehicle(at: AppTest, company: str = "Туршилт Тээвэр Х
     at.number_input(key="f_odometer_km").set_value(120000)
     at.pills(key="f_destination_id").set_value(2)
     at.text_input(key="f_company_name").set_value(company)
-    at.text_input(key="f_vehicle_model").set_value("Howo A7")
-    at.text_input(key="f_oil_grade").set_value("15W-40")
+    at.selectbox(key="f_model_choice").set_value("Foton Auman")
     at.number_input(key="f_liters").set_value(28.5)
     at.text_input(key="f_driver_name").set_value("Тест Б.")
     at.text_input(key="f_driver_phone").set_value("99110099")
-    at.text_input(key="f_oil_changer").set_value("Тос солигч Т")
     return at.run()
 
 
@@ -283,7 +282,7 @@ def test_no_password_env_opens_home(fake_api) -> None:
     at = run_app()
     assert not at.exception
     assert texts(at.title) == ["Тос солилт"]
-    assert {"📷  Бүртгэх", "🔍  Хайх"} <= {b.label for b in at.button}
+    assert {"Бүртгэх", "Хайх"} <= {b.label for b in at.button}
     assert "Гео-Эксперт" in html_blocks(at)
 
 
@@ -322,9 +321,9 @@ def test_logged_in_can_open_every_view(fake_api, view) -> None:
 
 
 def test_home_buttons_open_screens(fake_api) -> None:
-    at = click(run_app(), "📷  Бүртгэх")
+    at = click(run_app(), "Бүртгэх")
     assert texts(at.title) == ["Бүртгэх"] and step(at) == "capture"
-    at = click(run_app(), "🔍  Хайх")
+    at = click(run_app(), "Хайх")
     assert texts(at.title) == ["Хайх"]
 
 
@@ -349,9 +348,8 @@ def test_new_vehicle_full_flow(fake_api) -> None:
     assert force is False
     assert body == {
         "identifier_type": "plate", "identifier": "0001 ТЕС", "oil_grade": "15W-40", "liters": 28.5,
-        "company_name": "Туршилт Тээвэр ХХК", "vehicle_model": "Howo A7", "odometer_km": 120000,
+        "company_name": "Туршилт Тээвэр ХХК", "vehicle_model": "Foton Auman", "odometer_km": 120000,
         "destination_id": 2, "driver_name": "Тест Б.", "driver_phone": "99110099",
-        "oil_changer": "Тос солигч Т",
     }
     assert step(at) == "success"
     assert "Хадгалагдлаа" in html_blocks(at)
@@ -359,7 +357,7 @@ def test_new_vehicle_full_flow(fake_api) -> None:
 
     at = click(at, "Дараагийн машин")
     assert step(at) == "capture"
-    assert at.session_state["f_oil_changer"] == "Тос солигч Т"  # remembered
+    assert not any(w.label == "Тос солигч" for w in at.text_input)  # field removed (T6)
 
 
 def test_existing_vehicle_confirm_chip_and_prefill(fake_api) -> None:
@@ -368,11 +366,81 @@ def test_existing_vehicle_confirm_chip_and_prefill(fake_api) -> None:
     assert "Бүртгэлтэй · 1 удаа ирсэн" in html_blocks(at)
     at = click(at, "Зөв, үргэлжлүүлэх")
     state = at.session_state
-    assert (state["f_oil_grade"], state["f_liters"], state["f_driver_phone"]) == ("10W-40", 32.0, "99110002")
+    assert (state["f_oil_choice"], state["f_liters"], state["f_driver_phone"]) == ("10W-40", 32.0, "99110002")
     assert state["f_odometer_km"] is None and state["f_destination_id"] is None  # D-033 fresh
     assert "Өмнөхөөс авсан" in html_blocks(at)
-    assert "10W-40 · 32 л · Жолооч Д. · 99110002" in html_blocks(at)
+    assert "32 л · Жолооч Д. · 99110002" in html_blocks(at)       # oil has its own tap row now
     assert at.expander[0].label == "Засах"
+
+
+def test_new_vehicle_defaults_and_hidden_fields(fake_api) -> None:
+    at = to_form(run_app(RECORD), "0001 ТЕС")
+    assert at.session_state["f_oil_choice"] == "15W-40"                # default oil grade
+    assert at.pills(key="f_oil_choice").options == ["15W-40", "10W-40", "20W-50", "Бусад"]
+    assert at.text_input(key="f_company_name")                          # new truck: company shown
+    assert "Volvo FH" in at.selectbox(key="f_model_choice").options
+
+
+def test_existing_vehicle_hides_company_and_model(fake_api) -> None:
+    seed_existing(fake_api)
+    at = to_form(run_app(RECORD), "0002 ТЕС")
+    labels = [w.label for w in at.text_input]
+    assert "Компани / эзэмшигч" not in labels and not at.selectbox
+    at.number_input(key="f_odometer_km").set_value(215000)
+    at.pills(key="f_destination_id").set_value(1).run()
+    at = click(at, "Хадгалах")
+    body, _ = fake_api.posts[-1]
+    assert "company_name" not in body and "vehicle_model" not in body and body["oil_grade"] == "10W-40"
+
+
+def test_other_oil_grade_and_other_model_saved_as_typed(fake_api) -> None:
+    at = to_form(run_app(RECORD), "0001 ТЕС")
+    at.number_input(key="f_odometer_km").set_value(1000)
+    at.pills(key="f_destination_id").set_value(1)
+    at.text_input(key="f_company_name").set_value("Туршилт ХХК")
+    at.number_input(key="f_liters").set_value(30.0)
+    at.pills(key="f_oil_choice").set_value("Бусад")
+    at.selectbox(key="f_model_choice").set_value("Бусад").run()
+    at.text_input(key="f_oil_other").set_value("5W-30")
+    at.text_input(key="f_model_other").set_value("Sitrak C7H").run()
+    at = click(at, "Хадгалах")
+    body, _ = fake_api.posts[-1]
+    assert (body["oil_grade"], body["vehicle_model"]) == ("5W-30", "Sitrak C7H")
+
+
+def test_existing_fleet_truck_sends_its_company(fake_api) -> None:
+    """Company is hidden for existing trucks, but a fleet number still needs it (D-042)."""
+    fake_api.add_vehicle("HT-12", "Уурхай А ХХК", "fleet_no", oil_grade="15W-40", liters=40.0, engine_hours=1000.0)
+    at = to_form(run_app(RECORD), "HT-12", kind="fleet_no")
+    at.number_input(key="f_engine_hours").set_value(1100.0)
+    at.pills(key="f_destination_id").set_value(1).run()
+    at = click(at, "Хадгалах")
+    body, _ = fake_api.posts[-1]
+    assert body["company_name"] == "Уурхай А ХХК" and body["identifier_type"] == "fleet_no"
+
+
+def test_photo_preview_on_confirm_and_form(fake_api) -> None:
+    import io
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", (40, 20), (200, 200, 200)).save(buf, format="JPEG")
+    seed_existing(fake_api)
+    fake_api.recognize = (200, RECOGNIZED)
+    at = run_app(RECORD)
+    at = at.file_uploader(key="rec_upload").upload("truck.jpg", buf.getvalue(), "image/jpeg").run()
+    assert step(at) == "confirm" and len(at.get("image")) == 1      # preview shown
+    at = click(at, "Зөв, үргэлжлүүлэх")
+    assert len(at.get("image")) == 1                                 # still on the form
+    assert len(fake_api.uploads) == 1                               # sent once, to /plates/recognize only
+    at = click(at, "‹ Буцах")                                        # leave; photo stays session-only
+
+
+def test_unreadable_photo_shows_text_not_crash(fake_api) -> None:
+    fake_api.recognize = (200, RECOGNIZED)
+    at = run_app(RECORD)
+    at = at.file_uploader(key="rec_upload").upload("IMG_0002.HEIC", b"not-decodable", "").run()
+    assert not at.exception
+    assert "урьдчилж харах боломжгүй" in html_blocks(at)
 
 
 def test_wrong_plate_goes_back_to_edit(fake_api) -> None:
@@ -383,7 +451,7 @@ def test_wrong_plate_goes_back_to_edit(fake_api) -> None:
 
 def test_empty_form_shows_mongolian_errors_and_sends_nothing(fake_api) -> None:
     at = click(to_form(run_app(RECORD), "0001 ТЕС"), "Хадгалах")
-    assert "Тосны төрөл оруулна уу." in texts(at.error)
+    assert "Компанийн нэр (эсвэл эзэмшигч) оруулна уу." in texts(at.error)  # new truck: company required (D-042)
     assert fake_api.posts == []
 
 
@@ -437,7 +505,8 @@ def test_fleet_number_in_two_companies(fake_api) -> None:
     at.radio(key="rec_choice").set_value(1).run()
     at = click(at, "Зөв, үргэлжлүүлэх")
     assert at.session_state["f_company_name"] == "Уурхай Б ХХК"
-    assert at.session_state["f_oil_grade"] == "10W-30"
+    # 10W-30 is not one of the 3 tap options -> «Бусад» + the old value as text
+    assert (at.session_state["f_oil_choice"], at.session_state["f_oil_other"]) == ("Бусад", "10W-30")
     assert at.number_input(key="f_engine_hours")  # mine trucks: engine hours shown
 
 
@@ -513,7 +582,7 @@ def test_single_match_opens_card(fake_api) -> None:
     assert ":blue-badge[Шинэ]" in page                         # segment
     assert "ердийн 32 л" in page                               # usual liters
     assert "Сүүлд солисон" in page and "10W-40 · 32 л" in page  # 3 tiles
-    assert 'href="tel:99110002"' in page and "Залгах" in page  # call row
+    assert "Жолооч Д. · 99110002" in page and "Залгах" not in page  # driver tile, no call button (T6)
 
 
 def test_card_shows_prediction(fake_api) -> None:
@@ -522,7 +591,7 @@ def test_card_shows_prediction(fake_api) -> None:
     at = search(run_app(SEARCH), "0002 ТЕС")
     card = next(t for t in texts(at.markdown) if 'class="pc"' in t)
     assert "9 хоног" in card and "үлдсэн" in card and "Удахгүй" in card and "2026-10-21" in card
-    assert "#fbefd6" in card
+    assert "#FBEFD6" in card and "Дараагийн солилт: 2026-10-21" in card
 
 
 def test_search_by_phone_and_recent(fake_api) -> None:
@@ -562,7 +631,7 @@ def test_unknown_phone_message_and_no_new_vehicle_button(fake_api) -> None:
 def test_search_by_camera(fake_api) -> None:
     seed_existing(fake_api)
     fake_api.recognize = (200, RECOGNIZED)
-    at = click(run_app(SEARCH), "📷  Камераар хайх")
+    at = click(run_app(SEARCH), "Камераар хайх")
     at = upload_photo(at, "search_upload")
     assert texts(at.title) == ["Машины карт"]
 
@@ -572,7 +641,7 @@ def test_card_record_button_opens_prefilled_form(fake_api) -> None:
     at = click(on(search(run_app(SEARCH), "0002 ТЕС"), CARD), "Тос солилт бүртгэх")
     assert texts(at.title) == ["Бүртгэх"]
     assert step(at) == "form"
-    assert at.session_state["f_oil_grade"] == "10W-40"
+    assert at.session_state["f_oil_choice"] == "10W-40"
 
 
 def test_save_then_find_by_plate_and_phone(fake_api) -> None:

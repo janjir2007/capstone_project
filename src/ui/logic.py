@@ -45,12 +45,12 @@ PREDICTION_STATUS_LABELS: dict[str, str] = {
     "overdue": "Хэтэрсэн",
 }
 # (text color, background) per status — DESIGN v2
-STATUS_COLORS: dict[str, tuple[str, str]] = {
-    "ok": ("#1e6b34", "#e3f1e7"),
-    "due_soon": ("#8a5300", "#fbefd6"),
-    "overdue": ("#b3261e", "#f9e3e1"),
+STATUS_COLORS: dict[str, tuple[str, str]] = {  # AAA contrast (≥ 7.4:1), same everywhere (T6)
+    "ok": ("#14532D", "#E3F1E7"),
+    "due_soon": ("#6B3F00", "#FBEFD6"),
+    "overdue": ("#8C1D18", "#F9E3E1"),
 }
-PENDING_COLORS = ("#5f6368", "#eceef1")  # grey card while prediction is null
+PENDING_COLORS = ("#3F4552", "#ECEEF1")  # grey block while prediction is null (8.3:1)
 
 # Prediction.method / fallback_reason (contract v0.5) -> short Mongolian note
 METHOD_LABELS: dict[str, str] = {
@@ -274,6 +274,50 @@ def days_left_text(days_left: int | None) -> str:
     return f"{abs(days_left)} хоног {'үлдсэн' if days_left > 0 else 'хэтэрсэн'}"
 
 
+# --- Choice lists (T6): tap/select instead of typing ---------------------------------
+
+OTHER_CHOICE = "Бусад"  # last option of a choice list -> free-text field
+
+# Truck models seen in Mongolia (T6 brief). The DB field stays free text (D-019): a value
+# not in this list (old records, «Бусад») is still shown and saved as typed.
+VEHICLE_MODELS = (
+    "Volvo FH", "Volvo FM", "Volvo FMX", "Scania R", "Scania G", "Scania P", "Scania S",
+    "MAN TGX", "MAN TGS", "Mercedes-Benz Actros", "Mercedes-Benz Arocs", "DAF XF",
+    "Renault T", "Iveco Stralis", "Shacman X3000", "Shacman F3000", "Shacman X6000",
+    "HOWO (Sinotruk)", "FAW J6", "Foton Auman", "Dongfeng", "Beiben", "Hyundai Xcient",
+    "Isuzu Giga", "Hino 700", "KAMAZ",
+)
+OIL_GRADES = ("15W-40", "10W-40", "20W-50")
+DEFAULT_OIL_GRADE = "15W-40"
+
+
+def model_options(current: str | None = None) -> list[str]:
+    """Selectbox options: the list (+ the current value first if it is not in it) + «Бусад»."""
+    options = list(VEHICLE_MODELS)
+    if current and current not in options:
+        options.insert(0, current)
+    return [*options, OTHER_CHOICE]
+
+
+def split_choice(value: str | None, presets: tuple[str, ...] | list[str], default: str | None = None
+                 ) -> tuple[str | None, str | None]:
+    """(choice, other_text) for a stored value: a preset -> (preset, None); anything else ->
+    («Бусад», value); empty -> (default, None)."""
+    value = (value or "").strip()
+    if not value:
+        return default, None
+    if value in presets:
+        return value, None
+    return OTHER_CHOICE, value
+
+
+def resolve_choice(choice: str | None, other: str | None) -> str | None:
+    """The value to save: the chosen preset, or the free text when «Бусад» is chosen."""
+    if choice == OTHER_CHOICE:
+        return (other or "").strip() or None
+    return choice
+
+
 # --- Recording form ----------------------------------------------------------
 
 # Keys of the recording form in st.session_state (prefix avoids clashes).
@@ -320,9 +364,8 @@ def prefill_from_card(card: dict | None) -> dict[str, Any]:
 
 
 def prev_summary(form: dict[str, Any]) -> str:
-    """One line for «Өмнөхөөс авсан»: '15W-40 · 32 л · Тест Д. · 99110001' (only filled parts)."""
+    """One line for «Өмнөхөөс авсан»: '32 л · Тест Д. · 99110001' (only filled parts)."""
     parts = [
-        form.get("oil_grade"),
         format_number(form["liters"], "л") if form.get("liters") is not None else None,
         form.get("driver_name"),
         form.get("driver_phone"),
@@ -343,7 +386,6 @@ def build_service_payload(
     identifier: str | None,
     is_new_vehicle: bool,
     form: dict[str, Any],
-    oil_changer: str | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
     """Turn form values into a POST /services body.
 
@@ -351,7 +393,7 @@ def build_service_payload(
     not empty, do not send the payload. service_date is not sent: the API
     uses today in Ulaanbaatar (scope §1 "date automatic").
     """
-    errors: list[str] = []
+    errors: list[str] = []  # oil_changer is not sent (T6: field removed; optional in the contract)
     identifier = _clean(identifier)
     company = _clean(form.get("company_name"))
     oil_grade = _clean(form.get("oil_grade"))
@@ -403,8 +445,6 @@ def build_service_payload(
     for name in ("driver_name", "driver_phone"):
         if _clean(form.get(name)):
             payload[name] = _clean(form.get(name))
-    if _clean(oil_changer):
-        payload["oil_changer"] = _clean(oil_changer)
     return payload, errors
 
 
