@@ -1,14 +1,16 @@
 # PROJECT_STATE — Capstone "Oil Change Predictor" (Geo-Expert LLC)
 
-- **Version:** 2.2
-- **Last updated:** 2026-10-10
+- **Version:** 2.10
+- **Last updated:** 2026-10-12
 - **Deadline (defense day):** 2026-10-20 (20 days from 2026-09-30)
-- **Current phase:** P3 done (detector) → P1 synthetic data (redesigned around destination, D-033–D-036) + P4 backend URGENT
-- **Overall health:** 🟠 Orange — detector finished and strong, but synthetic data, ML model and backend have NOT started; ~3–4 days behind plan with 15 days left.
+- **Current phase:** P4 + demo data DONE → P6 deploy prep (6.1/6.2, host-agnostic) + hosting decision; P5: 5.1–5.3 DONE on iMac → queue T2–T5 (wiring, design v2, dashboard, quality)
+- **Overall health:** 🔴 Red — 8 days left. Model serving, reminders, UI and cloud deploy have NOT started; 2.4 work is uncommitted; real dates 0/83. Plan in §3 is tight but doable if cut checkpoint (Oct 14) is respected.
 
 ---
 
 ## 1. Agreed scope (frozen — changes need Ari's approval)
+
+**Form (D-061):** internal company website for Geo-Expert only (opened in the phone browser) — NOT a native mobile app. Login required, HTTPS (needed for browser camera). Instructor gets a demo login.
 
 **Feature 1 — Customer database**
 - Recording mode: photo → plate detection + Cyrillic recognition → oil changer confirms plate.
@@ -29,7 +31,7 @@
 
 **DL:** plate detection (YOLO) + recognition (4 digits + 3 Cyrillic letters), look-alike normalization, manual fallback, fleet-number mode for mine haul trucks.
 
-**Stack:** Python, pandas, scikit-learn, XGBoost, SHAP, Ultralytics YOLO + OCR (EasyOCR/PaddleOCR) vs custom PyTorch CNN, FastAPI + SQLAlchemy, PostgreSQL (local Docker / Supabase cloud), React/Next.js on Vercel, Docker, GitHub Actions, backend host TBD (see D-011 to D-013).
+**Stack:** Python 3.11, pandas, scikit-learn, XGBoost, SHAP, Ultralytics YOLO (yolo26n) + EasyOCR vs custom PyTorch char CNN, FastAPI, PostgreSQL (local Docker / Supabase cloud), Streamlit frontend (D-022), Docker, GitHub Actions, cloud host TBD in 6.3.
 
 ---
 
@@ -44,7 +46,7 @@ Status: ✅ covered by plan · 🟡 covered but at risk · 🔴 gap — action n
 | R3 | F-Score, Latency P99, inference speed, business ROI | F2, Backend, Slide 11 | 🟡 | F-score needs a classification view → derived from status buckets (OK/due soon/overdue). P99 measured by load test. ROI needs Ari's real business numbers. Business metric = reminder hit rate (D-036). |
 | R4 | FastAPI, CI/CD, web interface, Cloud; not local, working link | Backend, Frontend, Deploy | 🟡 | YOLO + torch images are heavy for free tiers — memory risk. See RISK-04. |
 | R5 | Core ML metrics: RMSE (regression), F-Score, ROC-AUC, Feature Importance | F2 | ✅ | RMSE, MAE, R² primary; F1 + ROC-AUC on derived "overdue" class. |
-| R6 | CV track: custom CNN vs transfer learning; mAP, IoU, Accuracy | DL | 🔴 | Current plan has no "custom CNN vs transfer" comparison. Proposal D-008: pretrained OCR vs small custom PyTorch CNN char classifier. Needs Ari's approval. |
+| R6 | CV track: custom CNN vs transfer learning; mAP, IoU, Accuracy | DL | 🟡 | 3.3 done (EasyOCR vs custom char CNN, docs/cv_ocr_results.md, commit 687f0e9). PM review of numbers pending. |
 | R7 | 5 mandatory steps: EDA & cleaning, Feature Eng., Multi-model, Metrics, XAI (SHAP) | F2 | ✅ | All in Phase 2. |
 | R8 | Unified data pipeline against training–serving skew | F2 + Backend | ✅ | One shared module `src/common/features.py` used by training AND API. |
 | R9 | API → Docker → Cloud → CI/CD → demo | Deploy | ✅ | Phase 5. |
@@ -57,26 +59,24 @@ Status: ✅ covered by plan · 🟡 covered but at risk · 🔴 gap — action n
 
 ---
 
-## 3. Phase plan (deadline 2026-10-20 — 20 days)
+## 3. Phase plan (v2.3 — 8 days left, re-planned 2026-10-12)
 
-| Phase | When | Owner(s) | Deliverable | Done when |
-|---|---|---|---|---|
-| P0 Setup | ✅ Sep 30 | PM, Ari | Repo, CI, CLAUDE.md, roles | Done |
-| P1 Data foundation | Oct 1–5 | Data Eng + Ari | Excel profile, `synthetic_rules.md`, `generator.py`, `cleaning.py` | Generator reproducible; rules have sources or Ari's OK; real records cleaned with issue log |
-| P3 Plate recognition (starts in parallel) | Oct 1–12 | Ari labels, CV Eng | Labeled set (split by vehicle), YOLO weights, OCR vs CNN, normalization | mAP50/IoU + exact-plate-match on held-out trucks; manual fallback |
-| P4 Backend | Oct 3–11 | Backend Eng | FastAPI, endpoints, serving, reminders | Contract endpoints pass tests |
-| P2 Prediction model | Oct 6–10 | ML Eng | features, 4 models, tuning, SHAP, model card | Baseline beaten (or honestly not) on synthetic + real test |
-| P5 Frontend | Oct 11–14 | Frontend | Recording, Lookup, Vehicle card, Dashboard | Full flow works on a phone |
-| P6 Deploy & MLOps | Oct 14–16 | Backend Eng + PM | Docker, CI/CD, cloud URL, P99, TCO | Public URL works; P99 reported |
-| P7 Presentation | Oct 17–19 | PM + Ari | 13 slides, demo script, backup video | 2 rehearsals done |
-| Defense | **Oct 20** | Ari | Live demo | — |
+| Date | Mac (main) | iMac (`ui`) | Ari |
+|---|---|---|---|
+| Mon Oct 12 | ✅ 2.4 + 2.4b done → start 4.3 | (parked) | Fill 1.4b dates (83 rows); fix branch (D-053) |
+| Tue Oct 13 | 4.3 serving: Ridge prediction endpoint + POST /plates/recognize (YOLO → ONNX, CPU) | 5.1–5.3 handoff → PR | Finish 1.4b → 2.5 small run |
+| Wed Oct 14 | 4.4 reminders + segments + fleet-dash fix. **CUT CHECKPOINT** | Merge PR → 5.4 | Decide cuts with PM |
+| Thu Oct 15 | 6.1 Docker + 6.3 cloud deploy (Supabase, host, migrations script D-041) + 6.2 CI w/ Postgres | UI → cloud URL | — |
+| Fri Oct 16 | 6.4 P99 timing; end-to-end on phone. **FEATURE FREEZE end of day** | Bug fixes only | — |
+| Sat Oct 17 | 6.5 TCO/ROI; 7.1 deck draft | — | Business numbers for ROI |
+| Sun Oct 18 | 7.1 deck final; backup demo video | — | — |
+| Mon Oct 19 | 2 rehearsals; warm up cloud URL | — | — |
+| **Tue Oct 20** | **Defense** | | |
 
-**Buffer:** almost none. Any slip → apply cut list immediately.
+**Cut list (decided at Oct 14 checkpoint, in this order):** 1) 1.5 external API → present OSRM distances as the API source if 1.2a called the OSRM API, else drop; 2) 5.4 dashboard → segment counts + due list inside lookup screen; 3) 6.4 Locust → simple timed script; 4) 2.5 calibration → if dates not filled by Oct 14, report "ML ≈ B0 on synthetic" honestly (D-050); 5) 1.1c name_mn → UI shows English destination names.
+**Never cut:** cloud live demo, baseline comparison, SHAP, honest synthetic-vs-real reporting, backup video.
 
-**Cut list (in this order):** 1) custom CNN comparison → small version on character crops only; 2) external API → one weather feature or drop; 3) dashboard screen → merge into lookup; 4) load test → simple timed script.
-**Never cut:** live demo, baseline comparison, SHAP, cloud link, honest synthetic-vs-real reporting.
-
-**Parallel rule:** Claude Code runs one task at a time; Ari's own work (labeling photos, checking rules) runs in parallel with it.
+**Commit rule (RISK-14):** every task ends with tests run + commit + push before the handoff. Uncommitted work = not done.
 
 ## 4. Task list
 
@@ -90,9 +90,9 @@ Status: ✅ covered by plan · 🟡 covered but at risk · 🔴 gap — action n
 | 0.6 | Local Python 3.11 venv; fix settings.json (.env.example readable); fill .env.example DB vars | Claude Code | TODO |
 | 1.1 | PostgreSQL schema + data dictionary | Data Eng | ✅ DONE (26 tests pass; DB tests skip in CI until 6.2) |
 | 1.4a | Excel profiling script (Ari runs it; only summaries shared) | Data Eng | ✅ DONE — finding: Excel = vehicle registry (338 trucks, VOLVO 62%, built 2004–2013, odometer 99.4% empty), NOT service history |
-| 1.4b | Service dates for repeat trucks: Claude Code makes fill-in CSV → Ari types dates from Messenger chat → script computes real intervals (D-046) | Data Eng + Ari | ▶ BRIEF ISSUED Oct 10 (was due Oct 8) |
+| 1.4b | Service dates for repeat trucks (D-046) | Data Eng + Ari | ✂ CUT Oct 12 (D-063) — dates not findable in Messenger. Script stays in repo for future use |
 | 1.1b | Schema migration: destination on service record + destinations reference table (name, route category, one-way km, round-trip days, source) | Data Eng | ✅ DONE Oct 6 — migration 001 (plain SQL up/down, psql --single-transaction), 7 destinations seeded, nullable destination_id + destination_raw, 16 tests (112 pass locally; DB tests skip in CI until 6.2), data_dictionary v0.2 |
-| 1.1c | Migration 002: Ari's round-trip days + mine-site rows + name_mn (D-040) | Data Eng | TODO — after Ari fills A1–A4 (same session as 1.3 start) |
+| 1.1c | Migration 002: name_mn for destinations (D-040, D-062) | Data Eng | ✅ ACCEPTED Oct 12 — contract v0.6 (name_mn nullable); UB city + Other unlabeled → migration 004 in 6.1 (labels pending Ari: "Улаанбаатар хот" / "Бусад") |
 | 1.2 | Synthetic rules (1.2a): research + Ari inputs → docs/synthetic_rules.md → Ari marks ✓/✗. Redesigned per D-033–D-036. First draft (Oct 5) was lost/never saved; rewritten from scratch Oct 6 | Data Eng + Ari | ✅ DRAFT DONE (OSRM distances, 7 variations, 13 noise rules, 16 open items) → ⏳ BLOCKED on Ari: A1–A4 + ✓/✗ |
 | 1.3 | Synthetic generator with noise injection — unknowns as config ranges (D-045) | Data Eng | ✅ DONE Oct 10 — 500 trucks, 3,845 clean / 3,927 dirty rows, seed 42 reproducible, every param tagged; days to next change p5 36 / median 58 / p95 88; real comparison pending 1.4b |
 | 1.4 | Cleaning script (tested on dirty file + noise_log) | Data Eng | ✅ DONE Oct 10 — 3,927 → 3,845 rows; precision/recall 100% on own noise (circular — see D-048); 0 truck identity errors; 274 tests pass |
@@ -100,24 +100,29 @@ Status: ✅ covered by plan · 🟡 covered but at risk · 🔴 gap — action n
 | 1.5 | External API evaluation (1 source) | Data Eng | TODO |
 | 2.1–2.3a | EDA + `features.py` + vehicle/time split + baselines B0, B1 (one session; clean file first, switch to cleaned later) | ML Eng | ✅ DONE Oct 10 — 6 EDA charts, features.py, split (46 test trucks / 202 visits), B0 MAE 12.3 hit 9.4%, B1 worse (MAE 17.8); history features weak (|r| ≤ 0.16); 313 tests pass |
 | 2.3b | Verify B1 km/day includes waiting; Ridge / RF / XGBoost + RandomizedSearchCV; reminder buffer tuned on validation (not test) | ML Eng | ✅ DONE Oct 10 — B1 not a bug (route switching V6); test MAE: B0 12.3, Ridge 11.9, RF 12.1, XGB 12.1, B1 16.8; no model beats B0 beyond noise (95% CI incl. 0); buffer raises B0 hit 9.4% → 14.9%; 322 tests pass |
-| 2.5 | Calibration check vs real 1.4b intervals (D-050) + rerun 2.3b if generator changes | ML Eng | WAITS on Ari's dates |
-| 2.4 | SHAP (Ridge + XGBoost) + D-038 variation-off check + derived status F1/ROC-AUC (D-007) + reminder metric with D-051 window | ML Eng | ▶ BRIEF ISSUED Oct 10 |
+| 2.5 | Calibration check vs real 1.4b intervals (D-050) | ML Eng | ✂ CUT (D-063) — moved to Later: calibrate once the live system has collected real dated services |
+| 2.4 | SHAP (Ridge + XGBoost) + D-038 variation-off check + derived status F1/ROC-AUC (D-007) + reminder metric with D-051 window (1–14 days) | ML Eng | ✅ ACCEPTED Oct 12 (commit pending) — SHAP additive (err ≤1e-4); macro F1 B0 .61 / B1 .56 / Ridge .63 / RF .63 / XGB .64; ROC-AUC overdue .50/.63/.68/.65/.65; hit rate 1–14 d B0 33.7% / B1 21.3% / Ridge 36.6% (+3.0, CI −3.9..+9.2) / RF 35.1% / XGB 35.6%; D-038 "needs a look" (D-059); serving = Ridge, buffer 9 d |
+| 2.4b | Replace n_prior_visits with has_history 0/1 in features.py (censoring artifact, D-058); retrain; rerun evaluate + D-038; refresh ml_results.md (1–14 window) | ML Eng | ✅ ACCEPTED Oct 12 (commit pending Ari OK) — MAE unchanged (Ridge 11.9, B0 12.3); hit 1–14 Ridge 37.6% vs B0 33.7% (+4.0, CI −4.0..+11.2 → ML ≈ B0); buffer Ridge 7; top SHAP now km_per_day_hist, past_late_share, one_way_km; D-038 gain +0.31 (CI +0.08..+0.58) → D-060; 340 tests pass |
+| 2.1b | notebooks/01_eda.ipynb filters on n_prior_visits → KeyError on rerun; one-line fix | ML Eng | LATER (before slide charts are regenerated) |
 | 3.1 | Labeling setup (Label Studio local, box + plate_type + plate_text) | CV Eng | ✅ DONE (export tested) |
 | 3.1c | Pre-label with pretrained detector (oim YOLOv9-t, thr 0.6) → import as predictions | CV Eng | ✅ DONE |
 | 3.1d | Ari checks boxes + types Cyrillic plate text | Ari | ✅ DONE — 183 labeled, 9 skipped, 135 trucks, 35 repeat trucks (83 photos), all 183 match 4 digits + 3 Cyrillic |
 | 3.2 | Vehicle-grouped split + YOLO fine-tune + eval vs pretrained oim | CV Eng | ✅ DONE — test (27 img / 20 trucks): yolo26n mAP50 0.991, P 0.93, R 1.00, 21.5 ms MPS; oim P 0.73 (10 false boxes) |
-| 3.3 | Recognition: pretrained OCR vs custom CNN — REDUCED scope (cut list #1): small CNN on character crops, same split.json | CV Eng | ▶ BRIEF ISSUED Oct 6 (pulled forward: 1.3 waits on Ari) |
+| 3.3 | Recognition: pretrained OCR vs custom CNN — REDUCED scope: small CNN on character crops, same split.json | CV Eng | ✅ DONE (commit 687f0e9) — EasyOCR vs custom char CNN, docs/cv_ocr_results.md + 2 figures. PM review of metrics pending (no handoff received) |
 | 3.4 | Normalization + confidence fallback (pulled forward: independent of synthetic data) | CV Eng | ✅ DONE Oct 6 — read_plate() + normalize_plate(); 21 letters seen; 183/183 labels pass format; 291 tests pass |
 | 4.1 | FastAPI skeleton + DB + migrations (decide: keep plain SQL or move to Alembic) | Backend Eng | ✅ DONE Oct 6 — src/api (config, db, /health 200/503), Dockerfile (310 MB, non-root), compose "api", requirements-api.txt; 130 tests pass locally |
 | 4.2 | Endpoints per contract (§8) — data endpoints only (lookup, services, vehicle card, segments); prediction field null until 4.3 | Backend Eng | ✅ DONE Oct 6 — 4 endpoints, plates.py (spaces/case only), contract docs/api_contract.md v0.2, 204 tests pass locally |
 | 4.2b | GET /destinations (dropdown, name_mn when 002 lands), lookup by fleet_no, case/space-insensitive company match, same-vehicle same-day duplicate guard (409 + force flag) | Backend Eng | ✅ DONE Oct 6 — api_contract v0.3, src/api/matching.py, 232 tests pass |
-| 4.3 | Model + CV serving | Backend Eng | TODO |
-| 4.4 | Segments + reminders. Small fixes: fleet_no matching ignores dashes (lookup + POST /services uses matching.py, not exact) | Backend Eng | TODO |
-| 5.1–5.3 | Streamlit skeleton + Recording mode + Lookup/vehicle card (prediction null-safe) — on iMac, branch `ui` (D-052) | Frontend (iMac) | ▶ BRIEF ISSUED Oct 10 |
+| 4.3 | Model + CV serving | Backend Eng | ✅ ACCEPTED Oct 12 (commit pending Ari OK) — prediction in card + GET /vehicles/{id}/prediction (method ridge/b1/b0, fallback_reason, model_version); POST /plates/recognize = yolo26n + char CNN, both ONNX/onnxruntime CPU, no torch in image; 27 test photos: 19/27 exact, 9 auto-filled correct, 18 → manual, 0 wrong auto-fills (= 3.3); recognize median 50 ms / p95 106 ms; RAM idle 190 MB, after use 308 MB; image 1.05 GB unpacked; contract v0.4; 469 tests pass |
+| 4.4 | Segments + reminders (D-065, D-066) + small fixes: fleet_no dash-insensitive; HEIC upload | Backend Eng | ✅ ACCEPTED Oct 12 (commit pending Ari OK) — GET /reminders/due, POST /reminders/{service_id}/sent (idempotent, table reminders_sent, migration 003); at_risk from served prediction; buffers from model files (ridge 7, B0 12, B1 1); message 130–135 chars; contract v0.5; 500 tests pass. Open: Ari approves message wording + real contact phone (D-068) |
+| 5.1–5.3 | Streamlit skeleton + Recording mode + Lookup/vehicle card — iMac, branch `ui` | Frontend (iMac) | ✅ ACCEPTED Oct 12 (commit to ui pending Ari OK) — Mongolian UI, HTTP-only; record (pre-fill, fresh odometer + destination, free-text destination + route, 409 → force); lookup by plate/phone/fleet no.; card null-safe; login via UI_PASSWORD; views/ not pages/ (login bypass found + regression test); 58 UI tests; verified in Chrome 390×844, no horizontal scroll |
+| 5.3b–5.4 + T5 | iMac queue: wire recognize + prediction (contract v0.5, multipart field = "file"), design v2, dashboard, quality + src/ui/Dockerfile | Frontend (iMac) | ▶ QUEUED Oct 12 |
 | 5.4 | Dashboard (segments, due list, reminders) | Frontend (iMac) | TODO (after 4.4) |
-| 6.1 | Docker + compose | Backend Eng | TODO |
-| 6.2 | CI/CD GitHub Actions (+ Postgres service so DB tests run in CI) | Backend Eng | TODO |
-| 6.3 | Cloud deploy + public URL (Supabase DB + backend host + Vercel) + schema_migrations table & apply script (D-041) | Backend Eng | TODO |
+| 4.5 | Demo seed (RISK-06) | Data Eng | ✅ ACCEPTED Oct 12 — 40 trucks / 105 services placed with the served model; as of seed day: new 8 / returning 11 / loyal 17 / at risk 4, due list 7, methods ridge 29 / b1 9 / b0 2; refuses non-empty DB; demo path in docs/demo_data.md; 532 tests pass |
+| 5.0 | UI design mockup (Design canvas, phone flow: login, home, record, search, card) — Ari + PM iterate, then addendum to iMac | PM + Ari | ▶ IN REVIEW (v2: modern look, simplified card) |
+| 6.1 | Deploy prep (host-agnostic): migration 004 (labels) + apply-missing-migrations script (D-041, D-069) + docker-compose.prod.yml (db + api + ui + Caddy HTTPS, models mount, export_serving step) + runbook docs/deploy.md | Backend Eng | ▶ BRIEF ISSUED Oct 12 (with 6.2) |
+| 6.2 | CI: Postgres service so DB tests run + requirements-ui.txt so UI screen tests run; build API image | Backend Eng | ▶ BRIEF ISSUED Oct 12 (with 6.1) |
+| 6.3 | Deploy: login + HTTPS + domain (D-061); host option A (free tiers split) or B (one VPS, docker compose) — Ari to choose; schema_migrations table & apply script (D-041) | Backend Eng | TODO — waits on Ari A/B |
 | 6.4 | Load test (P50/P95/P99) | Backend Eng | TODO |
 | 6.5 | TCO 3 tiers + ROI | PM + Ari | TODO |
 | 7.1 | 13-slide deck | PM + Ari | TODO |
@@ -136,9 +141,9 @@ Status: ✅ covered by plan · 🟡 covered but at risk · 🔴 gap — action n
 | D-005 | 2026-09-30 | Vehicle identifier has type: `plate` or `fleet_no` | Mine haul trucks may lack plates | Final |
 | D-006 | — | Primary ML target: `days_to_next_change` (regression). Mine-site vehicles may use engine hours → generator must support hour-based intervals | Date is what the reminder needs | APPROVED (PM, Oct 10 — used in 2.1–2.3a) |
 | D-007 | — | Status buckets: OK (> 14 days left), Due soon (0–14 days), Overdue (< 0). At risk = overdue + 7 days grace, no new record | Needed for F1 and segments | APPROVED as default (adjustable parameter; Ari may change later) |
-| D-008 | — | CV comparison: pretrained OCR vs small custom PyTorch CNN char classifier (both after YOLO detection) | Satisfies "custom CNN vs transfer learning" (R6) | PROPOSED |
+| D-008 | — | CV comparison: pretrained OCR vs small custom PyTorch CNN char classifier (both after YOLO detection) | Satisfies "custom CNN vs transfer learning" (R6) | IMPLEMENTED in 3.3 (EasyOCR vs char CNN) |
 | D-009 | — | Splits grouped by vehicle (no same truck in train and test), time-ordered for ML | Prevent leakage | APPROVED (PM, Oct 10 — used in 2.1–2.3a) |
-| D-010 | — | Reminder delivery for demo: generate message + mark "sent" + copy/share button; real SMS gateway = Later | Gateway cost/contract unknown | PROPOSED |
+| D-010 | — | Reminder delivery for demo: generate message + mark "sent" + copy/share button; real SMS gateway = Later | Gateway cost/contract unknown | APPROVED (PM, Oct 12 — D-066) |
 | D-011 | 2026-09-30 | Database = PostgreSQL. Local dev: Postgres in Docker. Cloud: Supabase, used ONLY for Postgres + Storage (photos). No Supabase Auth/auto-API; all logic in FastAPI via SQLAlchemy + standard connection string | Course grades FastAPI; stays portable to AWS (TCO tiers) | APPROVED by Ari |
 | D-012 | 2026-09-30 | Model line-up: Prediction = fixed-interval baseline, Linear/Ridge Regression, Random Forest, XGBoost + SHAP. CV = Ultralytics YOLO (smallest size) for detection; recognition compares pretrained OCR (EasyOCR or PaddleOCR) vs custom PyTorch CNN | Meets multi-model + custom-vs-transfer requirements | APPROVED by Ari (OCR Cyrillic support must be verified by CV Eng) |
 | D-013 | 2026-09-30 | Services: GitHub + GitHub Actions, Supabase, Docker, Colab/Kaggle (GPU training), Label Studio or CVAT (private labeling), backend host TBD in P6 (HF Spaces / Render — check current free-tier limits), Vercel (frontend), Open-Meteo (candidate external API), Locust (P99) | All free tier = MVP TCO tier | APPROVED by Ari (host choice open) |
@@ -179,27 +184,40 @@ Status: ✅ covered by plan · 🟡 covered but at risk · 🔴 gap — action n
 | D-048 | 2026-10-10 | 1.4 cleaning accepted: reuses plates/phone normalizers; missing values kept empty (never impute phones); destination alias → transliteration → fuzzy ≥ 0.8; duplicate = same plate + date (D-043), keep most complete; odometer plausibility ≤ 1,500 km/day [ESTIMATE], ×10/÷10 repair only if ≥5× off. Slide wording must say the 100% scores are on our OWN injected noise — real data will be harder | 1.4 handoff | APPROVED (PM) |
 | D-049 | 2026-10-10 | Baselines: official B1 uses 17,500 km (expected ACTUAL behavior, D-030) — we predict when the truck really returns; 15,000 km shown as sensitivity. B0 = median train interval. Reminder hit window 3–7 days early (default until Ari decides, D-036); buffer tuned on validation only | Fair baseline; 2.1–2.3a handoff | APPROVED (PM) |
 | D-050 | 2026-10-10 | If ML ≈ B0 on synthetic data: do NOT inflate generator variation to make ML win. Only calibrate generator to REAL repeat-truck intervals (1.4b): if real trucks are consistent per vehicle, raise per-vehicle variation to match real spread — documented before/after. Otherwise report "ML ≈ baseline on synthetic; value grows with real history" honestly | Integrity; RISK-03 | APPROVED (PM) |
-| D-051 | 2026-10-10 | Serving model = Ridge (not XGBoost): validation MAE tie (12.4 vs 12.5, within noise) → simplest wins; Ridge has best test MAE (11.9), no OpenMP/torch clash, tiny, explainable. XGBoost + RF stay in the comparison and SHAP. Reminder: "useful" window widened to 1–14 days early (PROPOSED, Ari to confirm) — 3–7 is narrower than the ±12-day error of any method; applied to ALL methods equally; buffer objective = maximize useful rate, ties → fewer late (late worse, D-036) | 2.3b handoff | APPROVED (PM); window PROPOSED |
+| D-051 | 2026-10-10 | Serving model = Ridge (not XGBoost): validation MAE tie (12.4 vs 12.5, within noise) → simplest wins; Ridge has best test MAE (11.9), no OpenMP/torch clash, tiny, explainable. XGBoost + RF stay in the comparison and SHAP. Reminder: "useful" window widened to 1–14 days early (PROPOSED, Ari to confirm) — 3–7 is narrower than the ±12-day error of any method; applied to ALL methods equally; buffer objective = maximize useful rate, ties → fewer late (late worse, D-036) | 2.3b handoff | APPROVED (PM); window APPROVED by Ari Oct 12 (D-054) |
 | D-052 | 2026-10-10 | Two devices: Mac = ML/backend/data on `main`; iMac (separate Claude account) = Streamlit frontend on branch `ui`, merged to main by GitHub PR after PM accepts. iMac owns only src/ui/, tests/test_ui*, docs/ui_*, requirements-ui.txt; never edits PROJECT_STATE/CLAUDE.md/requirements.txt. UI talks to backend only via docs/api_contract.md. One PM chat for both. Context file: docs/IMAC_BRIEFING.md. Private data copied by hand (AirDrop/USB), never via git | Ari works on 2 Macs | APPROVED by Ari |
+| D-053 | 2026-10-12 | Branch fix: remote `origin/UI` (capital U, 0 own commits) is deleted; frontend branch is lowercase `ui`, created from current main. Reason: macOS file system is case-insensitive → `UI` and `ui` refs can collide | Status check Oct 12 | APPROVED (PM) |
+| D-054 | 2026-10-12 | D-051 reminder "useful" window = 1–14 days before actual due date, applied to all methods equally | Ari confirmed | APPROVED by Ari |
+| D-055 | 2026-10-12 | Re-plan §3 v2.3: Oct 14 cut checkpoint, Oct 16 feature freeze. Commit rule: tests + commit + push before every handoff (2.4 found uncommitted; 1.2a draft was lost before) | 8 days left | APPROVED (PM) |
+| D-056 | 2026-10-12 | Frontend stays in src/ui/ (IMAC_BRIEFING, D-052); empty frontend/ folder (Next.js placeholder) removed or ignored. §8 tree updated | Repo matches plan | APPROVED (PM) |
+| D-057 | 2026-10-12 | 2.4 accepted: Ridge = serving model (models/next_change_model.joblib, buffer 9 days, retuned in 2.4b); shap==0.51.0 (0.52+ needs Py ≥3.12, D-020); status truth = actual next visit, checked every 7 days until +14 [ESTIMATE]; "B1 refit" (a·B1+b on train) added as fair route-formula reference; example truck shown anonymously | 2.4 handoff | APPROVED (PM) |
+| D-058 | 2026-10-12 | n_prior_visits removed from features → has_history (0/1). Reason: top SHAP feature is a split-cutoff censoring artifact (r +0.68 with service date, r 0.04 with true truck pace); in real use it would wrongly shorten predictions for loyal trucks. Target censoring near the cutoff stays as a stated limitation (affects all methods) | 2.4 handoff | APPROVED (PM) |
+| D-059 | 2026-10-12 | D-038: Ridge beats B1 refit by +0.43 d (CI +0.18..+0.71) with variation OFF; tolerance 0.5 [ESTIMATE] is NOT changed. Gap explained by season + destination averages + n_prior_visits, no leak found. Rerun after 2.4b; whatever the result, it is reported as-is on slide 6 | Integrity (D-050) | APPROVED (PM) |
+| D-060 | 2026-10-12 | D-038 after 2.4b: Ridge gain over B1 refit +0.31 d (CI +0.08..+0.58) with variation OFF; upper end above 0.5 tolerance (unchanged). Ridge vs 3-input linear fit +0.10 (+0.01..+0.21) → gap explained by legitimate inputs (season, destination, has_history), no leak. ACCEPTED with this explanation; slide 6 shows the numbers and the tolerance as-is. has_history r +0.48 with service date on train, effect small (0.38 d) → watch on real data | 2.4b handoff | APPROVED (PM) |
+| D-061 | 2026-10-12 | Product form: internal website for Geo-Expert only, on a server, opened in the phone browser; no native app (cost). Needs login (company password; API not exposed publicly) and HTTPS + domain (browser camera requires HTTPS). Hosting: A) free tiers split or B) one small VPS running docker compose (PM recommends B: no cold start, data in one place, reused after capstone) | Ari Oct 12 | APPROVED by Ari (form); host A/B PENDING |
+| D-062 | 2026-10-12 | Destination spellings confirmed by Ari: Замын-Үүд, Эрээн, Бээжин, Алтанбулаг, Хиагт → 1.1c unblocked. Waiting 0–5 days/trip (incl. MN–Russia) stays [ESTIMATE, unverified] — Ari unsure; stated as assumption on slides | Ari Oct 12 | APPROVED by Ari |
+| D-063 | 2026-10-12 | Cut #4 applied: 1.4b + 2.5 cut — repeat-truck photo dates cannot be recovered from Messenger. No real-interval test before defense. Slides: "model trained and tested on synthetic data; ML ≈ B0; real validation starts once the system records dated services (date is automatic in the app)". Real data still used: 183 real photos (detector + OCR), 338-truck Excel registry (messy-data profiling, R1) | Ari Oct 12 | APPROVED (PM + Ari) |
+| D-064 | 2026-10-12 | Hosting decision (A/B, provider) parked until 6.3 at Ari's request; PM raises it then. ROI (6.5) built as a scenario from D-031 return estimates (50% on time / 40% late / 10% never) + Ari's typical price/margin per oil change, all labelled [ESTIMATE] — no historical data exists | Ari Oct 12 | APPROVED by Ari |
+| D-065 | 2026-10-12 | 4.3 accepted: recognizer = custom char CNN (70.4% exact vs EasyOCR 33.3%, 1.2 MB vs 98 MB) → R6 answered (custom CNN beats transfer OCR on our data). Detector + CNN served as ONNX on CPU (no torch). Fallback order: route not MN–CN/MN–RU → b0; destination_raw only → b0 (also on first visit); no destination → b0; first visit → b1; else ridge; min 1 day. model_version = name + 8 hex of SHA-256. status/days_left use the predicted date WITHOUT buffer; buffer only decides the reminder send date (4.4). API starts without model files (prediction null, model endpoints 503). Photos not stored. Confidence threshold 0.6 stays (tuning on test = leak); 2/3 of photos go to manual confirm, 0 wrong auto-fills → slide: "never fills a wrong plate" | 4.3 handoff | APPROVED (PM) |
+| D-066 | 2026-10-12 | Reminders (D-010 accepted): app generates the Mongolian message (plate, last change date, oil used, Geo-Expert contact from config) + "mark sent" + copy/share button; no SMS gateway (Later). Send date = predicted_date − per-method buffer (ridge 7, b0 12, b1 1 days; from docs/ml_evaluation.md). One reminder per (vehicle, latest service); marking sent twice is idempotent. Recipient = phone on the latest service record (D-004) | Plan 4.4 | APPROVED (PM) |
+| D-067 | 2026-10-12 | Server sizing input (for 6.3, decision still parked D-064): API uses ~190–310 MB RAM, image 1.05 GB unpacked; with Postgres + Streamlit a 2 GB server is likely enough — confirm in 6.3 after UI is measured | 4.3 metrics | NOTED |
+| D-068 | 2026-10-12 | 4.4 accepted: reminder id = vehicle's newest service id (UNIQUE service_id; newer service → 409 not_latest_service); new table reminders_sent (old reminders/predictions tables untouched); B0/B1 buffers tuned on train validation in export_serving; segments in API from served prediction (SQL function = fallback); due list = send_on ≤ as_of and not sent, no age limit — at_risk trucks STAY on the list and the UI (5.4) shows them in a separate "Алдагдах эрсдэлтэй" group (no backend change); contact = env GEO_EXPERT_NAME / GEO_EXPERT_PHONE (real number only in .env, never committed). SMS length (UCS-2, ~2 SMS) irrelevant until a gateway exists (Later) | 4.4 handoff | APPROVED (PM); message wording PENDING Ari |
+| D-069 | 2026-10-12 | Migration order: 003 applied before 002 → the D-041 apply script (6.3) must apply EVERY missing version from schema_migrations, not only versions above the max. Deploy runbook must run `python -m src.ml.export_serving` and mount ./models (else prediction 503) | 4.4 handoff | APPROVED (PM) |
+| D-070 | 2026-10-12 | 5.1–5.3 accepted. Corrections for T2: POST /plates/recognize multipart field is "file" (not "image", contract v0.4); prediction shape = contract v0.4/v0.5 (method, fallback_reason, model_version, predicted_date, days_left, status) — read the contract, don't assume. service_date never sent by UI (API default = today UB). Photo never uploaded except to recognize, never stored. Segment labels: Ari to choose (short: Шинэ / Давтан / Байнгын / Эрсдэлтэй) | 5.1–5.3 handoff | APPROVED (PM); labels PENDING Ari |
+| D-071 | 2026-10-12 | 1.1c + 4.5 accepted: name_mn nullable + unique; UI shows name when name_mn empty; seed dates placed with the served Predictor (seed and API agree); seed refuses a non-empty DB; 2 at-risk trucks pre-marked sent; demo oil grades/liters are placeholders. Demo goes stale daily → the CLOUD DB is seeded with --as-of 2026-10-20 (defense day) so no re-seed is needed on the day; local dev re-seeds as needed. Live demo path: 1001 УБА (loyal) → 1002 УБЕ (overdue + reminder) → 1003 УНА (first visit, B1) → phone 0000 0009 (2 trucks) | 1.1c + 4.5 handoff | APPROVED (PM) |
 
 ---
 
 ## 6. Open questions
 
-1. ~~Deadline~~ → Oct 20. ~~Instructor~~ → synthetic OK.
-2. Do the photo plates match the Excel records? ("maybe" — check during 1.4a / 3.1)
-3. How many real past service records exist, and in what form?
-4. How many truck photos can Ari collect per week? Any fleet-number-only trucks available to photograph?
-5. ~~Interval rules~~ → D-030. Still open: does oil grade change the interval? (else drop, D-034)
-10. Destination table: main destinations + real round-trip days incl. waiting (Ari) + one-way km from a real map source. Replaces "trips per month" estimate (D-031)
-11. Reminder window: how many days before due date is ideal? (D-036)
-12. Do repeat-truck photos show odometer, or dates only? (decides if real test can use km)
-6. Hosting budget: free tiers only, or small paid? (Default now: free tiers, D-013)
-7. Which Cyrillic letters actually appear on Mongolian plates (to be verified from real photos, not assumed).
-8. Status thresholds for D-007.
-9. Frontend: keep Next.js, or accept Streamlit/Gradio if behind schedule?
-
----
+1. Spellings Замын-Үүд, Эрээн, Бээжин, Алтанбулаг, Хиагт + destination aliases — Ari ✓/✗ (blocks 1.1c; cut #5 if no answer by Oct 14)
+2. Waiting days 0–5 for MN–Russia routes — Ari ✓/✗ or own range (config only; cheap to change)
+3. Does oil grade change the interval? (else stays out, D-034)
+4. ~~Recognizer~~ → char CNN (D-065). Open: requirements.txt pins both opencv-python and -headless (works; clean up post-defense)
+5. Did 1.2a call the OSRM API (counts as R1 external API) or copy distances by hand?
+6. Hosting A (free tiers split) or B (one VPS, docker compose) — Ari decides (D-061); price both in 6.5
+7. ROI inputs from Ari (by Oct 17): typical price of one oil change service + rough margin % — estimates OK (D-064)
+8. Reminder consent statement for drivers (R15)
 
 ## 7. Risks
 
@@ -214,9 +232,14 @@ Status: ✅ covered by plan · 🟡 covered but at risk · 🔴 gap — action n
 | RISK-07 | Live demo fails (network, cloud cold start) | Med | High | Warm up URL before defense; backup video; demo on known-good plate photos |
 | RISK-09 | Licensing: Ultralytics YOLO is AGPL-3.0; pre-label weights license unstated. Fine for capstone; Geo-Expert production use may need Ultralytics commercial license or a permissive alternative | Med | Med | Decide after defense; document in model card |
 | RISK-11 | Detector baseline comparison biased: GT boxes started as oim pre-labels → oim mAP50-95/IoU inflated (0.97/0.997). Compare on precision/false boxes, state on slide | — | Low | Stated in docs/cv_detection_results.md |
-| RISK-10 | Real prediction test set is tiny (repeat trucks only, dates entered manually) | High | Med | Report honestly; add photos_new over time; synthetic holdout as main metric |
+| RISK-10 | No real prediction test set (D-063) | HIT | Med | Report honestly; synthetic holdout = main metric; real validation = post-defense from app-recorded dates |
 | RISK-13 | ML may not beat B0: synthetic history features weak (|r| ≤ 0.16), noise large vs per-vehicle signal | High | HIT (2.3b: ML ≈ B0) | D-050: calibrate to real 1.4b intervals (Ari dates = now critical); honest reporting; buffer tuning improves business metric |
 | RISK-12 | Critical path blocked on Ari inputs A1–A4 | — | HIT | Resolved by D-045 (ranges). ML starts ~Oct 11 → 9 days left; cut list active if 2.x slips past Oct 14 |
+| RISK-16 | UI not started (iMac parked) with 8 days left; demo impossible without it | High | High | Start 5.1–5.3 by Oct 14 at the latest; if iMac stays parked, Mac runs it after 4.3 and 5.4 is cut |
+| RISK-17 | iPhone HEIC photos rejected (422) → recording fails on phone | Med | High | 4.4 adds pillow-heif; test camera upload on a real phone in 5.x |
+| RISK-18 | Repo PROJECT_STATE still v2.2 → every Claude Code session misses D-053+ (seen in 2.4b, 4.3, 4.4 handoffs) | HIT | Med | Ari commits the latest PROJECT_STATE before the next session |
+| RISK-14 | Uncommitted work lost or untested (2.4 found untracked; 1.2a draft lost before) | Med | High | Commit rule D-055: tests + commit + push before every handoff |
+| RISK-15 | Critical path: 4.3 → 4.4 → 6.3 not started with 8 days left | High | High | Mac does only critical path; Oct 14 cut checkpoint; feature freeze Oct 16 |
 | RISK-08 | Plate letters misread (Cyrillic/Latin look-alikes) | High | Med | Normalization map + format regex + confirmation step |
 
 ---
@@ -232,8 +255,8 @@ oil-change-predictor/
 │   ├── data/        # generator.py, cleaning.py, external_api.py
 │   ├── ml/          # train.py, evaluate.py, explain.py
 │   ├── cv/          # detect.py, recognize.py, cnn_char.py
-│   └── api/         # main.py, routers/, db.py, models.py, schemas.py
-├── frontend/        # Next.js app
+│   ├── api/         # main.py, routers/, db.py, models.py, schemas.py
+│   └── ui/          # Streamlit app (iMac, branch ui)
 ├── notebooks/       # EDA, experiments (numbered)
 ├── models/          # artifacts (git-ignored; versioned by name)
 ├── tests/
@@ -277,7 +300,7 @@ oil-change-predictor/
 ---
 
 ## 10. Later list (not in scope unless Ari approves)
-- Next.js production frontend (if D-022 approved)
+- Next.js production frontend (post-capstone, D-022)
 - Real SMS / Viber gateway integration
 - Automated data drift monitoring + continuous training
 - Oil lab report analysis
