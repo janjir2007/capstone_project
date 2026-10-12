@@ -1,0 +1,292 @@
+"""Pure helpers for the Streamlit screens: Mongolian labels, form pre-fill,
+request payload, error messages. No Streamlit, no network — easy to test.
+
+Business rules are enforced by the API (docs/api_contract.md). The checks in
+`build_service_payload` only catch obvious gaps early, with a Mongolian
+message; the API stays the source of truth. Plate and phone normalization are
+NOT repeated here (they live in the backend / src/common/plates.py).
+"""
+
+from typing import Any
+
+# --- Labels (UI text in Mongolian) ------------------------------------------
+
+SEGMENT_LABELS: dict[str, str] = {
+    "new": "Шинэ",
+    "returning": "Давтан",
+    "loyal": "Байнгын",
+    "at_risk": "Эрсдэлтэй",
+}
+# st.badge colors
+SEGMENT_COLORS: dict[str, str] = {
+    "new": "blue",
+    "returning": "green",
+    "loyal": "violet",
+    "at_risk": "red",
+}
+
+ROUTE_LABELS: dict[str, str] = {
+    "ub_city": "Улаанбаатар хот",
+    "mn_china": "Монгол – Хятад",
+    "mn_russia": "Монгол – Орос",
+    "mine_site": "Уурхай",
+    "mixed": "Холимог",
+}
+
+IDENTIFIER_TYPE_LABELS: dict[str, str] = {
+    "plate": "Улсын дугаар",
+    "fleet_no": "Парк дугаар",
+}
+
+PREDICTION_STATUS_LABELS: dict[str, str] = {
+    "ok": "Хэвийн",
+    "due_soon": "Удахгүй",
+    "overdue": "Хугацаа хэтэрсэн",
+}
+
+PREDICTION_PENDING = "Таамаглал удахгүй нэмэгдэнэ"
+NOT_GIVEN = "—"
+
+# Known English API validation messages -> Mongolian (substring match).
+API_MESSAGES_MN: dict[str, str] = {
+    "odometer_km or engine_hours": "Гүйлт (км) эсвэл моторын цагийн аль нэгийг оруулна уу.",
+    "exactly one of destination_id or destination_raw": "Очих газраа сонгоно уу.",
+    "route is required": "Жагсаалтад байхгүй газарт маршрутын төрөл сонгоно уу.",
+    "phone must be 8 digits": "Утасны дугаар 8 оронтой байх ёстой.",
+    "company_name is required": "Компанийн нэр (эсвэл эзэмшигч) заавал оруулна.",
+    "is in the future": "Ирээдүйн огноо оруулах боломжгүй.",
+    "does not exist": "Сонгосон газар олдсонгүй. Жагсаалтыг дахин ачаална уу.",
+    "conflicts with destination": "Маршрут нь сонгосон газартай таарахгүй байна.",
+}
+
+
+def segment_label(segment: str | None) -> str:
+    """Mongolian name of a segment; '—' when unknown/null."""
+    return SEGMENT_LABELS.get(segment or "", NOT_GIVEN)
+
+
+def route_label(route: str | None) -> str:
+    """Mongolian name of a route category; '—' when null."""
+    return ROUTE_LABELS.get(route or "", NOT_GIVEN)
+
+
+def destination_label(dest: dict | None) -> str:
+    """Name to show for a destination: name_mn if present (D-040), else name."""
+    if not dest:
+        return NOT_GIVEN
+    return dest.get("name_mn") or dest.get("name") or NOT_GIVEN
+
+
+def service_destination_text(service: dict) -> str:
+    """Where the truck went after this service: list destination, free text, or route."""
+    if service.get("destination"):
+        return destination_label(service["destination"])
+    if service.get("destination_raw"):
+        return service["destination_raw"]
+    return route_label(service.get("route"))
+
+
+def format_number(value: float | int | None, unit: str = "") -> str:
+    """'205000' -> '205 000 км'; drops '.0'; None -> '—'."""
+    if value is None:
+        return NOT_GIVEN
+    if float(value).is_integer():
+        text = f"{int(value):,}".replace(",", " ")
+    else:
+        text = f"{value:,.1f}".replace(",", " ")
+    return f"{text} {unit}".strip()
+
+
+def service_meter_text(service: dict) -> str:
+    """Odometer and/or engine hours of one service, e.g. '205 000 км · 1 200 мц'."""
+    parts = []
+    if service.get("odometer_km") is not None:
+        parts.append(format_number(service["odometer_km"], "км"))
+    if service.get("engine_hours") is not None:
+        parts.append(format_number(service["engine_hours"], "мц"))
+    return " · ".join(parts) or NOT_GIVEN
+
+
+def service_line(service: dict) -> str:
+    """One compact history line that fits a ~390 px phone screen."""
+    return " · ".join(
+        [
+            service.get("service_date", NOT_GIVEN),
+            service_meter_text(service),
+            f"{service.get('oil_grade', NOT_GIVEN)} {format_number(service.get('liters'), 'л')}",
+            service_destination_text(service),
+        ]
+    )
+
+
+def prediction_text(prediction: dict | None) -> str:
+    """Card text for the prediction. null (until task 4.3) -> 'coming soon' message.
+
+    Expected shape when present (PROJECT_STATE §8):
+    {predicted_date, days_left, status, model_version}. Missing keys are skipped.
+    """
+    if not prediction:
+        return PREDICTION_PENDING
+    parts = []
+    if prediction.get("predicted_date"):
+        parts.append(f"Дараагийн солилт: {prediction['predicted_date']}")
+    if prediction.get("days_left") is not None:
+        parts.append(f"{prediction['days_left']} хоног үлдсэн")
+    if prediction.get("status"):
+        parts.append(PREDICTION_STATUS_LABELS.get(prediction["status"], prediction["status"]))
+    return " · ".join(parts) or PREDICTION_PENDING
+
+
+# --- Recording form ----------------------------------------------------------
+
+# Keys of the recording form in st.session_state (prefix avoids clashes).
+FORM_FIELDS = (
+    "company_name",
+    "vehicle_model",
+    "odometer_km",
+    "engine_hours",
+    "oil_grade",
+    "liters",
+    "destination_id",
+    "destination_raw",
+    "route",
+    "driver_name",
+    "driver_phone",
+)
+OTHER_DESTINATION = -1  # sentinel option: "not in the list" -> free text + route
+
+
+def empty_form() -> dict[str, Any]:
+    """Blank form values for a new vehicle."""
+    return {name: None for name in FORM_FIELDS}
+
+
+def prefill_from_card(card: dict | None) -> dict[str, Any]:
+    """Form values for an existing vehicle, from its last service.
+
+    Pre-filled: oil grade, liters, driver, phone (scope §1). Liters fall back to
+    usual_liters. NOT pre-filled (always fresh, D-033): odometer, engine hours,
+    destination. Company / model are shown but ignored by the API for an
+    existing plate vehicle.
+    """
+    form = empty_form()
+    if not card:
+        return form
+    form["company_name"] = (card.get("company") or {}).get("name")
+    form["vehicle_model"] = card.get("vehicle_model")
+    last = card.get("last_service") or {}
+    form["oil_grade"] = last.get("oil_grade")
+    form["liters"] = last.get("liters") if last.get("liters") is not None else card.get("usual_liters")
+    form["driver_name"] = last.get("driver_name")
+    form["driver_phone"] = last.get("driver_phone")
+    return form
+
+
+def _clean(value: Any) -> Any:
+    """Strip strings; blank string -> None."""
+    if isinstance(value, str):
+        value = value.strip()
+        return value or None
+    return value
+
+
+def build_service_payload(
+    identifier_type: str,
+    identifier: str | None,
+    is_new_vehicle: bool,
+    form: dict[str, Any],
+    oil_changer: str | None = None,
+) -> tuple[dict[str, Any], list[str]]:
+    """Turn form values into a POST /services body.
+
+    Returns (payload, errors). `errors` holds Mongolian messages; when it is
+    not empty, do not send the payload. service_date is not sent: the API
+    uses today in Ulaanbaatar (scope §1 "date automatic").
+    """
+    errors: list[str] = []
+    identifier = _clean(identifier)
+    company = _clean(form.get("company_name"))
+    oil_grade = _clean(form.get("oil_grade"))
+    liters = form.get("liters")
+    odometer = form.get("odometer_km")
+    hours = form.get("engine_hours")
+    dest_id = form.get("destination_id")
+    dest_raw = _clean(form.get("destination_raw"))
+    route = form.get("route")
+
+    if not identifier:
+        errors.append("Улсын дугаар эсвэл парк дугаараа оруулна уу.")
+    needs_company = is_new_vehicle or identifier_type == "fleet_no"
+    if needs_company and not company:
+        errors.append("Компанийн нэр (эсвэл эзэмшигч) оруулна уу.")
+    if odometer is None and hours is None:
+        errors.append("Гүйлт (км) эсвэл моторын цагийн аль нэгийг оруулна уу.")
+    if not oil_grade:
+        errors.append("Тосны төрөл оруулна уу.")
+    if liters is None or liters <= 0:
+        errors.append("Литр 0-ээс их байх ёстой.")
+    if dest_id is None:
+        errors.append("Дараа нь хаашаа явахыг сонгоно уу.")
+    elif dest_id == OTHER_DESTINATION:
+        if not dest_raw:
+            errors.append("Очих газрын нэрийг бичнэ үү.")
+        if not route:
+            errors.append("Маршрутын төрөл сонгоно уу.")
+
+    payload: dict[str, Any] = {
+        "identifier_type": identifier_type,
+        "identifier": identifier,
+        "oil_grade": oil_grade,
+        "liters": round(float(liters), 1) if liters is not None else None,
+    }
+    if needs_company:
+        payload["company_name"] = company
+    if is_new_vehicle and _clean(form.get("vehicle_model")):
+        payload["vehicle_model"] = _clean(form.get("vehicle_model"))
+    if odometer is not None:
+        payload["odometer_km"] = int(odometer)
+    if hours is not None:
+        payload["engine_hours"] = round(float(hours), 1)
+    if dest_id == OTHER_DESTINATION:
+        payload["destination_raw"] = dest_raw
+        payload["route"] = route
+    elif dest_id is not None:
+        payload["destination_id"] = int(dest_id)
+    for name in ("driver_name", "driver_phone"):
+        if _clean(form.get(name)):
+            payload[name] = _clean(form.get(name))
+    if _clean(oil_changer):
+        payload["oil_changer"] = _clean(oil_changer)
+    return payload, errors
+
+
+# --- Errors ------------------------------------------------------------------
+
+def _translate(message: str) -> str:
+    for needle, mongolian in API_MESSAGES_MN.items():
+        if needle in message:
+            return mongolian
+    return message
+
+
+def error_messages(status: int, detail: Any) -> list[str]:
+    """Mongolian messages for an API error (ApiError.status / .detail).
+
+    422 detail is a list of pydantic errors or a plain string; known English
+    messages are translated, unknown ones shown as they are.
+    """
+    if status == 0:
+        return ["Сервертэй холбогдож чадсангүй. Интернэт болон API-г шалгана уу."]
+    if status == 404:
+        return ["Олдсонгүй."]
+    if status == 409:
+        return ["Мэдээлэл давхцлаа, юу ч хадгалагдаагүй. Дахин оролдоно уу."]
+    if status == 422:
+        if isinstance(detail, list):
+            msgs = []
+            for item in detail:
+                msg = str(item.get("msg", item)) if isinstance(item, dict) else str(item)
+                msgs.append(_translate(msg.removeprefix("Value error, ")))
+            return list(dict.fromkeys(msgs)) or ["Буруу мэдээлэл."]
+        return [_translate(str(detail))]
+    return [f"Серверийн алдаа ({status}). Дахин оролдоно уу."]
