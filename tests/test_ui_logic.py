@@ -200,7 +200,7 @@ def test_payload_new_vehicle() -> None:
         "identifier": "0001 ТЕС",
         "oil_grade": "15W-40",
         "liters": 28.5,
-        "company_name": "Туршилт   ХХК",  # inner spacing is cleaned by the API
+        "company_name": "Тодорхойгүй",  # T8: new plate vehicle -> default, typed value ignored
         "vehicle_model": "Howo A7",
         "odometer_km": 120000,
         "destination_id": 2,
@@ -208,6 +208,17 @@ def test_payload_new_vehicle() -> None:
     }
     assert "oil_changer" not in payload  # T6: field removed (optional in the contract)
     assert "service_date" not in payload  # API uses today (Ulaanbaatar)
+
+
+def test_payload_new_fleet_no_sends_typed_company() -> None:
+    payload, errors = logic.build_service_payload("fleet_no", "HT-12", True, _filled())
+    assert errors == []
+    assert payload["company_name"] == "Туршилт   ХХК"  # inner spacing is cleaned by the API
+
+
+def test_payload_new_fleet_no_requires_company() -> None:
+    _, errors = logic.build_service_payload("fleet_no", "HT-12", True, _filled(company_name=" "))
+    assert "Компанийн нэр (эсвэл эзэмшигч) оруулна уу." in errors
 
 
 def test_payload_existing_plate_omits_company_and_model() -> None:
@@ -242,7 +253,9 @@ def test_payload_engine_hours_only() -> None:
 
 def test_payload_errors_for_empty_form() -> None:
     _, errors = logic.build_service_payload("plate", "  ", True, logic.empty_form())
-    assert len(errors) == 6  # identifier, company, meter, oil, liters, destination
+    assert len(errors) == 5  # identifier, meter, oil, liters, destination (plate: company is automatic, T8)
+    _, errors = logic.build_service_payload("fleet_no", "  ", True, logic.empty_form())
+    assert len(errors) == 6  # + company (fleet number)
 
 
 def test_payload_other_destination_needs_name_and_route() -> None:

@@ -11,7 +11,8 @@ Steps (st.session_state["rec_step"]):
   destination pills (GET /destinations, «Бусад» -> text + route, D-039) — always fresh
   (D-033) — and oil grade as 3 tap options + «Бусад» (default = last service, else 15W-40);
   card 2 = existing truck: «Өмнөхөөс авсан» (liters · driver · phone) + «Засах»;
-  new truck: company (required, D-042), model (list + «Бусад»), liters, driver, phone.
+  new truck: company only in fleet-number mode (T8; a new plate vehicle is sent with
+  company «Тодорхойгүй», D-042), model (list + «Бусад»), liters, driver, phone.
   «Хадгалах» -> POST /services; 409 duplicate -> «Ингээд хадгалах» (force=true).
 - success: «Хадгалагдлаа» -> «Дараагийн машин» / «Машины карт үзэх».
 
@@ -327,8 +328,9 @@ elif step == "form" and checked:
     with st.container(key="card_prev"):
         if is_new:
             st.markdown('<div class="sec">Шинэ машин</div>', unsafe_allow_html=True)
-            st.text_input("Компани / эзэмшигч", key="f_company_name",
-                          help="Хувь хүн бол эзэмшигчийн нэр")
+            if is_fleet:  # T8: only fleet numbers need a company (unique per company); plates get the default
+                st.text_input("Компани / эзэмшигч", key="f_company_name",
+                              help="Хувь хүн бол эзэмшигчийн нэр")
             st.selectbox("Машины загвар", options=logic.model_options(st.session_state.get("rec_model_seed")),
                          index=None, placeholder="Хайх эсвэл сонгох", key="f_model_choice")
             if st.session_state.get("f_model_choice") == logic.OTHER_CHOICE:

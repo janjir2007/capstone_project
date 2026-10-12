@@ -390,6 +390,12 @@ def _clean(value: Any) -> Any:
     return value
 
 
+# T8 (Ari): no company field for plate vehicles. A NEW plate vehicle gets this value because the
+# API still requires company_name for new vehicles (D-042). Backend may make company_name
+# optional later -> then remove this default and send nothing.
+UNKNOWN_COMPANY = "Тодорхойгүй"
+
+
 def build_service_payload(
     identifier_type: str,
     identifier: str | None,
@@ -399,12 +405,15 @@ def build_service_payload(
     """Turn form values into a POST /services body.
 
     Returns (payload, errors). `errors` holds Mongolian messages; when it is
-    not empty, do not send the payload. service_date is not sent: the API
+    not empty, do not send the payload. Company: new plate vehicle -> UNKNOWN_COMPANY; new or
+    existing fleet number -> the typed / chosen company (fleet numbers are unique per company). service_date is not sent: the API
     uses today in Ulaanbaatar (scope §1 "date automatic").
     """
     errors: list[str] = []  # oil_changer is not sent (T6: field removed; optional in the contract)
     identifier = _clean(identifier)
     company = _clean(form.get("company_name"))
+    if is_new_vehicle and identifier_type == "plate":
+        company = UNKNOWN_COMPANY  # field hidden for plates (T8); fleet numbers still type it
     oil_grade = _clean(form.get("oil_grade"))
     liters = form.get("liters")
     odometer = form.get("odometer_km")

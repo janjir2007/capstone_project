@@ -253,10 +253,11 @@ def to_form(at: AppTest, plate: str, kind: str = "plate") -> AppTest:
     return click(type_plate(at, plate, kind), "Зөв, үргэлжлүүлэх")
 
 
-def fill_new_vehicle(at: AppTest, company: str = "Туршилт Тээвэр ХХК") -> AppTest:
+def fill_new_vehicle(at: AppTest, company: str | None = None) -> AppTest:
     at.number_input(key="f_odometer_km").set_value(120000)
     at.pills(key="f_destination_id").set_value(2)
-    at.text_input(key="f_company_name").set_value(company)
+    if company is not None:  # the field exists only in fleet-number mode (T8)
+        at.text_input(key="f_company_name").set_value(company)
     at.selectbox(key="f_model_choice").set_value("Foton Auman")
     at.number_input(key="f_liters").set_value(28.5)
     at.text_input(key="f_driver_name").set_value("Тест Б.")
@@ -348,7 +349,7 @@ def test_new_vehicle_full_flow(fake_api) -> None:
     assert force is False
     assert body == {
         "identifier_type": "plate", "identifier": "0001 ТЕС", "oil_grade": "15W-40", "liters": 28.5,
-        "company_name": "Туршилт Тээвэр ХХК", "vehicle_model": "Foton Auman", "odometer_km": 120000,
+        "company_name": "Тодорхойгүй", "vehicle_model": "Foton Auman", "odometer_km": 120000,
         "destination_id": 2, "driver_name": "Тест Б.", "driver_phone": "99110099",
     }
     assert step(at) == "success"
@@ -377,8 +378,25 @@ def test_new_vehicle_defaults_and_hidden_fields(fake_api) -> None:
     at = to_form(run_app(RECORD), "0001 ТЕС")
     assert at.session_state["f_oil_choice"] == "15W-40"                # default oil grade
     assert at.pills(key="f_oil_choice").options == ["15W-40", "10W-40", "20W-50", "Бусад"]
-    assert at.text_input(key="f_company_name")                          # new truck: company shown
+    assert "Компани / эзэмшигч" not in [w.label for w in at.text_input]  # plate: no company field (T8)
     assert "Volvo FH" in at.selectbox(key="f_model_choice").options
+
+
+def test_new_fleet_vehicle_asks_company_and_sends_it(fake_api) -> None:
+    """T8: «Дугааргүй машин» mode keeps the company field (fleet numbers are unique per company)."""
+    at = to_form(run_app(RECORD), "HT-99", kind="fleet_no")
+    assert "Компани / эзэмшигч" in [w.label for w in at.text_input]
+    at.number_input(key="f_engine_hours").set_value(500.0)
+    at = click(fill_new_vehicle(at, company="Уурхай В ХХК"), "Хадгалах")
+    body, _ = fake_api.posts[-1]
+    assert (body["identifier_type"], body["company_name"]) == ("fleet_no", "Уурхай В ХХК")
+
+
+def test_new_fleet_vehicle_without_company_is_blocked(fake_api) -> None:
+    at = to_form(run_app(RECORD), "HT-99", kind="fleet_no")
+    at = click(fill_new_vehicle(at, company=""), "Хадгалах")
+    assert "Компанийн нэр (эсвэл эзэмшигч) оруулна уу." in texts(at.error)
+    assert fake_api.posts == []
 
 
 def test_existing_vehicle_hides_company_and_model(fake_api) -> None:
@@ -397,7 +415,6 @@ def test_other_oil_grade_and_other_model_saved_as_typed(fake_api) -> None:
     at = to_form(run_app(RECORD), "0001 ТЕС")
     at.number_input(key="f_odometer_km").set_value(1000)
     at.pills(key="f_destination_id").set_value(1)
-    at.text_input(key="f_company_name").set_value("Туршилт ХХК")
     at.number_input(key="f_liters").set_value(30.0)
     at.pills(key="f_oil_choice").set_value("Бусад")
     at.selectbox(key="f_model_choice").set_value("Бусад").run()
@@ -451,7 +468,8 @@ def test_wrong_plate_goes_back_to_edit(fake_api) -> None:
 
 def test_empty_form_shows_mongolian_errors_and_sends_nothing(fake_api) -> None:
     at = click(to_form(run_app(RECORD), "0001 ТЕС"), "Хадгалах")
-    assert "Компанийн нэр (эсвэл эзэмшигч) оруулна уу." in texts(at.error)  # new truck: company required (D-042)
+    assert texts(at.error)                                                 # Mongolian messages
+    assert "Компанийн нэр (эсвэл эзэмшигч) оруулна уу." not in texts(at.error)  # plate: company automatic (T8)
     assert fake_api.posts == []
 
 
@@ -655,7 +673,7 @@ def test_save_then_find_by_plate_and_phone(fake_api) -> None:
     assert '<span class="plate">0001 ТЕС</span>' in html_blocks(at)
     at = search(run_app(SEARCH), "99110099")
     assert '<span class="plate">0001 ТЕС</span>' in html_blocks(at)
-    assert "Туршилт Тээвэр ХХК" in html_blocks(at)
+    assert "Тодорхойгүй" in html_blocks(at)  # new plate vehicle saved with the default company (T8)
 
 
 # --- manager dashboard (5.4) ---------------------------------------------------------------
