@@ -1,23 +1,13 @@
 # UI screens — Streamlit frontend (tasks 5.1–5.4)
 
-- **Owner:** Frontend Engineer (iMac, branch `ui`, D-052) · **Version:** 0.4 (2026-10-12, DESIGN v2 + 5.4 dashboard)
+- **Owner:** Frontend Engineer (iMac, branch `ui`, D-052) · **Version:** 0.5 (2026-10-12, T5: Docker, HEIC, name_mn)
 - Stack: Streamlit 1.64 (D-022), calls FastAPI over HTTP only (`docs/api_contract.md` v0.5).
 - UI text: Mongolian. Fake demo data only (RISK-06).
 
 ## Run
 
-```bash
-pip install -r requirements-ui.txt              # Python 3.11 venv
-docker compose up -d --build                    # db + api on :8000
-cd src/ui && streamlit run app.py               # from src/ui/ -> .streamlit/config.toml theme applies
-# phone on the same Wi-Fi: http://<mac-ip>:8501
-```
-
-| Env var | Default | Meaning |
-|---|---|---|
-| `API_URL` | `http://localhost:8000` | FastAPI base URL |
-| `UI_PASSWORD` | unset | Set → password screen (D-061). Unset/empty → no login (local dev) |
-
+See **[`ui_run.md`](ui_run.md)**: local run (start from `src/ui/` so the theme loads), env vars
+`API_URL` / `UI_PASSWORD`, Docker image (`src/ui/Dockerfile`), and the compose service values for 6.1.
 Tests: `pytest -v tests/test_ui_*.py` (API mocked with `httpx.MockTransport`; screen tests use
 Streamlit `AppTest` and are skipped if Streamlit is not installed).
 
@@ -36,6 +26,7 @@ Streamlit `AppTest` and are skipped if Streamlit is not installed).
 | `src/ui/api_client.py` | HTTP client (no Streamlit): one function per endpoint, `ApiError`, `DuplicateService` |
 | `src/ui/logic.py` | Pure helpers: labels, pre-fill, payload, prediction view, recognize outcome, errors |
 | `src/ui/auth.py` | `UI_PASSWORD` check (constant-time compare) |
+| `src/ui/Dockerfile` (+ `.dockerignore`) | UI image: python:3.11-slim, non-root, WORKDIR src/ui, port 8501 |
 
 The folder is `views/`, **not** `pages/`: Streamlit runs a folder named `pages/` in legacy mode,
 which skips `app.py` (and the login gate) when a URL is opened directly. Guarded by
@@ -59,7 +50,8 @@ exists, so a direct URL cannot skip it.
 link «Сануулга» → dashboard.
 
 **Бүртгэх (Record)**
-1. *Capture*: camera (+ upload jpg/png/heic). New photo → `POST /plates/recognize` (field `file`,
+1. *Capture*: camera (+ upload jpg/png/heic/heif, also upper-case `IMG_0001.HEIC` from an iPhone,
+   sent as `image/heic` even when the browser gives no type, RISK-17). New photo → `POST /plates/recognize` (field `file`,
    not stored). Clear read → lookup → confirm. `needs_manual` or recognizer down → manual step
    with the read text and a reason message. «Дугаарыг гараар оруулах» → manual.
 2. *Manual*: Улсын дугаар / Парк дугаар + «Дугаар» → «Шалгах» → lookup → confirm. A phone typed
@@ -69,7 +61,7 @@ link «Сануулга» → dashboard.
    / «Буруу байна — засах» (back to manual, plate kept).
 4. *Form*: small plate box + chip. Card 1 (always fresh, D-033): «Гүйлт (км)» (hint = previous km),
    «Моторын цаг» (fleet numbers, or if the truck had hours before), «Дараа нь хаашаа явах вэ?» as tap
-   pills from `GET /destinations` (`name_mn` else `name`) + «Бусад» → place name + route pills
+   pills from `GET /destinations` (`name_mn` when present; null / "" / spaces → `name`, D-071) + «Бусад» → place name + route pills
    (D-039). Card 2: existing truck → «Өмнөхөөс авсан» one line (oil · liters · driver · phone) +
    «Засах» expander; new truck → company, model, oil, liters, driver, phone, oil changer.
    «Хадгалах» → `POST /services` (no date: API = today). 409 duplicate → warning +
