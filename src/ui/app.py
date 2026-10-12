@@ -50,5 +50,6 @@ else:
         st.Page(common.RECORD_PAGE, title="Бүртгэх"),
         st.Page(common.SEARCH_PAGE, title="Хайх"),
         st.Page(common.CARD_PAGE, title="Машины карт"),
+        st.Page(common.REMINDERS_PAGE, title="Сануулга"),
     ]
     st.navigation(pages, position="hidden").run()

@@ -39,6 +39,9 @@ class FakeApi:
         self.prediction: dict | None = None        # returned on every card (None = model not loaded)
         self.recognize: tuple[int, dict] = (503, {"detail": "plate recognizer not loaded"})
         self.uploads: list[bytes] = []              # raw multipart bodies sent to /plates/recognize
+        self.reminders: list[dict] | None = []      # None -> 503 (model not loaded)
+        self.sent: dict[int, dict] = {}             # service_id -> stored "sent" row
+        self.hide_sent = True                       # False = stale list (another manager's open tab)
 
     # -- data ---------------------------------------------------------------
     def add_vehicle(self, identifier: str, company: str, identifier_type: str = "plate", **service) -> dict:
@@ -107,6 +110,24 @@ class FakeApi:
             vid = int(path.split("/")[-1])
             vehicle = next((v for v in self.vehicles if v["id"] == vid), None)
             return httpx.Response(200, json=self.card(vehicle)) if vehicle else httpx.Response(404, json={"detail": "unknown"})
+        if path == "/stats/segments":
+            return httpx.Response(200, json={"as_of": TODAY, "total": 7,
+                                             "counts": {"new": 2, "returning": 3, "loyal": 1, "at_risk": 1}})
+        if path == "/reminders/due":
+            if self.reminders is None:
+                return httpx.Response(503, json={"detail": "prediction model not loaded"})
+            due = [r for r in self.reminders if not (self.hide_sent and r["service_id"] in self.sent)]
+            return httpx.Response(200, json={"as_of": TODAY, "contact_is_placeholder": True, "reminders": due})
+        if path.startswith("/reminders/") and path.endswith("/sent"):
+            sid = int(path.split("/")[2])
+            if sid == 999:
+                return httpx.Response(409, json={"detail": {"code": "not_latest_service", "message": "newer",
+                                                            "latest_service_id": 1000}})
+            if sid in self.sent:
+                return httpx.Response(200, json={**self.sent[sid], "already_sent": True})
+            self.sent[sid] = {"id": len(self.sent) + 1, "service_id": sid, "phone": "99110002",
+                              "sent_at": f"{TODAY}T11:00:00+08:00"}
+            return httpx.Response(201, json={**self.sent[sid], "already_sent": False})
         if path == "/vehicles/lookup":
             return self._lookup(request.url.params["q"])
         if path == "/plates/recognize" and request.method == "POST":
@@ -174,7 +195,8 @@ def fake_api(monkeypatch):
     api_client.set_transport(None)
 
 
-HOME, RECORD, SEARCH, CARD = "views/home.py", "views/record.py", "views/search.py", "views/card.py"
+HOME, RECORD, SEARCH, CARD, REMINDERS = (
+    "views/home.py", "views/record.py", "views/search.py", "views/card.py", "views/reminders.py")
 
 PREDICTION = {
     "method": "ridge", "fallback_reason": None, "model_version": "ridge-0000abcd",
@@ -275,7 +297,7 @@ def test_login_required_and_works(fake_api, monkeypatch) -> None:
     assert texts(at.title) == ["Тос солилт"]
 
 
-ALL_VIEWS = [HOME, RECORD, SEARCH, CARD]
+ALL_VIEWS = [HOME, RECORD, SEARCH, CARD, REMINDERS]
 
 
 @pytest.mark.parametrize("view", ALL_VIEWS)
@@ -541,3 +563,63 @@ def test_save_then_find_by_plate_and_phone(fake_api) -> None:
     at = search(run_app(SEARCH), "99110099")
     assert '<div class="plate-box">0001 ТЕС</div>' in html_blocks(at)
     assert "Туршилт Тээвэр ХХК" in html_blocks(at)
+
+
+# --- manager dashboard (5.4) ---------------------------------------------------------------
+
+def reminder(service_id: int, plate: str, days_left: int, status: str) -> dict:
+    return {
+        "service_id": service_id, "vehicle_id": service_id, "identifier_type": "plate",
+        "identifier": plate, "plate_normalized": plate.replace(" ", ""), "company": "Туршилт ХХК",
+        "phone": "99110002", "driver_name": "Тест Д.", "last_change_date": "2026-08-10",
+        "oil_grade": "15W-40", "liters": 32.0, "method": "b0", "buffer_days": 12,
+        "predicted_date": "2026-10-07", "send_on": "2026-09-25", "days_left": days_left, "status": status,
+        "message_mn": f"Сайн байна уу! {plate} дугаартай машины тос солих хугацаа болсон байна.",
+    }
+
+
+def test_home_has_reminders_link(fake_api) -> None:
+    at = run_app()
+    assert any(link.label == "Сануулга" for link in at.get("page_link"))
+
+
+def test_dashboard_tiles_and_two_groups(fake_api) -> None:
+    fake_api.reminders = [reminder(1, "0001 ТЕС", 5, "due_soon"), reminder(2, "0002 ТЕС", -3, "overdue"),
+                          reminder(3, "0003 ТЕС", -20, "overdue")]
+    at = run_app(REMINDERS)
+    assert not at.exception
+    page = html_blocks(at)
+    for label, count in (("Шинэ", 2), ("Давтан", 3), ("Байнгын", 1), ("Эрсдэлтэй", 1)):
+        assert f'<div class="k">{label}</div><div class="v">{count}</div>' in page
+    assert texts(at.subheader) == ["Сегмент", "Илгээх (2)", "Эрсдэлтэй (1)"]
+    assert "0003 ТЕС" in page and "Илгээх өдөр: <b>2026-09-25</b>" in page and "99110002" in page
+    assert [c.value for c in at.code][0].startswith("Сайн байна уу! 0001 ТЕС")  # copyable text
+    assert any("GEO_EXPERT_PHONE" in t for t in texts(at.warning))  # placeholder contact
+
+
+def test_mark_sent_removes_row(fake_api) -> None:
+    fake_api.reminders = [reminder(1, "0001 ТЕС", 5, "due_soon")]
+    at = click(run_app(REMINDERS), "Илгээсэн")
+    assert any("Илгээсэн гэж тэмдэглэлээ" in t for t in texts(at.success))
+    assert texts(at.subheader)[1] == "Илгээх (0)"  # gone from the due list
+
+
+def test_mark_sent_twice_shows_already_sent(fake_api) -> None:
+    fake_api.reminders = [reminder(1, "0001 ТЕС", 5, "due_soon")]
+    fake_api.hide_sent = False  # the row stays, as in a second manager's stale tab
+    at = click(click(run_app(REMINDERS), "Илгээсэн"), "Илгээсэн")
+    assert any("Өмнө нь илгээсэн" in t for t in texts(at.info))
+    assert len(fake_api.sent) == 1  # stored once (API is idempotent)
+
+
+def test_mark_sent_not_latest_service(fake_api) -> None:
+    fake_api.reminders = [reminder(999, "0009 ТЕС", 5, "due_soon")]
+    at = click(run_app(REMINDERS), "Илгээсэн")
+    assert any("шинэ үйлчилгээтэй" in t for t in texts(at.warning))
+
+
+def test_dashboard_without_model(fake_api) -> None:
+    fake_api.reminders = None
+    at = run_app(REMINDERS)
+    assert not at.exception
+    assert any("загвар ачаалагдаагүй" in t for t in texts(at.info))

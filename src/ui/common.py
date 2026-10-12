@@ -24,6 +24,7 @@ HOME_PAGE = "views/home.py"
 RECORD_PAGE = "views/record.py"
 SEARCH_PAGE = "views/search.py"
 CARD_PAGE = "views/card.py"
+REMINDERS_PAGE = "views/reminders.py"
 
 REC_PENDING = "rec_pending"        # {"identifier_type", "identifier", "card" | None}
 REC_RESET = "rec_reset"            # True -> record screen starts at the camera step

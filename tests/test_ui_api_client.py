@@ -135,3 +135,31 @@ def test_recognize_plate_sends_multipart(requests_seen) -> None:
     assert seen[0].url.path == "/plates/recognize"
     assert seen[0].headers["content-type"].startswith("multipart/form-data")
     assert b'name="file"; filename="truck.jpg"' in seen[0].read()  # contract v0.5 field name
+
+
+# --- reminders dashboard (5.4, contract v0.5) ------------------------------------------
+
+def test_segment_stats_and_reminders_due_paths(requests_seen) -> None:
+    seen, set_reply = requests_seen
+    set_reply(httpx.Response(200, json={}))
+    api_client.segment_stats()
+    api_client.reminders_due(as_of="2026-10-12")
+    assert [r.url.path for r in seen] == ["/stats/segments", "/reminders/due"]
+    assert "as_of" not in seen[0].url.params
+    assert seen[1].url.params["as_of"] == "2026-10-12"
+
+
+def test_mark_reminder_sent_already_sent(requests_seen) -> None:
+    seen, set_reply = requests_seen
+    set_reply(httpx.Response(200, json={"id": 1, "service_id": 7, "already_sent": True}))
+    row = api_client.mark_reminder_sent(7)
+    assert row["already_sent"] is True
+    assert (seen[0].method, seen[0].url.path) == ("POST", "/reminders/7/sent")
+
+
+def test_mark_reminder_not_latest(requests_seen) -> None:
+    _, set_reply = requests_seen
+    set_reply(httpx.Response(409, json={"detail": {"code": "not_latest_service", "message": "newer",
+                                                   "latest_service_id": 9}}))
+    with pytest.raises(api_client.NotLatestService):
+        api_client.mark_reminder_sent(7)

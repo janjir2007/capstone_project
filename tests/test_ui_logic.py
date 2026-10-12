@@ -292,7 +292,7 @@ def test_password_checked(monkeypatch) -> None:
     assert not auth.check_password(None)
 
 
-VIEWS = ("home.py", "record.py", "search.py", "card.py")
+VIEWS = ("home.py", "record.py", "search.py", "card.py", "reminders.py")
 
 
 def test_no_streamlit_pages_folder() -> None:
@@ -309,3 +309,20 @@ def test_prev_summary_only_filled_parts() -> None:
     assert logic.prev_summary(form) == "15W-40 · 30 л · Тест Д. · 99110001"
     assert logic.prev_summary({**form, "driver_name": None, "driver_phone": ""}) == "15W-40 · 30 л"
     assert logic.prev_summary(logic.empty_form()) == "—"
+
+
+# --- reminders dashboard (5.4) ----------------------------------------------------------
+
+def test_split_reminders_uses_d007_grace() -> None:
+    reminders = [{"service_id": 1, "days_left": 3}, {"service_id": 2, "days_left": -8},
+                 {"service_id": 3, "days_left": -7}, {"service_id": 4, "days_left": -30}]
+    to_send, at_risk = logic.split_reminders(reminders)
+    assert [r["service_id"] for r in to_send] == [1, 3]   # -7 = exactly the grace -> not yet at risk
+    assert [r["service_id"] for r in at_risk] == [2, 4]   # order kept
+
+
+def test_days_left_text() -> None:
+    assert logic.days_left_text(5) == "5 хоног үлдсэн"
+    assert logic.days_left_text(-3) == "3 хоног хэтэрсэн"
+    assert logic.days_left_text(0) == "Өнөөдөр"
+    assert logic.days_left_text(None) == "—"

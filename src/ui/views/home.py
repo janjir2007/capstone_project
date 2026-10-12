@@ -1,4 +1,4 @@
-"""Home screen (DESIGN v2): big «Бүртгэх» card (opens the camera), white «Хайх» card."""
+"""Home screen (DESIGN v2): big «Бүртгэх» card (opens the camera), white «Хайх» card, «Сануулга» link (manager dashboard)."""
 
 import streamlit as st
 
@@ -10,5 +10,6 @@ if st.button("📷  Бүртгэх", key="home_record", type="primary", width="s
     common.go_record_start()
 if st.button("🔍  Хайх", key="home_search", width="stretch"):
     st.switch_page(common.SEARCH_PAGE)
+st.page_link(common.REMINDERS_PAGE, label="Сануулга", icon=":material/notifications:")
 
 common.logout_button()

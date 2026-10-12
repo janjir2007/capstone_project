@@ -44,6 +44,11 @@ class DuplicateService(ApiError):
         return self.detail.get("existing_service_id") if isinstance(self.detail, dict) else None
 
 
+class NotLatestService(ApiError):
+    """409 not_latest_service on POST /reminders/{id}/sent: the truck has a newer
+    service, so this reminder is outdated (reload the due list)."""
+
+
 def api_url() -> str:
     """Base URL of the API, without a trailing slash."""
     return (os.environ.get("API_URL") or DEFAULT_API_URL).rstrip("/")
@@ -76,6 +81,8 @@ def _request(method: str, path: str, **kwargs: Any) -> Any:
         detail = response.text
     if response.status_code == 409 and isinstance(detail, dict) and detail.get("code") == "duplicate_service":
         raise DuplicateService(409, detail)
+    if response.status_code == 409 and isinstance(detail, dict) and detail.get("code") == "not_latest_service":
+        raise NotLatestService(409, detail)
     raise ApiError(response.status_code, detail)
 
 
@@ -118,3 +125,21 @@ def recognize_plate(image: bytes, filename: str, content_type: str = "image/jpeg
     200 also when no plate is found (needs_manual=true). 413 > 15 MB, 503 recognizer not loaded.
     """
     return _request("POST", "/plates/recognize", files={"file": (filename, image, content_type)})
+
+
+def segment_stats(as_of: str | None = None) -> dict:
+    """GET /stats/segments -> {as_of, total, counts: {new, returning, loyal, at_risk}}."""
+    return _request("GET", "/stats/segments", params={"as_of": as_of} if as_of else None)
+
+
+def reminders_due(as_of: str | None = None) -> dict:
+    """GET /reminders/due -> {as_of, contact_is_placeholder, reminders: [DueReminder]} (503 = no model)."""
+    return _request("GET", "/reminders/due", params={"as_of": as_of} if as_of else None)
+
+
+def mark_reminder_sent(service_id: int) -> dict:
+    """POST /reminders/{service_id}/sent -> stored row with already_sent (201 new / 200 before).
+
+    Raises NotLatestService (409) when the truck has a newer service. No SMS is sent.
+    """
+    return _request("POST", f"/reminders/{service_id}/sent")

@@ -1,6 +1,6 @@
-# UI screens — Streamlit frontend (tasks 5.1–5.3c)
+# UI screens — Streamlit frontend (tasks 5.1–5.4)
 
-- **Owner:** Frontend Engineer (iMac, branch `ui`, D-052) · **Version:** 0.3 (2026-10-12, DESIGN v2)
+- **Owner:** Frontend Engineer (iMac, branch `ui`, D-052) · **Version:** 0.4 (2026-10-12, DESIGN v2 + 5.4 dashboard)
 - Stack: Streamlit 1.64 (D-022), calls FastAPI over HTTP only (`docs/api_contract.md` v0.5).
 - UI text: Mongolian. Fake demo data only (RISK-06).
 
@@ -31,6 +31,7 @@ Streamlit `AppTest` and are skipped if Streamlit is not installed).
 | `src/ui/views/record.py` | Record flow (5.2): capture → manual → confirm → form → success |
 | `src/ui/views/search.py` | Search (5.3) |
 | `src/ui/views/card.py` | Vehicle card (5.3) |
+| `src/ui/views/reminders.py` | «Сануулга» manager dashboard (5.4) |
 | `src/ui/common.py` | DESIGN v2 CSS, header, plate box, chips, card parts, navigation hand-off |
 | `src/ui/api_client.py` | HTTP client (no Streamlit): one function per endpoint, `ApiError`, `DuplicateService` |
 | `src/ui/logic.py` | Pure helpers: labels, pre-fill, payload, prediction view, recognize outcome, errors |
@@ -54,8 +55,8 @@ which skips `app.py` (and the login gate) when a URL is opened directly. Guarded
 **Login** (only if `UI_PASSWORD` set): password card → «Нэвтрэх». Until logged in only this page
 exists, so a direct URL cannot skip it.
 
-**Нүүр (Home)**: big primary card «📷 Бүртгэх» (opens the camera step), white card «🔍 Хайх».
-«Сануулга» link comes with 5.4.
+**Нүүр (Home)**: big primary card «📷 Бүртгэх» (opens the camera step), white card «🔍 Хайх»,
+link «Сануулга» → dashboard.
 
 **Бүртгэх (Record)**
 1. *Capture*: camera (+ upload jpg/png/heic). New photo → `POST /plates/recognize` (field `file`,
@@ -89,9 +90,24 @@ last_service_date → predicted_date used), note = method + fallback_reason; `nu
 «Таамаглал удахгүй нэмэгдэнэ». 3 tiles: Сүүлд солисон, Тос (grade · liters), Чиглэл. Call row
 «Жолооч · утас — Залгах» (`tel:` link). «Түүх (N)» expander. Primary «Тос солилт бүртгэх».
 
+**Сануулга (Manager dashboard, 5.4)** — wider on desktop (max 1100 px), 2×2 tiles on a phone.
+- 4 segment tiles from `GET /stats/segments` (Шинэ / Давтан / Байнгын / Эрсдэлтэй) + total, as_of.
+- `GET /reminders/due` split in two groups, API order kept (oldest `send_on` first):
+  **«Илгээх»** and **«Эрсдэлтэй»** = at_risk by D-007 (`days_left < −7`, i.e. predicted date +
+  7 days grace already passed; same rule and number as the API).
+- Row (white card): plate box, status chip (same colors as the card) + «N хоног үлдсэн/хэтэрсэн»,
+  📞 phone · driver · company, «Илгээх өдөр» (send_on) · predicted date · last change, the
+  `message_mn` text in a code box whose built-in button copies it to the clipboard, and
+  «Илгээсэн» → `POST /reminders/{service_id}/sent`: new → «Илгээсэн гэж тэмдэглэлээ» and the row
+  leaves the list; `already_sent` → «Өмнө нь илгээсэн гэж тэмдэглэгдсэн (time)»;
+  409 `not_latest_service` → «шинэ үйлчилгээтэй болсон» + list reloaded.
+- `contact_is_placeholder` → warning that the contact phone in the text is a placeholder.
+  503 → «Таамаглалын загвар ачаалагдаагүй». The API sends no SMS: the manager copies and sends.
+
 ## Streamlit limits (accepted, "close is enough")
 
 - Built-in widget text stays English: camera permission prompt ("This app would like to use your
   camera", "Take Photo"), uploader ("Upload", "15MB per file" — limit set to the API's 15 MB in config.toml).
+- The copy button's tooltip says "Copy to clipboard" (built-in).
 - Pills wrap to several rows on a phone (7 destinations).
 - No real "card" component: white cards are keyed containers + CSS.

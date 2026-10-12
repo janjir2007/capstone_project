@@ -222,6 +222,36 @@ def recognize_error_message(status: int) -> str:
     return f"Таних үед алдаа гарлаа ({status}) — гараар оруулна уу."
 
 
+# --- Reminders dashboard (5.4) ---------------------------------------------------
+
+# At risk = predicted date + AT_RISK_GRACE_DAYS < as_of, i.e. days_left < -AT_RISK_GRACE_DAYS.
+# The only copy of this number in src/ui (D-052: no backend imports).
+AT_RISK_GRACE_DAYS = 7  # mirrors D-007 / backend; remove when API adds segment field
+SEGMENT_ORDER = ("new", "returning", "loyal", "at_risk")
+
+
+def is_at_risk(reminder: dict) -> bool:
+    """True if this due reminder belongs to «Эрсдэлтэй» (overdue beyond the grace)."""
+    days_left = reminder.get("days_left")
+    return days_left is not None and days_left < -AT_RISK_GRACE_DAYS
+
+
+def split_reminders(reminders: list[dict]) -> tuple[list[dict], list[dict]]:
+    """(«Илгээх», «Эрсдэлтэй») keeping the API order (oldest send_on first)."""
+    to_send = [r for r in reminders if not is_at_risk(r)]
+    at_risk = [r for r in reminders if is_at_risk(r)]
+    return to_send, at_risk
+
+
+def days_left_text(days_left: int | None) -> str:
+    """'5 хоног үлдсэн' / '3 хоног хэтэрсэн' / 'Өнөөдөр'."""
+    if days_left is None:
+        return NOT_GIVEN
+    if days_left == 0:
+        return "Өнөөдөр"
+    return f"{abs(days_left)} хоног {'үлдсэн' if days_left > 0 else 'хэтэрсэн'}"
+
+
 # --- Recording form ----------------------------------------------------------
 
 # Keys of the recording form in st.session_state (prefix avoids clashes).
