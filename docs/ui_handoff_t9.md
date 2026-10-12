@@ -3,8 +3,8 @@
 ```
 HANDOFF REPORT
 TASK ID: T9 (Streamlit app matches the mockup PDF)
-STATUS: DONE locally, tests green; NOT committed/pushed yet (waiting for Ari's OK, CLAUDE.md).
-  Demo-known-good stays 21124d2.
+STATUS: DONE — pushed to origin/ui: 388c98b (code + tests), d5f8298 (docs), handoff hashes =
+  tip of origin/ui. Demo-known-good stays 21124d2.
 SUMMARY:
   Theme + CSS + layout in src/ui/ only (DESIGN v5). Screens (mockup page → screen):
   1. Home (p1): «ГЭ Гео-Эксперт» + date, «Сайн байна уу» + «Өнөөдөр N машин сануулга хүлээж
@@ -62,6 +62,5 @@ PROBLEMS / RISKS:
   - Icon buttons: Streamlit puts the Material icon name into the button text, so a screen reader
     may hear "arrow_back_ios_new Буцах" (Streamlit behaviour).
 CONTRACT CHANGES: none.
-NEXT STEP: Ari's OK → commits on branch ui (theme/CSS+components, screens, tests, docs) → push →
-  check the Actions tab. PR ui → main stays the boss's decision.
+NEXT STEP: check the Actions tab for the ui push. PR ui → main stays the boss's decision.
 ```
