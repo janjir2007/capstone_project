@@ -1,8 +1,8 @@
 """GET /destinations — the list for the "where are you heading next?" picker (task 4.2b).
 
 The recording form sends the chosen id as destination_id in POST /services
-(D-033); the route then comes from the destination (D-039). name_mn, the
-Mongolian label (D-040), is added after migration 002.
+(D-033); the route then comes from the destination (D-039). name_mn is the
+Mongolian label to show (D-040, migration 002; null -> show name).
 """
 
 from typing import Annotated

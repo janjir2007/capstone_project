@@ -40,8 +40,8 @@ from src.api.schemas import ServiceCreate, normalize_phone
 from tests.test_schema import database_url
 
 SQL_DIR = Path(__file__).resolve().parent.parent / "src" / "data"
-SQL_FILES = ["schema.sql", "migrations/001_destinations.up.sql", "migrations/003_reminders_sent.up.sql",
-             "sample_data.sql"]
+SQL_FILES = ["schema.sql", "migrations/001_destinations.up.sql", "migrations/002_destinations_name_mn.up.sql",
+             "migrations/003_reminders_sent.up.sql", "sample_data.sql"]
 TODAY = date(2026, 9, 30)
 
 
@@ -448,15 +448,30 @@ def test_new_fleet_number_has_no_plate(client: TestClient) -> None:
 # ---------------- GET /destinations ----------------
 
 def test_destinations_list(client: TestClient) -> None:
-    """The 7 rows seeded by migration 001, in seeded order, short form only."""
+    """The 7 rows seeded by migration 001, in seeded order, short form only (+ name_mn, contract v0.6)."""
     response = client.get("/destinations")
     assert response.status_code == 200
     destinations = response.json()
     assert len(destinations) == 7
-    assert set(destinations[0]) == {"id", "name", "route_category"}
-    assert destinations[0] == {"id": destinations[0]["id"], "name": "Ulaanbaatar city (local work)", "route_category": "ub_city"}
+    assert set(destinations[0]) == {"id", "name", "name_mn", "route_category"}
+    assert destinations[0] == {"id": destinations[0]["id"], "name": "Ulaanbaatar city (local work)", "name_mn": None,
+                               "route_category": "ub_city"}
     assert destinations[-1]["route_category"] == "mixed"  # "Other / several / unknown" last
     assert [d["id"] for d in destinations] == sorted(d["id"] for d in destinations)
+
+
+def test_destinations_have_mongolian_labels(client: TestClient) -> None:
+    """Migration 002 (D-040): the 5 road destinations show Mongolian; the other two have no label yet."""
+    labels = {d["name"]: d["name_mn"] for d in client.get("/destinations").json()}
+    assert labels == {
+        "Ulaanbaatar city (local work)": None,
+        "Zamyn-Uud (MN–CN border)": "Замын-Үүд",
+        "Erenhot (CN side of border)": "Эрээн",
+        "Beijing": "Бээжин",
+        "Altanbulag (MN–RU border)": "Алтанбулаг",
+        "Kyakhta (RU side of border)": "Хиагт",
+        "Other / several / unknown": None,
+    }
 
 
 def test_destination_ids_work_in_post_services(client: TestClient) -> None:

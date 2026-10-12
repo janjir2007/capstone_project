@@ -1,6 +1,6 @@
 # Data Dictionary — Oil Change Predictor
 
-- **Version:** 0.2 (Task 1.1b) · **Owner:** Data Engineer · **Date:** 2026-10-06
+- **Version:** 0.4 (Task 1.1c) · **Owner:** Data Engineer · **Date:** 2026-10-12
 - **Schema file:** [`src/data/schema.sql`](../src/data/schema.sql) (PostgreSQL 16)
   + migrations in [`src/data/migrations/`](../src/data/migrations/) (§8)
 - **This file is a contract.** Backend (SQLAlchemy models), ML (features) and
@@ -132,7 +132,7 @@ erDiagram
 
 Driver + phone are stored here, not on the vehicle, because drivers change between trips (D-004).
 
-### 2.3b `destinations` — where a truck goes after its oil change (migration 001, D-033, D-035)
+### 2.3b `destinations` — where a truck goes after its oil change (migrations 001 + 002, D-033, D-035, D-040)
 
 Reference list behind the "heading next" question. Seed rows = [`docs/synthetic_rules.md`](synthetic_rules.md) §1;
 values marked TO FILL there are NULL here until Ari fills them (then a new migration / UPDATE).
@@ -140,7 +140,8 @@ values marked TO FILL there are NULL here until Ari fills them (then a new migra
 | Column | Type | Null | Unit / format | Allowed values / rule | Source |
 |---|---|---|---|---|---|
 | `id` | BIGINT identity | no | — | primary key, auto | system |
-| `name` | TEXT | no | e.g. `Zamyn-Uud (MN–CN border)` | unique, not blank | synthetic_rules.md §1 |
+| `name` | TEXT | no | e.g. `Zamyn-Uud (MN–CN border)` | unique, not blank. The KEY (model route table, generator): never renamed | synthetic_rules.md §1 |
+| `name_mn` | TEXT | yes | e.g. `Замын-Үүд` | unique, not blank if given. Label the Mongolian UI shows (D-040); NULL = no label yet → show `name` (now: `Ulaanbaatar city (local work)`, `Other / several / unknown`). *Migration 002* | Ari (task 1.1c brief) |
 | `route_category` | TEXT | no | — | same 5 values as `service_records.route`: `ub_city`, `mn_china`, `mn_russia`, `mine_site`, `mixed` | synthetic_rules.md §1 |
 | `one_way_km` | INTEGER | yes | road km from Ulaanbaatar | > 0. NULL = not applicable (`ub_city`, `mixed`) or not known yet. **Round-trip km is not stored**: derive as 2 × `one_way_km` (ESTIMATE, synthetic_rules.md §1) | map source in `source` |
 | `round_trip_days_min` | NUMERIC(5,1) | yes | days, **including waiting** (border, loading) | > 0, ≤ `round_trip_days_max` | Ari (TO FILL) |
@@ -281,6 +282,7 @@ databases use synthetic rows only.
 | 0.1 | 2026-09-30 | First version (Task 1.1) |
 | 0.2 | 2026-10-06 | Task 1.1b, migration 001: new table `destinations`; `service_records.destination_id`, `destination_raw` (nullable) |
 | 0.3 | 2026-10-12 | Task 4.4, migration 003: new table `reminders_sent`. Segments in the API use the served prediction for `at_risk` (same D-007 rule as `vehicle_segments`) |
+| 0.4 | 2026-10-12 | Task 1.1c, migration 002: `destinations.name_mn` (Mongolian label, 5 road destinations filled). Demo database: `src/data/seed_demo.py`, [`demo_data.md`](demo_data.md) |
 
 ## 8. Migrations
 
@@ -292,14 +294,16 @@ databases use synthetic rows only.
 | # | File | What |
 |---|---|---|
 | 001 | `001_destinations.up.sql` / `.down.sql` | `destinations` table + seed; destination columns on `service_records` |
-| 003 | `003_reminders_sent.up.sql` / `.down.sql` | `reminders_sent` table (task 4.4). 002 is reserved for `destinations.name_mn` (D-040), not written yet. Tested by `tests/test_reminders.py` (up → down → up, constraints) |
+| 002 | `002_destinations_name_mn.up.sql` / `.down.sql` | `destinations.name_mn` + the 5 Mongolian labels (task 1.1c, D-040); stops if a label's destination is missing. Tested by `tests/test_migration_002_name_mn.py` |
+| 003 | `003_reminders_sent.up.sql` / `.down.sql` | `reminders_sent` table (task 4.4). Tested by `tests/test_reminders.py` (up → down → up, constraints) |
 
 - **New dev DB** (`docker compose down -v && docker compose up -d db`): docker-compose runs
   `schema.sql` then every up migration automatically.
 - **Existing dev DB** (volume already there): run by hand
   ```bash
   docker compose exec -T db psql -U oil -d oil_change --single-transaction -v ON_ERROR_STOP=1 -f /sql/migrations/001_destinations.up.sql
-  # undo:
+  docker compose exec -T db psql -U oil -d oil_change --single-transaction -v ON_ERROR_STOP=1 -f /sql/migrations/002_destinations_name_mn.up.sql
+  # undo (newest first):
   docker compose exec -T db psql -U oil -d oil_change --single-transaction -v ON_ERROR_STOP=1 -f /sql/migrations/001_destinations.down.sql
   ```
 - Tested by `tests/test_migration_001_destinations.py` (up on clean + filled DB, down restores the old schema, up→down→up).

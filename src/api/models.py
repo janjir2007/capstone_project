@@ -50,7 +50,7 @@ class Vehicle(Base):
 
 
 class Destination(Base):
-    """destinations: where a truck heads after its oil change (migration 001)."""
+    """destinations: where a truck heads after its oil change (migrations 001, 002)."""
 
     __tablename__ = "destinations"
 
@@ -62,6 +62,7 @@ class Destination(Base):
     round_trip_days_max: Mapped[Decimal | None] = mapped_column(Numeric(5, 1))
     source: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    name_mn: Mapped[str | None] = mapped_column(Text)  # Mongolian label (migration 002, D-040)
 
 
 class ServiceRecord(Base):

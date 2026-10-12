@@ -28,7 +28,8 @@ services:
       - ./src/data/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
       # Migrations, in order (an existing volume needs them run by hand: README).
       - ./src/data/migrations/001_destinations.up.sql:/docker-entrypoint-initdb.d/02_migration_001_destinations.sql:ro
-      - ./src/data/migrations/003_reminders_sent.up.sql:/docker-entrypoint-initdb.d/03_migration_003_reminders_sent.sql:ro
+      - ./src/data/migrations/002_destinations_name_mn.up.sql:/docker-entrypoint-initdb.d/03_migration_002_destinations_name_mn.sql:ro
+      - ./src/data/migrations/003_reminders_sent.up.sql:/docker-entrypoint-initdb.d/04_migration_003_reminders_sent.sql:ro
       # All SQL files, available inside the container for manual psql -f runs.
       - ./src/data:/sql:ro
     healthcheck:

@@ -1,6 +1,6 @@
 # API contract — data, model and reminder endpoints (tasks 4.2, 4.2b, 4.3, 4.4)
 
-- **Version:** 0.5 (task 4.4, 2026-10-12) · **Owner:** Backend Engineer
+- **Version:** 0.6 (task 1.1c, 2026-10-12) · **Owner:** Backend Engineer
 - Extends PROJECT_STATE §8 "API contract" with exact fields. The live, always
   current version is the OpenAPI page of the running API: `http://localhost:8000/docs`.
 - Field names follow [`data_dictionary.md`](data_dictionary.md). Code:
@@ -23,7 +23,7 @@
 | `oil_grade` | string | |
 | `liters` | number | |
 | `route` | `ub_city` \| `mn_china` \| `mn_russia` \| `mine_site` \| `mixed` \| null | |
-| `destination` | `{id, name, route_category}` \| null | |
+| `destination` | `{id, name, name_mn, route_category}` \| null | same object as `GET /destinations` items |
 | `destination_raw` | string \| null | |
 | `driver_name`, `driver_phone`, `oil_changer`, `photo_ref` | string \| null | phone = 8 digits |
 | `created_at` | datetime with offset | |
@@ -153,8 +153,10 @@ Query parameter: `force` (bool, default `false`) — see 409 duplicate below.
 ### `GET /destinations`
 List for the "where are you heading next?" picker; send the chosen `id` as `destination_id`.
 
-- **200** `[{id, name, route_category}]`, seeded order (`Other / several / unknown` last)
-- `name_mn` (Mongolian label, D-040) is added after migration 002
+- **200** `[{id, name, name_mn, route_category}]`, seeded order (`Other / several / unknown` last)
+- `name_mn` (v0.6, migration 002, D-040) = Mongolian label to SHOW, e.g. `Замын-Үүд`; `null` = no label
+  yet (now `Ulaanbaatar city (local work)` and `Other / several / unknown`) → show `name`.
+  `name` stays the key; send `id` as before
 
 ### `GET /stats/segments?as_of=`
 `as_of` optional (default today).
@@ -209,3 +211,4 @@ model version, predicted date and send day (`reminders_sent`, migration 003). No
 | 0.3 | 2026-10-06 | Task 4.2b: `GET /destinations`; lookup also matches fleet numbers (`match_type` adds `fleet_no`); company name match ignores case + extra spaces; same vehicle + same date → 409 `duplicate_service` unless `?force=true` |
 | 0.4 | 2026-10-12 | Task 4.3: card `prediction` filled (Prediction object with `method` + `model_version`); `GET /vehicles/{id}/prediction`; `POST /plates/recognize`. Model files are mounted from `./models` (not in the image); without them the API runs and these answer null / 503 |
 | 0.5 | 2026-10-12 | Task 4.4: `GET /reminders/due`, `POST /reminders/{service_id}/sent`; segments + card `at_risk` from the served prediction; fleet numbers ignore dashes (lookup + `POST /services`, `normalized` e.g. `ht12`); HEIC photos accepted |
+| 0.6 | 2026-10-12 | Task 1.1c: `name_mn` added to `GET /destinations` items and to `ServiceOut.destination` (additive; null for 2 of 7 destinations) |

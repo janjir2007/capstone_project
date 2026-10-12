@@ -120,13 +120,15 @@ class DestinationOut(BaseModel):
     """Short form of a destinations row: inside a service record, and the
     items of GET /destinations (the form's destination picker).
 
-    name_mn (Mongolian label, D-040) is added after migration 002.
+    name_mn: Mongolian label for the UI (D-040, migration 002); null = no
+    label yet, show ``name``. ``name`` stays the key (model route table).
     """
 
     model_config = ConfigDict(from_attributes=True)
 
     id: int
     name: str
+    name_mn: str | None
     route_category: Route
 
 
