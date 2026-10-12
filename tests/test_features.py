@@ -33,20 +33,26 @@ def truck_a() -> pd.DataFrame:
 
 def test_first_visit_has_empty_history(truck_a: pd.DataFrame) -> None:
     f = F.build_features(truck_a, ROUTES).iloc[0]
-    assert f["n_prior_visits"] == 0
+    assert f["has_history"] == 0
     for col in ("days_since_prev_visit", "past_interval_mean_days", "km_per_day_hist", "past_late_share"):
         assert np.isnan(f[col]), col
 
 
 def test_history_uses_only_earlier_visits(truck_a: pd.DataFrame) -> None:
     f = F.build_features(truck_a, ROUTES)
-    assert f["n_prior_visits"].tolist() == [0, 1, 2]
+    assert f["has_history"].tolist() == [0, 1, 1]  # a flag, not a count (D-058)
     assert f.loc[1, "days_since_prev_visit"] == 50
     assert f.loc[2, "past_interval_mean_days"] == 55
     assert f.loc[1, "km_per_day_hist"] == pytest.approx(18_000 / 50)
     assert f.loc[2, "km_per_day_hist"] == pytest.approx(39_000 / 110)
     assert f.loc[1, "past_late_share"] == 0.0
     assert f.loc[2, "past_late_share"] == 0.5
+
+
+def test_has_history_does_not_grow_with_more_visits() -> None:
+    """D-058: a visit count leaked the calendar position; the flag stops at 1."""
+    many = visits([("D", f"2025-{m:02d}-01", 10_000 * m, "Beijing") for m in range(1, 9)])
+    assert F.build_features(many, ROUTES)["has_history"].tolist() == [0] + [1] * 7
 
 
 def test_future_visit_does_not_change_past_features(truck_a: pd.DataFrame) -> None:
@@ -68,7 +74,7 @@ def test_unsorted_input_keeps_index_and_order(truck_a: pd.DataFrame) -> None:
     shuffled = truck_a.iloc[[2, 0, 1]]
     f = F.build_features(shuffled, ROUTES)
     assert list(f.index) == [2, 0, 1]
-    assert f.loc[2, "n_prior_visits"] == 2
+    assert f.loc[0, "has_history"] == 0 and f.loc[2, "has_history"] == 1
 
 
 def test_route_columns_and_unknown_destination() -> None:

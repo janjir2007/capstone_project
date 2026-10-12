@@ -162,9 +162,17 @@ def test_serving_model_is_ridge_in_config() -> None:
 def test_gap_references_recover_destination_and_season_effects() -> None:
     dest = ["Beijing", "Kyakhta", "Zamyn"] * 20
     season = (["winter"] * 3 + ["summer"] * 3) * 10
-    d = pd.DataFrame({"destination_name": dest, "season": season, "n_prior_visits": [i % 5 for i in range(60)],
+    d = pd.DataFrame({"destination_name": dest, "season": season, "has_history": [int(i % 5 > 0) for i in range(60)],
                       "route_km_per_day": [500.0, 210.0, 340.0] * 20})
     d[TARGET] = d["destination_name"].map({"Beijing": 42.0, "Kyakhta": 91.0, "Zamyn": 59.0}) + \
         np.where(d["season"] == "winter", 6.0, 0.0)
     refs = E.gap_references(d, d, {"baselines": {"b1_interval_km": 17_500}})
-    assert np.allclose(refs["destination means + season + n_prior_visits"], d[TARGET])
+    assert np.allclose(refs["destination means + season + has_history"], d[TARGET])
+
+
+def test_prior_visit_count_is_diagnostic_and_counts_all_visits() -> None:
+    """2.4b: the count is no longer a feature; the diagnostic helper counts per truck, oldest first."""
+    assert "n_prior_visits" not in FEATURE_COLUMNS and "has_history" in FEATURE_COLUMNS
+    df = pd.DataFrame({"vehicle_key": ["A", "B", "A", "A"],
+                       "service_date": pd.to_datetime(["2025-03-01", "2025-01-01", "2025-01-01", "2025-02-01"])})
+    assert E.prior_visit_count(df, "vehicle_key").tolist() == [2, 0, 0, 1]

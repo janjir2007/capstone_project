@@ -46,7 +46,8 @@ CATEGORICAL_FEATURES = ["destination_name", "route", "season"]
 NUMERIC_FEATURES = [
     "one_way_km",             # route distance (from the Route table)
     "route_km_per_day",       # route's typical km/day (from the Route table) -> B1 uses it
-    "n_prior_visits",         # 0 on the first visit
+    "has_history",            # 0 on the first visit, 1 after (D-058: a visit COUNT grows with the
+                              # calendar and leaks the split cutoff; only "any history?" is kept)
     "days_since_prev_visit",  # last observed interval (NaN on first visit)
     "past_interval_mean_days",  # mean days between this vehicle's earlier visits
     "km_per_day_hist",        # vehicle's own pace from its odometer readings so far
@@ -111,7 +112,7 @@ def _history_columns(visits: pd.DataFrame, late_km: float) -> pd.DataFrame:
     for i in range(len(visits)):
         gaps = [(b - a).days for a, b in zip(days[: i + 1], days[1 : i + 1])]
         rows.append({
-            "n_prior_visits": i,
+            "has_history": int(i > 0),
             "days_since_prev_visit": gaps[-1] if gaps else np.nan,
             "past_interval_mean_days": float(np.mean(gaps)) if gaps else np.nan,
             "km_per_day_hist": _km_per_day(days[: i + 1], kms[: i + 1]),

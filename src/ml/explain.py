@@ -139,13 +139,13 @@ def row_contributions(exp: Explanation, row) -> pd.Series:
     return exp.frame().loc[row].groupby(group_feature).sum().reindex(FEATURE_COLUMNS).fillna(0.0)
 
 
-def pick_example_row(exp: Explanation, n_prior_visits: pd.Series, min_prior: int) -> object:
+def pick_example_row(exp: Explanation, prior_visits: pd.Series, min_prior: int) -> object:
     """The visit whose prediction moves furthest from the average, among trucks with history.
 
     Uses predictions only (never the target), so picking it does not look at test answers.
     """
     shift = pd.Series(np.abs(exp.values.sum(axis=1)), index=exp.index)
-    eligible = shift[n_prior_visits.reindex(exp.index) >= min_prior]
+    eligible = shift[prior_visits.reindex(exp.index) >= min_prior]
     return (eligible if len(eligible) else shift).idxmax()
 
 
