@@ -2,16 +2,16 @@
 
 ```
 HANDOFF REPORT
-TASK ID: T5 (5.x quality + Dockerfile)
-STATUS: DONE (commit + push to ui pending Ari's OK; PR ui → main NOT opened, boss decides)
+TASK ID: T5 (5.x quality + Dockerfile) + Mac handover addendum
+STATUS: DONE — pushed to origin/ui (T5 final: 429fc09). PR ui → main NOT opened (boss decides).
 DEMO-KNOWN-GOOD: 21124d2 (task 5.4). T5 changes are on top of it in small commits.
 T5 CHECKLIST (all pushed to origin/ui):
   [x] 1. src/ui/Dockerfile + image size + idle RAM ....... d4f1304 (Dockerfile) · 31afb10 (numbers in ui_run.md)
   [x] 2. HEIC/HEIF accepted by the uploaders ............. 4d6756a (logic.UPLOAD_TYPES, iPhone .HEIC test)
   [x] 3. name_mn when present, else name, tested ......... 4d6756a (D-071; contract v0.6 file not on main yet, see below)
-  [x] 4. docs/ui_run.md .................................. 31afb10 · Mac setup + playwright install in the Mac-handover commit
+  [x] 4. docs/ui_run.md .................................. 31afb10 · Mac setup + playwright install in 429fc09
   [x] 5. quality pass (old lookup gone, Mongolian states) . 4d6756a (dead health() removed, phone empty state, audit)
-  [x] +  Mac handover: opt-in browser check + Mac setup ... "task T5: Mac handover (run docs + opt-in browser check)"
+  [x] +  Mac handover: opt-in browser check + Mac setup ... 429fc09
 SUMMARY:
   1. src/ui/Dockerfile: python:3.11-slim, only requirements-ui.txt, non-root (appuser, uid
      10001, code read-only), WORKDIR /app/src/ui (theme loads), API_URL env (default
@@ -37,7 +37,8 @@ FILES: src/ui/Dockerfile (new), tests/test_ui_browser.py (new, opt-in), src/ui/D
 HOW TO RUN: docs/ui_run.md. Short:
   local:  cd src/ui && ../../.venv/bin/streamlit run app.py
   docker: docker build -f src/ui/Dockerfile -t ocp-ui .
-          docker run --rm -p 8501:8501 --network capstone_project_default -e UI_PASSWORD=… ocp-ui
+          NET=$(docker inspect ocp-api --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{end}}')
+          docker run --rm -p 8501:8501 --network "$NET" -e UI_PASSWORD=… ocp-ui
 DECISIONS MADE:
   - Build context = repo root + per-Dockerfile allow-list (BuildKit "<Dockerfile>.dockerignore"),
     so the root .dockerignore (backend-owned) is not touched. With an old non-BuildKit builder
@@ -47,7 +48,8 @@ DECISIONS MADE:
   - AT_RISK_GRACE_DAYS: single named constant in src/ui/logic.py with the comment "mirrors
     D-007 / backend; remove when API adds segment field" (done before the 5.4 commit).
 METRICS / EVIDENCE:
-  - pytest (full repo): 592 passed, 2 skipped (backend ONNX, expected on the iMac), exit 0.
+  - pytest (full repo): 592 passed, 3 skipped (2 backend ONNX, expected on the iMac + the
+    opt-in browser file), exit 0.
     UI tests: 94 + 6 opt-in browser checks (+3: iPhone HEIC upload → "file" field + image/heic + confirm step;
     content-type guess; phone no-match state; name_mn cases extended).
   - Image (D-067 server sizing): 180 MB compressed / ~605 MB unpacked (Docker Desktop shows
@@ -116,6 +118,6 @@ ADDENDUM — MOVE TO THE MAC (iMac is temporary; Mac = permanent: Docker, cloud,
     · Homebrew python@3.11 + libomp (machine setup; commands in ui_run.md).
     · No .env, no secrets, no real data on the iMac (data/raw is empty here).
   ui branch is complete; iMac can be retired.
-NEXT STEP: Ari OK → push T5 commits to ui. Then the boss decides on the PR ui → main (UI
-  includes merge 93375fe of main@a85293c; main has since moved to 1738dbb, docs only).
+NEXT STEP: Boss decides on the PR ui → main (UI
+  includes merge 93375fe of main@a85293c; main has since moved to 1738dbb, docs only). Demo: 21124d2 (known-good) or 429fc09 (latest).
 ```
