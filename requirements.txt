@@ -34,6 +34,7 @@ uvicorn==0.54.0  # ASGI server that runs the app (Dockerfile CMD)
 sqlalchemy==2.1.3
 pydantic==2.13.5  # request/response schemas (src/api/schemas.py, task 4.2); installed by fastapi anyway
 httpx==0.28.1  # not imported directly; fastapi.testclient.TestClient needs it (tests)
+python-multipart==0.0.32  # not imported directly; FastAPI needs it for file uploads (POST /plates/recognize, task 4.3)
 
 # --- Synthetic data generator (src/data/generator.py, task 1.3)
 pyyaml==6.0.3  # reads configs/generator.yaml; already installed by ultralytics
@@ -48,3 +49,7 @@ joblib==1.6.0  # saves the model to models/; installed by scikit-learn anyway
 
 # --- ML explanation (src/ml/explain.py, task 2.4)
 shap==0.51.0  # newest release for Python 3.11 (0.52+ needs 3.12); installs numba + llvmlite
+
+# --- Model serving (task 4.3): ONNX export on the Mac, onnxruntime in the API image
+onnx==1.23.2  # src/cv/export_onnx.py writes/reads ONNX files (export only, not in the API image)
+opencv-python-headless==5.0.0.93  # cv2 without GUI libraries for the API image; same version as opencv-python (already installed by easyocr)

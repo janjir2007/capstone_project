@@ -1,6 +1,6 @@
-# API contract — data endpoints (tasks 4.2, 4.2b)
+# API contract — data + model endpoints (tasks 4.2, 4.2b, 4.3)
 
-- **Version:** 0.3 (task 4.2b, 2026-10-06) · **Owner:** Backend Engineer
+- **Version:** 0.4 (task 4.3, 2026-10-12) · **Owner:** Backend Engineer
 - Extends PROJECT_STATE §8 "API contract" with exact fields. The live, always
   current version is the OpenAPI page of the running API: `http://localhost:8000/docs`.
 - Field names follow [`data_dictionary.md`](data_dictionary.md). Code:
@@ -43,7 +43,37 @@
 | `usual_liters` | number \| null | most frequent liters; tie → most recent |
 | `last_service` | ServiceOut \| null | pre-fills the recording form |
 | `history` | ServiceOut[] | newest first |
-| `prediction` | null | always null until task 4.3 |
+| `prediction` | Prediction \| null | next oil change (task 4.3); null if the vehicle has no service or the model files are not loaded |
+
+**Prediction** (next oil change after the vehicle's NEWEST service)
+
+| Field | Type | Note |
+|---|---|---|
+| `vehicle_id` | int | |
+| `method` | `ridge` \| `b1` \| `b0` | which predictor answered (rules below) |
+| `fallback_reason` | `first_visit` \| `destination_raw_only` \| `route_not_modelled` \| `unknown_destination` \| null | why not `ridge`; null for `ridge` |
+| `model_version` | string | serving model file, e.g. `ridge-c8b211cb` (name + first 8 hex of its SHA-256); same for all methods |
+| `based_on_service_id` | int | the newest service |
+| `last_service_date` | date | |
+| `predicted_days` | number | days from the last service, 1 decimal, at least 1 |
+| `predicted_date` | date | `last_service_date + round(predicted_days)` |
+| `today` | date | Ulaanbaatar date used for `days_left` |
+| `days_left` | int | `predicted_date − today`; negative = overdue |
+| `status` | `ok` \| `due_soon` \| `overdue` | D-007: ok > 14 days left, due_soon 0–14, overdue < 0 |
+
+Method rules (checked on the newest service, in this order):
+
+| # | Condition | method | fallback_reason |
+|---|---|---|---|
+| 1 | route not `mn_china` / `mn_russia` (only these are modelled, D-047) | `b0` | `route_not_modelled` |
+| 2 | only `destination_raw` (typed by hand) | `b0` | `destination_raw_only` |
+| 3 | no destination at all (records before migration 001) or a destination the model has no route numbers for | `b0` | `unknown_destination` |
+| 4 | first visit (no earlier service) | `b1` | `first_visit` |
+| 5 | otherwise | `ridge` | null |
+
+`b0` = median days between visits in the training data (58 days on the current synthetic data);
+`b1` = 17,500 km ÷ route km/day (D-035, D-049); `ridge` = the 2.4b model with inputs from
+`src/common/features.py`. All numbers are from SYNTHETIC training data until real calibration (D-050).
 
 ## Endpoints
 
@@ -63,6 +93,32 @@ separators allowed). A valid phone is searched as a phone; anything else as a pl
 
 ### `GET /vehicles/{id}`
 - **200** VehicleCard · **404** unknown id
+
+### `GET /vehicles/{id}/prediction`
+- **200** Prediction (same object as the card's `prediction`)
+- **404** unknown id, or the vehicle has no service yet · **503** model files not loaded
+
+### `POST /plates/recognize`
+Multipart form upload, field **`file`** = the photo (JPEG/PNG; rotation from EXIF is applied).
+The photo is processed in memory and **not stored**. Max 15 MB.
+
+- **200** — also when no plate is found (then `needs_manual: true`):
+
+| Field | Type | Note |
+|---|---|---|
+| `plate_raw` | string | recognizer text before normalization (`""` if nothing read) |
+| `plate_normalized` | string \| null | `normalize_plate(plate_raw)` (D-044); null if nothing read |
+| `confidence` | number 0–1 | product of the 7 character probabilities |
+| `needs_manual` | bool | true → the oil changer must type or confirm the plate |
+| `reason` | `no_plate` \| `empty` \| `invalid_format` \| `low_confidence` \| null | `no_plate` = detector found nothing; `empty` = 7 characters not found; the other two = D-044 rules (threshold 0.6) |
+| `detection` | `{box: [x1, y1, x2, y2], confidence}` \| null | best plate box in pixels of the upright photo |
+| `detector`, `recognizer` | string | `yolo26n (onnx)`, `char_cnn (onnx)` |
+| `ms` | number | server time for detect + read |
+
+- **413** file larger than 15 MB · **422** no `file` field, or not an image · **503** recognizer files not loaded
+
+The app pre-fills the plate field with `plate_normalized` and looks it up with
+`GET /vehicles/lookup?q=`; with `needs_manual: true` it asks the oil changer to check it first.
 
 ### `POST /services`
 Body:
@@ -112,3 +168,4 @@ List for the "where are you heading next?" picker; send the chosen `id` as `dest
 | 0.1 | 2026-09-30 | PROJECT_STATE §8: endpoint list only |
 | 0.2 | 2026-10-06 | Task 4.2: exact fields of lookup / vehicle card / POST /services / segments. Lookup returns a **list** of cards (a phone can match several trucks). Unknown plate → 200 + empty list |
 | 0.3 | 2026-10-06 | Task 4.2b: `GET /destinations`; lookup also matches fleet numbers (`match_type` adds `fleet_no`); company name match ignores case + extra spaces; same vehicle + same date → 409 `duplicate_service` unless `?force=true` |
+| 0.4 | 2026-10-12 | Task 4.3: card `prediction` filled (Prediction object with `method` + `model_version`); `GET /vehicles/{id}/prediction`; `POST /plates/recognize`. Model files are mounted from `./models` (not in the image); without them the API runs and these answer null / 503 |

@@ -208,7 +208,8 @@ def client(pg: Connection) -> Iterator[TestClient]:
     # The app's own engine is unused (sessions are overridden); SQLite keeps
     # startup/shutdown away from the Postgres test connection.
     dummy_engine = create_engine("sqlite://", poolclass=StaticPool)
-    app = create_app(engine=dummy_engine)
+    # No model files here (predictions are tested in tests/test_serving.py): prediction = null.
+    app = create_app(engine=dummy_engine, model_dir=SQL_DIR / "no_models_here")
     app.dependency_overrides[get_session] = test_session
     app.dependency_overrides[get_today] = lambda: TODAY
     with TestClient(app) as test_client:
@@ -274,7 +275,7 @@ def test_vehicle_card_fields(client: TestClient) -> None:
     assert card["service_count"] == 3
     assert card["segment"] == "loyal"
     assert card["usual_liters"] == 32.0  # a JSON number, not "32.0"
-    assert card["prediction"] is None    # until task 4.3
+    assert card["prediction"] is None    # model not loaded in this fixture (4.3 tests: test_serving.py)
     assert [s["service_date"] for s in card["history"]] == ["2026-08-10", "2026-05-20", "2026-03-05"]
     assert card["last_service"] == card["history"][0]
 

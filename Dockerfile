@@ -13,6 +13,7 @@ COPY requirements-api.txt .
 RUN pip install --no-cache-dir -r requirements-api.txt
 
 # Only the source code (.dockerignore keeps data, models, .env out of the context).
+# Models are mounted at runtime (docker-compose: ./models -> /app/models, read-only, task 4.3).
 COPY src/ ./src/
 
 # Run as a normal user, not root.
