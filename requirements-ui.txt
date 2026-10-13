@@ -1,0 +1,7 @@
+# Streamlit frontend (src/ui/, tasks 5.1–5.4, D-022). Python 3.11.
+# Kept separate from requirements.txt (owned by the Mac / PM, D-052) and from
+# the API image: the UI needs no ML / CV packages.
+# Install:  pip install -r requirements-ui.txt
+streamlit==1.64.0
+httpx==0.28.1  # API client (src/ui/api_client.py); same pin as requirements.txt
+pytest==9.1.1  # tests/test_ui_*.py; same pin as requirements.txt
