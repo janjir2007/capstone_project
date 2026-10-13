@@ -161,14 +161,19 @@ def test_max_font_weight_600(ui_url, phone_page, path) -> None:
     assert phone_page.evaluate(MAX_WEIGHT_JS) <= 600
 
 
-def test_home_card_tap_opens_screen(ui_url, phone_page) -> None:
-    """T7: the whole «Хайх» card is the tap target (button stretched over the HTML card)."""
+@pytest.mark.parametrize("x_frac", [0.08, 0.5, 0.95])
+@pytest.mark.parametrize(("card", "proof"), [
+    ("act_record", "Дугаарыг гараар оруулах"), ("act_search", "Камераар хайх"), ("act_reminders", "Гараар илгээнэ")])
+def test_home_card_tap_opens_screen(ui_url, phone_page, card, proof, x_frac) -> None:
+    """T7 / 5.9b: the WHOLE card is the tap target (button stretched over the HTML card), for
+    every home card, tapped at its left, middle and right."""
     phone_page.goto(ui_url + "/")
     phone_page.wait_for_selector("text=Сайн байна уу", timeout=20000)
-    box = phone_page.locator(".st-key-act_search").bounding_box()
+    phone_page.wait_for_timeout(500)
+    box = phone_page.locator(f".st-key-{card}").bounding_box()
     assert box["height"] >= 52
-    phone_page.mouse.click(box["x"] + box["width"] * 0.3, box["y"] + box["height"] / 2)
-    phone_page.wait_for_selector("text=Камераар хайх", timeout=10000)
+    phone_page.mouse.click(box["x"] + box["width"] * x_frac, box["y"] + box["height"] / 2)
+    phone_page.wait_for_selector(f"text={proof}", timeout=10000)
 
 
 SPACING_JS = """() => {

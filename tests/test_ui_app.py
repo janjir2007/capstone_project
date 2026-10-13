@@ -710,9 +710,14 @@ def reminder(service_id: int, plate: str, days_left: int, status: str) -> dict:
     }
 
 
-def test_home_has_reminders_link(fake_api) -> None:
+@pytest.mark.parametrize(("key", "title"), [
+    ("home_record", "Үйлчилгээ бүртгэх"), ("home_search", "Хайх"), ("home_reminders", "Сануулга")])
+def test_home_card_navigates(fake_api, key, title) -> None:
+    """5.9b: every home card is a real button that opens its screen (the «Сануулга» card was a
+    page_link whose <a> covered only one text line of the card, so taps did nothing)."""
     at = run_app()
-    assert any(link.label == "Сануулга" for link in at.get("page_link"))
+    at.button(key=key).click().run()
+    assert texts(at.title) == [title]
 
 
 def test_home_reminder_summary(fake_api) -> None:

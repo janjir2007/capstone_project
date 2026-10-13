@@ -60,7 +60,10 @@ with st.container(key="grp_nav"):
             st.switch_page(common.SEARCH_PAGE)
     with common.action_card("act_reminders", "bell", "Сануулга", "Жолооч нарт мессеж илгээх", tone="amber",
                             badge=counts["to_send"] if counts else None):
-        st.page_link(common.REMINDERS_PAGE, label="Сануулга", width="stretch")
+        # A real button, like «Хайх»: st.page_link's <a> is only one text line tall inside
+        # the stretched wrapper, so most of the card did nothing when tapped (5.9b).
+        if st.button("Сануулга", key="home_reminders", width="stretch"):
+            st.switch_page(common.REMINDERS_PAGE)
 
 if st.session_state.get(common.RECENT):
     common.section("Сүүлд үзсэн", right="Өнөөдөр")

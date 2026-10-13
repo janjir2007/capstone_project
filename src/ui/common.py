@@ -392,7 +392,9 @@ def recent_rows(key_prefix: str) -> bool:
             with st.container(key=f"act_{key_prefix}_{item['id']}"):
                 html_block(f'<div class="vrow"><span class="plate">{html.escape(item["identifier"])}</span>'
                            f'<span class="co">{html.escape(item["company"])}</span>{status_html(item.get("status"))}</div>')
-                if st.button(f"{item['identifier']} · {item['company']}", key=f"{key_prefix}_{item['id']}"):
+                # width="stretch": a content-width button left the right end of the row untappable (5.9b)
+                if st.button(f"{item['identifier']} · {item['company']}", key=f"{key_prefix}_{item['id']}",
+                             width="stretch"):
                     go_card(item["id"])
     return True
 
