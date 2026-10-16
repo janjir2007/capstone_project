@@ -211,7 +211,7 @@ def main(argv: list[str] | None = None) -> int:
     start = time.perf_counter()
     model, history = train(x_tr, y_tr, x_va, y_va, epochs=args.epochs)
     save(model, args.out)
-    args.out.with_name("char_cnn_history.json").write_text(json.dumps(history, indent=1), encoding="utf-8")
+    args.out.with_name(f"{args.out.stem}_history.json").write_text(json.dumps(history, indent=1), encoding="utf-8")
     best = max(history, key=lambda h: h["val_char_acc"])
     print(json.dumps({
         "train_plates_segmented": f"{used_tr}/{len(by_split['train'])}",
