@@ -12,7 +12,10 @@ onnxruntime (CPU), so the API image needs neither torch nor ultralytics:
 4. Character CNN (recognizer B, chosen in docs/cv_ocr_results.md): softmax +
    position rule (slots 1-4 digits, 5-7 letters); confidence = product of the
    7 chosen probabilities (same as ``char_cnn.predict_chars``).
-5. ``src.common.plates.read_plate`` -> normalized plate + needs_manual (D-044).
+5. ``src.common.plates.read_plate`` -> normalized plate + needs_manual (D-044),
+   at the auto-fill threshold stored WITH the served CNN in
+   ``plate_ocr/char_cnn_version.json`` (Task 3.6b): a threshold is chosen on
+   val for one model, so it must travel with that model's file.
 
 The detector's ONNX output is (1, 5, N): box centre x, centre y, width, height
 (pixels of the 640x640 letterboxed input) and the plate score. Only the single
@@ -21,7 +24,9 @@ best box is needed, and the best box always survives NMS, so no NMS is run.
 
 from __future__ import annotations
 
+import hashlib
 import io
+import json
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,7 +39,7 @@ from pillow_heif import register_heif_opener
 
 register_heif_opener()  # lets PIL's Image.open read HEIC/HEIF (iPhone photos)
 
-from src.common.plates import DIGIT_COUNT, PlateReading, read_plate
+from src.common.plates import DEFAULT_CONFIDENCE_THRESHOLD, DIGIT_COUNT, PlateReading, read_plate
 from src.cv.char_segment import segment
 from src.cv.ocr_data import DET_CONF, padded_crop
 
@@ -42,6 +47,7 @@ IMGSZ = 640  # detector input size (task 3.2 training/evaluation size)
 LETTERBOX_COLOR = 114  # grey padding, as Ultralytics uses
 DETECTOR_FILE = "plate_yolo/yolo26n.onnx"
 RECOGNIZER_FILE = "plate_ocr/char_cnn.onnx"
+VERSION_FILE = "plate_ocr/char_cnn_version.json"  # which CNN is served + its auto-fill threshold
 CLASSES_KEY = "classes"  # ONNX metadata key holding the CNN's class list (written by export_onnx)
 
 
@@ -165,12 +171,42 @@ class OnnxCharCNN:
         return "".join(self.classes[i] for i in best), float(np.prod(probs[np.arange(len(best)), best]))
 
 
+def sha256_8(path: Path) -> str:
+    """First 8 hex characters of a file's SHA-256 (same short id as the version file)."""
+    return hashlib.sha256(path.read_bytes()).hexdigest()[:8]
+
+
+def served_threshold(model_dir: Path) -> float:
+    """Auto-fill threshold of the served CNN, from ``VERSION_FILE``.
+
+    No version file, or one without a "threshold" key (written before 3.6b)
+    -> the D-044 default. With a threshold, "served_sha256_8" must match the
+    ONNX file actually in the folder; otherwise the threshold belongs to a
+    different model and ValueError is raised (the API then starts without the
+    recognizer and logs why, instead of auto-filling with the wrong cut-off).
+    """
+    path = model_dir / VERSION_FILE
+    if not path.exists():
+        return DEFAULT_CONFIDENCE_THRESHOLD
+    info = json.loads(path.read_text(encoding="utf-8"))
+    if "threshold" not in info:
+        return DEFAULT_CONFIDENCE_THRESHOLD
+    threshold = float(info["threshold"])
+    if not 0.0 <= threshold <= 1.0:
+        raise ValueError(f"{path}: threshold must be between 0 and 1, got {threshold}")
+    actual = sha256_8(model_dir / RECOGNIZER_FILE)
+    if info.get("served_sha256_8") != actual:
+        raise ValueError(f"{path}: threshold is for model {info.get('served_sha256_8')}, served file is {actual}")
+    return threshold
+
+
 class PlateRecognizer:
     """Detector + segmentation + CNN + read_plate, loaded once at API startup."""
 
     def __init__(self, model_dir: Path) -> None:
         self.detector = OnnxDetector(model_dir / DETECTOR_FILE)
         self.reader = OnnxCharCNN(model_dir / RECOGNIZER_FILE)
+        self.threshold = served_threshold(model_dir)
 
     def recognize_rgb(self, rgb: np.ndarray) -> Recognition:
         """Upright RGB photo -> Recognition. No plate found -> needs_manual with reason "no_plate"."""
@@ -186,7 +222,7 @@ class PlateRecognizer:
             except ValueError:  # zero-size box at the photo edge
                 chars = None
             text, conf = ("", 0.0) if chars is None else self.reader.predict_chars(chars)
-            reading = read_plate(text, min(max(conf, 0.0), 1.0))
+            reading = read_plate(text, min(max(conf, 0.0), 1.0), self.threshold)
         return Recognition(reading, det, ms_detect, (time.perf_counter() - start) * 1000.0)
 
     def recognize_bytes(self, data: bytes) -> Recognition:

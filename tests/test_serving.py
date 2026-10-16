@@ -365,3 +365,61 @@ def test_sample_vehicles_without_destination_fall_back_to_b0(client: TestClient)
 
 def test_prediction_unknown_vehicle_is_404(client: TestClient) -> None:
     assert client.get("/vehicles/999999/prediction").status_code == 404
+
+
+# ==========================================================================
+# Auto-fill threshold stored with the served CNN (Task 3.6b)
+# ==========================================================================
+
+def write_version(model_dir: Path, info: dict[str, object], onnx_bytes: bytes = b"fake onnx") -> None:
+    (model_dir / R.RECOGNIZER_FILE).parent.mkdir(parents=True, exist_ok=True)
+    (model_dir / R.RECOGNIZER_FILE).write_bytes(onnx_bytes)
+    (model_dir / R.VERSION_FILE).write_text(json.dumps(info), encoding="utf-8")
+
+
+def test_served_threshold_defaults_without_version_file_or_key(tmp_path: Path) -> None:
+    from src.common.plates import DEFAULT_CONFIDENCE_THRESHOLD
+
+    assert R.served_threshold(tmp_path) == DEFAULT_CONFIDENCE_THRESHOLD
+    write_version(tmp_path, {"served": "v1"})  # file written before 3.6b
+    assert R.served_threshold(tmp_path) == DEFAULT_CONFIDENCE_THRESHOLD
+
+
+def test_served_threshold_read_when_it_belongs_to_the_served_file(tmp_path: Path) -> None:
+    (tmp_path / R.RECOGNIZER_FILE).parent.mkdir(parents=True)
+    (tmp_path / R.RECOGNIZER_FILE).write_bytes(b"fake onnx")
+    info = {"threshold": 0.75, "served_sha256_8": R.sha256_8(tmp_path / R.RECOGNIZER_FILE)}
+    write_version(tmp_path, info)
+    assert R.served_threshold(tmp_path) == 0.75
+
+
+def test_served_threshold_refuses_threshold_of_another_model(tmp_path: Path) -> None:
+    write_version(tmp_path, {"threshold": 0.4, "served_sha256_8": "deadbeef"})
+    with pytest.raises(ValueError, match="threshold is for model"):
+        R.served_threshold(tmp_path)
+
+
+def test_served_threshold_refuses_out_of_range(tmp_path: Path) -> None:
+    write_version(tmp_path, {"threshold": 1.5, "served_sha256_8": "x"})
+    with pytest.raises(ValueError, match="between 0 and 1"):
+        R.served_threshold(tmp_path)
+
+
+class FixedDetector:
+    def detect(self, rgb: np.ndarray) -> R.Detection:
+        return R.Detection((10.0, 10.0, 100.0, 40.0), 0.9)
+
+
+class FixedReader:
+    def predict_chars(self, chars: np.ndarray) -> tuple[str, float]:
+        return "1234УБА", 0.7
+
+
+@pytest.mark.parametrize(("threshold", "manual"), [(0.65, False), (0.75, True)])
+def test_recognizer_uses_its_stored_threshold_not_0_6(monkeypatch: pytest.MonkeyPatch, threshold: float,
+                                                      manual: bool) -> None:
+    monkeypatch.setattr(R, "segment", lambda crop: np.zeros((7, 32, 32), np.float32))
+    rec = object.__new__(R.PlateRecognizer)  # skip ONNX loading; same code path afterwards
+    rec.detector, rec.reader, rec.threshold = FixedDetector(), FixedReader(), threshold
+    result = rec.recognize_rgb(np.full((60, 120, 3), 128, np.uint8))
+    assert result.reading.needs_manual is manual
