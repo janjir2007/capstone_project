@@ -1,10 +1,10 @@
 # PROJECT_STATE — Capstone "Oil Change Predictor" (Geo-Expert LLC)
 
-- **Version:** 2.12
-- **Last updated:** 2026-10-12
+- **Version:** 2.14
+- **Last updated:** 2026-10-16
 - **Deadline (defense day):** 2026-10-20 (20 days from 2026-09-30)
-- **Current phase:** P4 + demo data DONE → P6 deploy prep (6.1/6.2, host-agnostic) + hosting decision; P5: 5.1–5.3 DONE on iMac → queue T2–T5 (wiring, design v2, dashboard, quality)
-- **Overall health:** 🔴 Red — 8 days left. Model serving, reminders, UI and cloud deploy have NOT started; 2.4 work is uncommitted; real dates 0/83. Plan in §3 is tight but doable if cut checkpoint (Oct 14) is respected.
+- **Current phase:** All work on the Mac, branch main (D-080). 3.6 CNN retrain done (v1 stays served, D-086). Now: 6.1 deploy prep → 1.6 new routes → FREEZE Sat Oct 17 → 6.3 deploy Sun Oct 18 → rehearse Mon
+- **Overall health:** 🟢/🟠 — system works end-to-end locally (UI + API + DB + Ridge + plate reading, 14/14 demo checks). Remaining risk: cloud deploy on Sun Oct 18 leaves 1 day buffer (RISK-21); hosting still undecided; slides/ROI. 4 days left.
 
 ---
 
@@ -59,21 +59,19 @@ Status: ✅ covered by plan · 🟡 covered but at risk · 🔴 gap — action n
 
 ---
 
-## 3. Phase plan (v2.3 — 8 days left, re-planned 2026-10-12)
+## 3. Phase plan (v2.4 — re-planned 2026-10-16, D-081/D-082)
 
-| Date | Mac (main) | iMac (`ui`) | Ari |
-|---|---|---|---|
-| Mon Oct 12 | ✅ 2.4 + 2.4b done → start 4.3 | (parked) | Fill 1.4b dates (83 rows); fix branch (D-053) |
-| Tue Oct 13 | 4.3 serving: Ridge prediction endpoint + POST /plates/recognize (YOLO → ONNX, CPU) | 5.1–5.3 handoff → PR | Finish 1.4b → 2.5 small run |
-| Wed Oct 14 | 4.4 reminders + segments + fleet-dash fix. **CUT CHECKPOINT** | Merge PR → 5.4 | Decide cuts with PM |
-| Thu Oct 15 | 6.1 Docker + 6.3 cloud deploy (Supabase, host, migrations script D-041) + 6.2 CI w/ Postgres | UI → cloud URL | — |
-| Fri Oct 16 | 6.4 P99 timing; end-to-end on phone. **FEATURE FREEZE end of day** | Bug fixes only | — |
-| Sat Oct 17 | 6.5 TCO/ROI; 7.1 deck draft | — | Business numbers for ROI |
-| Sun Oct 18 | 7.1 deck final; backup demo video | — | — |
-| Mon Oct 19 | 2 rehearsals; warm up cloud URL | — | — |
-| **Tue Oct 20** | **Defense** | | |
+All tasks run on the Mac, branch main (D-080). One Claude Code session per task.
 
-**Cut list (decided at Oct 14 checkpoint, in this order):** 1) 1.5 external API → present OSRM distances as the API source if 1.2a called the OSRM API, else drop; 2) 5.4 dashboard → segment counts + due list inside lookup screen; 3) 6.4 Locust → simple timed script; 4) 2.5 calibration → if dates not filled by Oct 14, report "ML ≈ B0 on synthetic" honestly (D-050); 5) 1.1c name_mn → UI shows English destination names.
+| Date | Mac (main) | Ari |
+|---|---|---|
+| Fri Oct 16 | ✅ 3.6 CNN retrain → 6.1+6.2+4.4b deploy prep → 1.6 part 1 (if route list arrives) | Route list; hosting + domain; labels ✓/✗; commit PROJECT_STATE v2.14 |
+| Sat Oct 17 | 1.6 part 2 (retrain + evaluate + SHAP + export), 5.3d. **FEATURE FREEZE end of day.** Local backup video | ROI numbers (price ₮ + margin %); server ready |
+| Sun Oct 18 | **6.3 cloud deploy** + 6.4 P99 timed script + cloud demo video | Test on phone |
+| Mon Oct 19 | Deck final; 2 rehearsals; warm up cloud URL | — |
+| **Tue Oct 20** | **Defense** | |
+
+**Cut list (in this order):** 0) 3.5 plate fallback + 5.3d hint (first to cut if behind, D-082); 1) 1.5 external API → covered by 1.6 OSRM API script if 1.6 runs, else drop; 2) 5.4 dashboard → segment counts + due list inside lookup screen; 3) 6.4 Locust → simple timed script; 4) 2.5 calibration → if dates not filled by Oct 14, report "ML ≈ B0 on synthetic" honestly (D-050); 5) 1.1c name_mn → UI shows English destination names.
 **Never cut:** cloud live demo, baseline comparison, SHAP, honest synthetic-vs-real reporting, backup video.
 
 **Commit rule (RISK-14):** every task ends with tests run + commit + push before the handoff. Uncommitted work = not done.
@@ -121,19 +119,27 @@ Status: ✅ covered by plan · 🟡 covered but at risk · 🔴 gap — action n
 | 5.4 | Manager dashboard (iMac T4) | Frontend (iMac) | ✅ ACCEPTED (21124d2 = DEMO-KNOWN-GOOD) — segment tiles, due list «Илгээх» / «Эрсдэлтэй», message + copy, «Илгээсэн» idempotent. AT_RISK_GRACE_DAYS=7 duplicated in UI → removed after D-074 |
 | T5 | UI quality + src/ui/Dockerfile (iMac) | Frontend (iMac) | ✅ ACCEPTED (429fc09) — non-root image 180 MB, ~60 MB RAM; docs/ui_run.md (§3 prod compose values for 6.1); 592 passed / 3 skipped |
 | T6 | Ari's UX changes (iMac) | Frontend (iMac) | ✅ ACCEPTED by PM on summary (D-073); handoff file to be pasted for record |
-| T7 | Design polish (lighter fonts, fewer borders) — visual only | Frontend (iMac) | ▶ RUNNING |
-| 5.9 | PR ui → main | Ari | TODO — AFTER backend work is on origin/main (D-075); merge at T7 if stable, else 429fc09 |
+| T7 | Design polish (lighter fonts, fewer borders) — visual only | Frontend (iMac) | ❓ status unknown — `ui` retired (D-080); check origin/ui for unmerged commits in UI-RETIRE |
+| UI-RETIRE | Merge any remaining `ui` commits into main, delete `ui` (local + origin), rewrite docs/IMAC_BRIEFING.md as backup guide, update CLAUDE.md | Mac | TODO (origin/ui still exists, seen Oct 16) |
+| 5.9 | Merge ui → main + local demo prep | Integrator (Mac) | ✅ DONE Oct 13 — merge 32814da, CI green; demo path 14/14 at 390 px; docs/demo_runbook.md; plate reading end-to-end = 4.3 results (27/27 detected, 9 auto-read, 0 wrong) |
+| 5.9b | HOTFIX home navigation (Сануулга card not clickable after T7) | Mac | ✅ DONE Oct 13 — st.button + st.switch_page; «Сүүлд үзсэн» dead spot fixed; 0 console errors; 654 tests |
+| 5.3d | Camera hint «Дугаарыг 2–3 метрээс, урдаас нь авна уу» (+ plate frame if easy) | Mac (iMac-OK) | TODO — small; cut #0 if behind |
+| 0.7 | Repo cleanup (branch chore/cleanup): placeholders removed, README rewritten (run, demo, honest results), pretrained .pt → models/pretrained/, parent CLAUDE.md → ~/Downloads/Capstone/old/ | Mac | ✅ MERGED Oct 16 (PR #1, main = 8d9af2b, includes 3.6a) |
+| 7.0 | Progress-check demo (local) | Ari | ✅ DONE Oct 13 — went well |
+| 3.5 | Plate fallback for small plates / harsh light: detect at 1280 on no_plate; wider crop + upscale + CLAHE on empty/low_confidence; tune on val, report test, wrong auto-fills must stay 0; time-box 3 h. Note: 4/27 test plates fail segmentation ("empty") — the main target | CV Eng | TODO — cut #0 if behind |
+| 3.6a | Pre-label 44 new photos ("More photos") in Label Studio project plates_new with fine-tuned yolo26n (D-083) | CV Eng | ✅ ACCEPTED Oct 16 — 41/44 boxes at ≥0.6, 26 ms/photo CPU, ONNX = .pt (0 diffs); src/cv/ls_setup.py; docs/labeling_howto.md |
+| 3.6 | Retrain char CNN on old + new labels (YOLO unchanged, D-081) | CV Eng | ✅ DONE Oct 16 — v1 KEPT (D-086). 42 photos after dedupe (D-084), chars 784 → 994; old test (27): exact 19 → 20, auto-filled 9 → 14, wrong 0 → 0; McNemar exact p = 1.0; v2 saved as char_cnn_v2.onnx; 675 tests pass. Field tests: none exist |
+| 1.6 | New MN–China / MN–Russia destinations: OSRM API script (also R1), migration 005, generator config → regenerate, retrain, evaluate, SHAP, export; ml_results before/after | Data + ML Eng | TODO — waits on Ari route list (name | city | country | border crossing). Hard stop Sat Oct 17 |
 | 7.2a | Live-demo photo test: print the demo plate "1001 УБА" on paper, check the detector + CNN read it (detector was trained on real truck plates — may fail); fallback = demo photo file or manual entry | Ari + PM | TODO — by Oct 16 |
-| 5.4 | Dashboard (segments, due list, reminders) | Frontend (iMac) | TODO (after 4.4) |
 | 4.5 | Demo seed (RISK-06) | Data Eng | ✅ ACCEPTED Oct 12 — 40 trucks / 105 services placed with the served model; as of seed day: new 8 / returning 11 / loyal 17 / at risk 4, due list 7, methods ridge 29 / b1 9 / b0 2; refuses non-empty DB; demo path in docs/demo_data.md; 532 tests pass |
 | 5.0 | UI design mockup (Design canvas, phone flow: login, home, record, search, card) — Ari + PM iterate, then addendum to iMac | PM + Ari | ▶ IN REVIEW (v2: modern look, simplified card) |
-| 6.1 | Deploy prep (host-agnostic): migration 004 (labels) + apply-missing-migrations script (D-041, D-069) + docker-compose.prod.yml (db + api + ui + Caddy HTTPS, models mount, export_serving step) + runbook docs/deploy.md | Backend Eng | ▶ BRIEF ISSUED Oct 12 (with 6.2) |
+| 6.1 | Deploy prep (host-agnostic): migration 004 (labels) + apply-missing-migrations script (D-041, D-069) + docker-compose.prod.yml (db + api + ui + Caddy HTTPS, models mount, export_serving step) + runbook docs/deploy.md | Backend Eng | TODO — NEXT (brief re-issued Oct 14); must be done before Sun deploy |
 | 6.2 | CI: Postgres service so DB tests run + requirements-ui.txt so UI screen tests run; build API image; known flake: exit 134 after all tests pass (native teardown) → handle | Backend Eng | ▶ BRIEF RE-ISSUED Oct 12 (with 6.1 + 4.4b) |
-| 4.4b | Add `segment` to GET /reminders/due items (contract v0.7) so the UI drops its copy of the D-007 rule | Backend Eng | ▶ in 6.1 brief |
-| 6.3 | Deploy: login + HTTPS + domain (D-061); host option A (free tiers split) or B (one VPS, docker compose) — Ari to choose; schema_migrations table & apply script (D-041) | Backend Eng | TODO — waits on Ari A/B |
+| 4.4b | Add `segment` to GET /reminders/due items (contract v0.7) so the UI drops its copy of the D-007 rule | Backend Eng | ▶ in 6.1 brief (status unknown) |
+| 6.3 | Deploy: login + HTTPS + domain (D-061); host option A (free tiers split) or B (one VPS, docker compose) — Ari to choose; schema_migrations table & apply script (D-041) | Backend Eng | TODO — Sun Oct 18 (D-081); waits on hosting answer |
 | 6.4 | Load test (P50/P95/P99) | Backend Eng | TODO |
+| 7.1 | 13-slide deck | PM + Ari | ▶ v1 exists (PDF, 13 slides, follows course structure); corrections sent (slides 1,2,3,4,5,7,8,9,13); slide 12 costs: MVP ≈ $15 (DO 2 GB $12 + backup $2.40), Mid ≈ $45 + SMS, Enterprise $300+ [ESTIMATE]; ROI waits on Ari price + margin |
 | 6.5 | TCO 3 tiers + ROI | PM + Ari | TODO |
-| 7.1 | 13-slide deck | PM + Ari | TODO |
 | 7.2 | Demo script + backup video + rehearsals | Ari | TODO |
 
 ---
@@ -217,19 +223,35 @@ Status: ✅ covered by plan · 🟡 covered but at risk · 🔴 gap — action n
 | D-073 | 2026-10-12 | iMac work reviewed by a temporary PM chat (5.3c, 5.4, T5) is confirmed. T6 UX changes accepted: photo preview client-side only (not stored); company field only for new vehicles (D-042 kept); truck model = searchable list + «Бусад» (top models from the Excel registry = counts only, no plates); oil grade list 15W-40 / 10W-40 / 20W-50 + «Бусад»; «Тос солигч» field removed (one oil changer); fleet no. behind «Дугааргүй машин» (D-005 kept); search label «Улсын дугаар эсвэл утас»; «Залгах» removed; font Montserrat; Streamlit Deploy menu hidden. Segment labels short: Шинэ / Давтан / Байнгын / Эрсдэлтэй (Ari may change) | iMac report | APPROVED (PM) |
 | D-074 | 2026-10-12 | GET /reminders/due returns `segment` per item (contract v0.7); UI then removes AT_RISK_GRACE_DAYS (single source of the D-007 rule = API) | iMac request | APPROVED (PM) |
 | D-075 | 2026-10-12 | Integration order: (1) all finished Mac work (2.4, 2.4b, 4.3, 4.4, 1.1c+4.5) committed per task and pushed to origin/main; (2) 6.1/6.2/4.4b on main; (3) PR ui → main; (4) live end-to-end photo test on the Mac. Progress-check demo Oct 13 runs locally on the Mac from the `ui` worktree (21124d2 known-good) + docker compose backend | iMac report: Mac work not on origin/main | APPROVED (PM) |
+| D-076 | 2026-10-13 | Demo-day hotfixes may be done directly on main by the Mac (one-time exception to D-052 ownership); iMac then merges main into ui | 5.9b | APPROVED (PM) |
+| D-077 | 2026-10-13 | Field test: phone photos of whole trucks (plate ~10% of image width, harsh sun, new phone DOOGEE with date stamp) → often not read; closer photos (~13%) → read. Detector is strong; char CNN is the weak link (183 photos / 135 trucks). Policy stays: never auto-fill a wrong plate (pre-fill + ask). Improvements: camera hint (5.3d), fallback ladder (3.5), more training data = Later (needs storing photos with driver consent — decision post-defense) | Ari field test Oct 13 | APPROVED (PM) |
+| D-078 | 2026-10-13 | Demo hygiene: re-seed before every demo (down -v, up, seed_demo); never show real plates/phones on the projector — live plate demo with Ari's own car or upload + type; phone-style window: `open -na "Google Chrome" --args --app=http://localhost:8501 --window-size=400,860` | Demo Oct 13 | APPROVED (PM) |
+| D-079 | 2026-10-14 | Process: PM chat moves to a new chat (this one too long). State file is updated once per evening or on big changes. Repo path on Mac: ~/Downloads/Capstone/oil-change-predictor; update state with: cp ~/Downloads/PROJECT_STATE_v<N>.md docs/PROJECT_STATE.md && git add … && git commit && git push | Ari Oct 14 | APPROVED |
 
+| D-080 | 2026-10-14 | All work runs on the Mac on branch main. iMac (second Claude account) = backup capacity only for small independent tasks (briefs marked `iMac-OK`; pull → work → test → push). Branch `ui` retired. Supersedes D-052 and D-076 | Ari | APPROVED by Ari |
+| D-081 | 2026-10-14 | Model upgrade scope: retrain char CNN with new photos (3.6); NO YOLO retrain (detector recall 1.00, CNN is the weak link, D-077); NO ML model changes (synthetic data — would be circular, D-050); add new MN–China / MN–Russia destinations from Ari (1.6). Deploy moved to Sun Oct 18; freeze Sat Oct 17 | Ari Oct 14 | APPROVED by Ari |
+| D-082 | 2026-10-14 | Moved to Later: admin data page (view/edit/delete companies, vehicles, services), one-tap «Viber-ээр илгээх» button (viber://forward), automatic Viber Business sending (needs approved business account + fees). Copy/share button stays the reminder delivery for the defense (D-066) | Ari Oct 14 | APPROVED by Ari |
+| D-083 | 2026-10-16 | 3.6a pre-labels = fine-tuned yolo26n (D-028) ONNX, threshold 0.6, plate text empty. 3.1c stays on oim (D-025) for reproducibility | 3.6a handoff | APPROVED (PM) |
+| D-084 | 2026-10-16 | Duplicates removed by SHA-256 before any split (1 within new, 1 matching an old photo → 42 kept). Only byte-identical copies are caught; near-duplicates are still grouped by plate text (no leak) | 3.6a handoff | APPROVED (PM) |
+| D-085 | 2026-10-16 | 3.6 keep rule, fixed BEFORE results: new CNN served only if 0 wrong auto-fills AND ≥3 more exact reads on test AND correct auto-fills ≥ old | Pre-registration; 1–2 plates = noise (3.3) | APPROVED (PM) |
+| D-086 | 2026-10-16 | 3.6 result: exact +1 (19 → 20 of 27, McNemar p = 1.0) → rule not met → char_cnn v1 stays served; v2 saved (char_cnn_v2.onnx). Auto-fill 9 → 14 with 0 wrong is reported as "promising, not proven" on slides. Rule is NOT changed after seeing results. Promote v2 later only after a field-test set exists and v2 passes it | 3.6 handoff; integrity (same principle as D-050) | APPROVED (PM) |
 ---
 
 ## 6. Open questions
 
-1. Spellings Замын-Үүд, Эрээн, Бээжин, Алтанбулаг, Хиагт + destination aliases — Ari ✓/✗ (blocks 1.1c; cut #5 if no answer by Oct 14)
-2. Waiting days 0–5 for MN–Russia routes — Ari ✓/✗ or own range (config only; cheap to change)
-3. Does oil grade change the interval? (else stays out, D-034)
-4. ~~Recognizer~~ → char CNN (D-065). Open: requirements.txt pins both opencv-python and -headless (works; clean up post-defense)
-5. Did 1.2a call the OSRM API (counts as R1 external API) or copy distances by hand?
-6. Hosting A (free tiers split) or B (one VPS, docker compose) — Ari decides (D-061); price both in 6.5
-7. ROI inputs from Ari (by Oct 17): typical price of one oil change service + rough margin % — estimates OK (D-064)
-8. Reminder consent statement for drivers (R15)
+1. Hosting (6.3, Sun Oct 18): DigitalOcean Singapore 2 GB (PM recommendation) vs teacher-provided server/credits — STILL OPEN, needed by Sat Oct 17
+1b. Route list for 1.6: one line per destination — Mongolian name | city | country | border crossing — needed Fri Oct 16
+2. Domain: does Geo-Expert have one for service.<domain>? Else <ip>.sslip.io
+3. ROI inputs from Ari: typical price of one truck oil change (₮) + rough margin % (slide 12)
+4. Brand color hex (placeholder #1F4E9D)
+5. Labels ✓/✗: segments Шинэ / Давтан / Байнгын / Эрсдэлтэй; destinations «Улаанбаатар хот» / «Бусад» (migration 004 in 6.1)
+6. Reminder message wording (Ari approves) + real GEO_EXPERT_PHONE in .env (never in git)
+7. GitHub repo public? (link on slide 13; no real data in git per cleanup audit)
+8. Teacher feedback from Oct 13 demo
+11. Field-test photo set (phone photos the system failed on) — none saved; needed before promoting char_cnn v2 (D-086)
+12. Label Studio token was visible in a screenshot (Oct 16) — Ari to reset it in Account & Settings
+9. Personal-data law: storing driver data on a foreign server — check before REAL use (not blocking defense)
+10. Does oil grade change the interval? (stays out, D-034)
 
 ## 7. Risks
 
@@ -247,10 +269,12 @@ Status: ✅ covered by plan · 🟡 covered but at risk · 🔴 gap — action n
 | RISK-10 | No real prediction test set (D-063) | HIT | Med | Report honestly; synthetic holdout = main metric; real validation = post-defense from app-recorded dates |
 | RISK-13 | ML may not beat B0: synthetic history features weak (|r| ≤ 0.16), noise large vs per-vehicle signal | High | HIT (2.3b: ML ≈ B0) | D-050: calibrate to real 1.4b intervals (Ari dates = now critical); honest reporting; buffer tuning improves business metric |
 | RISK-12 | Critical path blocked on Ari inputs A1–A4 | — | HIT | Resolved by D-045 (ranges). ML starts ~Oct 11 → 9 days left; cut list active if 2.x slips past Oct 14 |
-| RISK-16 | UI not started (iMac parked) with 8 days left; demo impossible without it | High | High | Start 5.1–5.3 by Oct 14 at the latest; if iMac stays parked, Mac runs it after 4.3 and 5.4 is cut |
+| RISK-16 | ~~UI not started~~ CLOSED — UI built, merged, demo Oct 13 OK | — | — | — |
 | RISK-17 | iPhone HEIC photos rejected (422) → recording fails on phone | Med | High | 4.4 adds pillow-heif; test camera upload on a real phone in 5.x |
-| RISK-18 | Repo PROJECT_STATE still v2.2 → every Claude Code session misses D-053+ (seen in 2.4b, 4.3, 4.4 handoffs) | HIT | Med | Ari commits the latest PROJECT_STATE before the next session |
-| RISK-19 | Finished Mac work (2.4–4.5) not on origin/main → can be lost; UI PR can't merge cleanly; deploy blocked | HIT | High | D-075 step 1 today, before anything else |
+| RISK-18 | Repo PROJECT_STATE behind (v2.12 seen in 3.6 session) → sessions miss recent decisions | HIT | Med | Ari commits PROJECT_STATE v2.14 now, before the next session |
+| RISK-21 | Cloud deploy on Sun Oct 18 leaves 1 day before defense; first deploys often break (HTTPS, camera, RAM) | High | High | 6.1 prep finished and tested locally through Caddy before Sunday; local backup video Sat Oct 17; hosting decided by Sat |
+| RISK-19 | Finished Mac work not on origin/main | CLOSED Oct 12 | — | Only 1.1c+4.5 was missing → 17278bb pushed, CI green |
+| RISK-20 | Cloud deploy not started, 6 days left; depends on hosting answer | High | High | 6.1 prep is host-agnostic → run now; decide host by Oct 14; deploy Oct 15 |
 | RISK-14 | Uncommitted work lost or untested (2.4 found untracked; 1.2a draft lost before) | Med | High | Commit rule D-055: tests + commit + push before every handoff |
 | RISK-15 | Critical path: 4.3 → 4.4 → 6.3 not started with 8 days left | High | High | Mac does only critical path; Oct 14 cut checkpoint; feature freeze Oct 16 |
 | RISK-08 | Plate letters misread (Cyrillic/Latin look-alikes) | High | Med | Normalization map + format regex + confirmation step |
@@ -314,7 +338,11 @@ oil-change-predictor/
 
 ## 10. Later list (not in scope unless Ari approves)
 - Next.js production frontend (post-capstone, D-022)
-- Real SMS / Viber gateway integration
+- Real SMS / Viber gateway integration (automatic Viber Business sending, D-082)
+- One-tap «Viber-ээр илгээх» button via viber://forward (D-082)
+- Admin data page: view / edit / delete companies, vehicles, services (D-082)
+- Promote char_cnn v2 after a field-test set exists (D-086); keep collecting + labeling photos
+- Look at 4 test plates failing character segmentation
 - Automated data drift monitoring + continuous training
 - Oil lab report analysis
 - Multi-branch / multi-user roles beyond one oil changer + admin
