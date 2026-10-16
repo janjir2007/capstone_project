@@ -1,9 +1,9 @@
 # PROJECT_STATE — Capstone "Oil Change Predictor" (Geo-Expert LLC)
 
-- **Version:** 2.14
+- **Version:** 2.15
 - **Last updated:** 2026-10-16
 - **Deadline (defense day):** 2026-10-20 (20 days from 2026-09-30)
-- **Current phase:** All work on the Mac, branch main (D-080). 3.6 CNN retrain done (v1 stays served, D-086). Now: 6.1 deploy prep → 1.6 new routes → FREEZE Sat Oct 17 → 6.3 deploy Sun Oct 18 → rehearse Mon
+- **Current phase:** All work on the Mac, branch main (D-080). 3.6 + 3.6b CNN work done — v1 stays served (D-086, D-088); CV work stopped. Now: 6.1 deploy prep → 1.6 new routes → FREEZE Sat Oct 17 → 6.3 deploy Sun Oct 18 → rehearse Mon
 - **Overall health:** 🟢/🟠 — system works end-to-end locally (UI + API + DB + Ridge + plate reading, 14/14 demo checks). Remaining risk: cloud deploy on Sun Oct 18 leaves 1 day buffer (RISK-21); hosting still undecided; slides/ROI. 4 days left.
 
 ---
@@ -65,8 +65,8 @@ All tasks run on the Mac, branch main (D-080). One Claude Code session per task.
 
 | Date | Mac (main) | Ari |
 |---|---|---|
-| Fri Oct 16 | ✅ 3.6 CNN retrain → 6.1+6.2+4.4b deploy prep → 1.6 part 1 (if route list arrives) | Route list; hosting + domain; labels ✓/✗; commit PROJECT_STATE v2.14 |
-| Sat Oct 17 | 1.6 part 2 (retrain + evaluate + SHAP + export), 5.3d. **FEATURE FREEZE end of day.** Local backup video | ROI numbers (price ₮ + margin %); server ready |
+| Fri Oct 16 | ✅ 3.6 + 3.6b CNN → 6.1+6.2+4.4b deploy prep → 1.6 part 1 (if route list arrives; else 1.6 CUT) | Route list; hosting + domain; labels ✓/✗; commit PROJECT_STATE v2.14 |
+| Sat Oct 17 | 1.6 part 2 (retrain + evaluate + SHAP + export), 5.3d, 3.5 segmentation fix ONLY if 6.1 done. **FEATURE FREEZE end of day.** Local backup video | ROI numbers (price ₮ + margin %); server ready |
 | Sun Oct 18 | **6.3 cloud deploy** + 6.4 P99 timed script + cloud demo video | Test on phone |
 | Mon Oct 19 | Deck final; 2 rehearsals; warm up cloud URL | — |
 | **Tue Oct 20** | **Defense** | |
@@ -129,6 +129,8 @@ All tasks run on the Mac, branch main (D-080). One Claude Code session per task.
 | 3.5 | Plate fallback for small plates / harsh light: detect at 1280 on no_plate; wider crop + upscale + CLAHE on empty/low_confidence; tune on val, report test, wrong auto-fills must stay 0; time-box 3 h. Note: 4/27 test plates fail segmentation ("empty") — the main target | CV Eng | TODO — cut #0 if behind |
 | 3.6a | Pre-label 44 new photos ("More photos") in Label Studio project plates_new with fine-tuned yolo26n (D-083) | CV Eng | ✅ ACCEPTED Oct 16 — 41/44 boxes at ≥0.6, 26 ms/photo CPU, ONNX = .pt (0 diffs); src/cv/ls_setup.py; docs/labeling_howto.md |
 | 3.6 | Retrain char CNN on old + new labels (YOLO unchanged, D-081) | CV Eng | ✅ DONE Oct 16 — v1 KEPT (D-086). 42 photos after dedupe (D-084), chars 784 → 994; old test (27): exact 19 → 20, auto-filled 9 → 14, wrong 0 → 0; McNemar exact p = 1.0; v2 saved as char_cnn_v2.onnx; 675 tests pass. Field tests: none exist |
+| 3.6b | Char CNN: field augmentation + val-only tuning (epochs, strength, per-model threshold); test once; target D-087 | CV Eng | ✅ DONE Oct 16 — target NOT met: val winner = v2 recipe (no aug, 60 ep, thr 0.60, weights = v2); test v1 9 / v2 14 / v3 14 of 27 correct auto-fills, 0 wrong (need 18) → v1 stays. Augmentation: more exact reads on val but confident errors → needs thr 0.70–0.95 → fewer safe auto-fills. Ceiling 23/27 (4 plates fail segmentation). Recognizer reads threshold from char_cnn_version.json (D-089). 693 tests pass |
+| 3.6c | Fix ocr_extend.py section marker "## Task 3.6" (prefix of "## Task 3.6b" → re-running compare deletes the 3.6b section) | CV Eng | LATER — 5 min, before anyone re-runs `ocr_extend compare` |
 | 1.6 | New MN–China / MN–Russia destinations: OSRM API script (also R1), migration 005, generator config → regenerate, retrain, evaluate, SHAP, export; ml_results before/after | Data + ML Eng | TODO — waits on Ari route list (name | city | country | border crossing). Hard stop Sat Oct 17 |
 | 7.2a | Live-demo photo test: print the demo plate "1001 УБА" on paper, check the detector + CNN read it (detector was trained on real truck plates — may fail); fallback = demo photo file or manual entry | Ari + PM | TODO — by Oct 16 |
 | 4.5 | Demo seed (RISK-06) | Data Eng | ✅ ACCEPTED Oct 12 — 40 trucks / 105 services placed with the served model; as of seed day: new 8 / returning 11 / loyal 17 / at risk 4, due list 7, methods ridge 29 / b1 9 / b0 2; refuses non-empty DB; demo path in docs/demo_data.md; 532 tests pass |
@@ -235,6 +237,9 @@ All tasks run on the Mac, branch main (D-080). One Claude Code session per task.
 | D-084 | 2026-10-16 | Duplicates removed by SHA-256 before any split (1 within new, 1 matching an old photo → 42 kept). Only byte-identical copies are caught; near-duplicates are still grouped by plate text (no leak) | 3.6a handoff | APPROVED (PM) |
 | D-085 | 2026-10-16 | 3.6 keep rule, fixed BEFORE results: new CNN served only if 0 wrong auto-fills AND ≥3 more exact reads on test AND correct auto-fills ≥ old | Pre-registration; 1–2 plates = noise (3.3) | APPROVED (PM) |
 | D-086 | 2026-10-16 | 3.6 result: exact +1 (19 → 20 of 27, McNemar p = 1.0) → rule not met → char_cnn v1 stays served; v2 saved (char_cnn_v2.onnx). Auto-fill 9 → 14 with 0 wrong is reported as "promising, not proven" on slides. Rule is NOT changed after seeing results. Promote v2 later only after a field-test set exists and v2 passes it | 3.6 handoff; integrity (same principle as D-050) | APPROVED (PM) |
+| D-087 | 2026-10-16 | CV product target (set BEFORE 3.6b): ≥ 18/27 (2/3) old test plates auto-filled correctly with 0 wrong auto-fills; model promoted only if met, else v1 stays served | Ari: CV must be useful in practice | APPROVED by Ari |
+| D-088 | 2026-10-16 | 3.6b result: augmentation did not help (confident errors); val-chosen model = v2 recipe; test 14/27, 0 wrong → D-087 not met → v1 stays served, v2/v3 saved. Next CV levers = character segmentation (4/27 plates never split into 7 chars, ceiling 23/27) + more labeled photos + field-test set. CV work stops until after 6.1 | 3.6b handoff | APPROVED (PM) |
+| D-089 | 2026-10-16 | Changes D-065: auto-fill threshold stored per served model in models/plate_ocr/char_cnn_version.json {threshold, served_sha256_8}; recognizer refuses to load on hash mismatch (503 + log); default 0.6 if absent (today = 0.6, v1). Threshold is chosen on validation only, never on test | 3.6b handoff | APPROVED (PM) |
 ---
 
 ## 6. Open questions
@@ -341,7 +346,8 @@ oil-change-predictor/
 - Real SMS / Viber gateway integration (automatic Viber Business sending, D-082)
 - One-tap «Viber-ээр илгээх» button via viber://forward (D-082)
 - Admin data page: view / edit / delete companies, vehicles, services (D-082)
-- Promote char_cnn v2 after a field-test set exists (D-086); keep collecting + labeling photos
+- Promote char_cnn v2 after a field-test set exists (D-086, D-088); keep collecting + labeling photos
+- Character segmentation fix (4/27 test plates fail) — task 3.5, Sat only if 6.1 done
 - Look at 4 test plates failing character segmentation
 - Automated data drift monitoring + continuous training
 - Oil lab report analysis
