@@ -1,10 +1,14 @@
-"""Pre-label plate boxes with a pretrained detector (Task 3.1c).
+"""Pre-label plate boxes with a detector (Task 3.1c; yolo26n option added in 3.6a).
 
-Detector: open-image-models ``yolo-v9-t-640-license-plate-end2end`` (ONNX
+Detectors (``run --detector``):
+- ``oim`` (default, 3.1c / D-025): open-image-models ``yolo-v9-t-640-license-plate-end2end`` (ONNX
 Runtime, CPU). Code is MIT; the weights' license and training data are not
 stated by the author (needs verification). Chosen by Ari after a 5-photo pilot
 against Hugging Face ``ishaqinu/yolo26n-license-plate-detection`` (oim: same
 hits, fewer false boxes).
+- ``yolo26n`` (3.6a): our fine-tuned detector (D-028), the same ONNX file the API
+  serves, but keeping EVERY box after NMS (the API keeps only the best one), so
+  background trucks get boxes too (D-026).
 
 Everything runs on this Mac. The only network use is the one-time weight
 download from the package's GitHub release; photos are never sent anywhere
@@ -14,11 +18,14 @@ file names or plate text.
 Usage (Ari runs these; photos are real data):
     python -m src.cv.prelabel pilot --n 5     # overlays for a quick visual check
     python -m src.cv.prelabel run             # all photos -> data/interim/prelabels/predictions.json
+    python -m src.cv.prelabel run --detector yolo26n --photos data/raw/photos_new \
+        --out data/interim/prelabels/predictions_new.json      # task 3.6a
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import random
 import sys
@@ -41,6 +48,8 @@ BOX_COLOR = (229, 57, 53)  # red
 DEFAULT_PHOTOS = Path("data/raw/photos")
 DEFAULT_ROOT = Path("data/raw")  # = LABEL_STUDIO_LOCAL_FILES_DOCUMENT_ROOT in start_label_studio.sh
 DEFAULT_OUT = Path("data/interim/prelabels/predictions.json")
+YOLO_ONNX = Path("models/plate_yolo/yolo26n.onnx")
+NMS_IOU = 0.7  # Ultralytics' default predict IoU, so boxes match what `yolo predict` would give
 
 
 @dataclass(frozen=True)
@@ -81,6 +90,82 @@ class OimDetector:
             Detection(r.bounding_box.x1, r.bounding_box.y1, r.bounding_box.x2, r.bounding_box.y2, float(r.confidence))
             for r in self._model.predict(bgr)
         ]
+
+
+def nms(boxes: np.ndarray, scores: np.ndarray, iou: float = NMS_IOU) -> list[int]:
+    """Greedy non-maximum suppression. ``boxes`` is (N, 4) x1y1x2y2.
+
+    Returns indices of the kept boxes, highest score first. A box is dropped
+    when it overlaps an already kept box by more than ``iou``.
+    """
+    order = list(np.argsort(-scores, kind="stable"))
+    areas = np.clip(boxes[:, 2] - boxes[:, 0], 0, None) * np.clip(boxes[:, 3] - boxes[:, 1], 0, None)
+    keep: list[int] = []
+    while order:
+        i = int(order.pop(0))
+        keep.append(i)
+        if not order:
+            break
+        rest = np.array(order)
+        w = np.clip(np.minimum(boxes[i, 2], boxes[rest, 2]) - np.maximum(boxes[i, 0], boxes[rest, 0]), 0, None)
+        h = np.clip(np.minimum(boxes[i, 3], boxes[rest, 3]) - np.maximum(boxes[i, 1], boxes[rest, 1]), 0, None)
+        inter = w * h
+        union = areas[i] + areas[rest] - inter
+        overlap = np.divide(inter, union, out=np.zeros_like(inter), where=union > 0)
+        order = [int(j) for j, o in zip(rest, overlap) if o <= iou]
+    return keep
+
+
+def yolo_boxes(output: np.ndarray, scale: float, pad: tuple[float, float], shape: tuple[int, int],
+               conf: float = STORE_CONF, iou: float = NMS_IOU) -> list[Detection]:
+    """Raw YOLO output (1, 5, N) = cx, cy, w, h, score in letterbox pixels -> all boxes after NMS.
+
+    Boxes are mapped back to photo pixels (undo padding, then scale) and clipped
+    to the photo, the same mapping as ``plate_reader.best_box``.
+    """
+    rows = output[0]
+    mask = rows[4] >= conf
+    if not mask.any():
+        return []
+    cx, cy, bw, bh, score = (rows[k, mask].astype(np.float64) for k in range(5))
+    h, w = float(shape[0]), float(shape[1])
+    xyxy = np.stack([
+        np.clip((cx - bw / 2 - pad[0]) / scale, 0.0, w),
+        np.clip((cy - bh / 2 - pad[1]) / scale, 0.0, h),
+        np.clip((cx + bw / 2 - pad[0]) / scale, 0.0, w),
+        np.clip((cy + bh / 2 - pad[1]) / scale, 0.0, h),
+    ], axis=1)
+    return [Detection(*(float(v) for v in xyxy[i]), float(score[i])) for i in nms(xyxy, score, iou)]
+
+
+class YoloOnnxDetector:
+    """Fine-tuned yolo26n (D-028) from its ONNX export, onnxruntime on CPU, all boxes kept."""
+
+    def __init__(self, path: Path = YOLO_ONNX, conf: float = STORE_CONF) -> None:
+        from src.cv.plate_reader import _session  # lazy: same CPU session setup as the API
+
+        self._session = _session(path)
+        self._input = self._session.get_inputs()[0].name
+        self._conf = conf
+        # Name + first 8 hex of the file's SHA-256, like the API's model_version (D-065).
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()[:8]
+        self.model_version = f"{path.stem}-onnx-{digest}"
+
+    def detect(self, rgb: np.ndarray) -> list[Detection]:
+        """Letterbox to 640, run the model, return every box >= conf after NMS."""
+        from src.cv.plate_reader import letterbox
+
+        padded, scale, pad = letterbox(rgb)
+        blob = np.ascontiguousarray(padded.transpose(2, 0, 1)[None], dtype=np.float32) / 255.0
+        output = self._session.run(None, {self._input: blob})[0]
+        return yolo_boxes(output, scale, pad, rgb.shape[:2], self._conf)
+
+
+def make_detector(name: str) -> Detector:
+    """Detector by CLI name: ``oim`` (3.1c) or ``yolo26n`` (3.6a)."""
+    if name == "yolo26n":
+        return YoloOnnxDetector()
+    return OimDetector()
 
 
 def load_upright(path: Path) -> Image.Image:
@@ -241,7 +326,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
     if not photos:
         print(f"ERROR: no .jpg photos found under {args.photos}", file=sys.stderr)
         return 1
-    pred = predict_all(photos, OimDetector(), args.root)
+    pred = predict_all(photos, make_detector(args.detector), args.root)
     write_json(pred, args.out)
     print(json.dumps(summarize_predictions(pred), indent=2))
     print(f"Predictions saved to {args.out} (local only; do not share).")
@@ -264,6 +349,8 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--photos", type=Path, default=DEFAULT_PHOTOS)
     run.add_argument("--root", type=Path, default=DEFAULT_ROOT, help="Label Studio local-files root")
     run.add_argument("--out", type=Path, default=DEFAULT_OUT)
+    run.add_argument("--detector", choices=("oim", "yolo26n"), default="oim",
+                     help="oim = pretrained (3.1c, D-025); yolo26n = our fine-tuned ONNX (3.6a)")
     run.set_defaults(func=_cmd_run)
 
     args = parser.parse_args(argv)

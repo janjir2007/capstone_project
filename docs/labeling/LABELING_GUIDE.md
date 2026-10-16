@@ -134,3 +134,16 @@ Label Studio 1.23.2 uses **Personal Access Tokens** (legacy tokens are off by de
 Open a task: the red box is already there with `plate_type = plate`.
 Fix the box if needed (drag corners), delete false boxes, draw any missed plate,
 select the box, type `plate_text`, **Submit**. A photo with no plate → **Skip** as before.
+
+## 8. New photos with our own detector (task 3.6a)
+Photos: `data/raw/photos_new/` (copied from "More photos", all JPEG). New project `plates_new`;
+the old `Plates` project is not touched (`ls_setup` refuses an existing title).
+```bash
+.venv/bin/python -m src.cv.prelabel run --detector yolo26n --photos data/raw/photos_new \
+    --out data/interim/prelabels/predictions_new.json            # done by CV Eng, counts only
+export LS_API_KEY='paste-token-here'                             # Personal Access Token, see 7b
+.venv/bin/python -m src.cv.ls_setup --title plates_new --photos data/raw/photos_new
+.venv/bin/python -m src.cv.ls_import --project plates_new --predictions data/interim/prelabels/predictions_new.json
+```
+Detector = fine-tuned yolo26n ONNX (D-028), all boxes after NMS (IoU 0.7), import threshold 0.6,
+`plate_text` empty. Short rules for labeling: `docs/labeling_howto.md`.

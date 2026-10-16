@@ -71,6 +71,9 @@ venv/
 node_modules/
 .next/
 
+# --- Claude Code personal settings (the shared .claude/settings.json stays tracked)
+.claude/settings.local.json
+
 # --- OS / editors
 .DS_Store
 .vscode/

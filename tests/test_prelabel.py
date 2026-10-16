@@ -145,3 +145,43 @@ def test_summarize_predictions_counts_per_threshold() -> None:
     assert s["conf_histogram"] == {"0.3-0.4": 1, "0.8-0.9": 1, "0.9-1.0": 1}
     assert s["cpu_ms_per_image_median"] == 50  # warm-up call (500 ms) excluded
     assert "secret" not in str(s)  # no file names in the shareable summary
+
+
+# ---------- 3.6a: yolo26n ONNX output -> all boxes (NMS) ----------
+
+from src.cv.prelabel import nms, yolo_boxes  # noqa: E402
+
+
+def _yolo_output(cands: list[tuple[float, float, float, float, float]]) -> np.ndarray:
+    """Fake raw YOLO output (1, 5, N) from (cx, cy, w, h, score) rows."""
+    return np.array(cands, dtype=np.float32).T[None]
+
+
+def test_nms_drops_overlapping_keeps_separate() -> None:
+    boxes = np.array([[0, 0, 10, 10], [1, 1, 10, 10], [50, 50, 60, 60]], dtype=float)
+    scores = np.array([0.9, 0.8, 0.7])
+    assert nms(boxes, scores, iou=0.7) == [0, 2]  # box 1 overlaps box 0 by 0.81
+
+
+def test_nms_keeps_boxes_below_iou() -> None:
+    boxes = np.array([[0, 0, 10, 10], [5, 0, 15, 10]], dtype=float)  # IoU = 1/3
+    assert nms(boxes, np.array([0.5, 0.9]), iou=0.7) == [1, 0]
+
+
+def test_yolo_boxes_two_plates_survive_and_map_back() -> None:
+    # Photo 1280x640 letterboxed to 640: scale 0.5, pad (0, 160).
+    out = _yolo_output([(100, 200, 40, 20, 0.95), (101, 200, 40, 20, 0.90), (500, 300, 60, 30, 0.70),
+                        (300, 300, 10, 10, 0.05)])
+    dets = yolo_boxes(out, scale=0.5, pad=(0, 160), shape=(640, 1280), conf=0.1)
+    assert [round(d.confidence, 2) for d in dets] == [0.95, 0.70]  # duplicate and weak box removed
+    first = dets[0]
+    assert (first.x1, first.y1, first.x2, first.y2) == (160.0, 60.0, 240.0, 100.0)
+
+
+def test_yolo_boxes_none_above_conf() -> None:
+    assert yolo_boxes(_yolo_output([(10, 10, 5, 5, 0.2)]), 1.0, (0, 0), (640, 640), conf=0.6) == []
+
+
+def test_yolo_boxes_clipped_to_photo() -> None:
+    dets = yolo_boxes(_yolo_output([(5, 5, 20, 20, 0.9)]), 1.0, (0, 0), (100, 100), conf=0.1)
+    assert (dets[0].x1, dets[0].y1) == (0.0, 0.0)

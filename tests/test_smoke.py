@@ -18,7 +18,7 @@ REQUIRED_DIRS = [
     "src/ml",
     "src/cv",
     "src/api",
-    "frontend",
+    "src/ui",  # Streamlit frontend; the empty frontend/ placeholder was removed (D-056)
     "notebooks",
     "models",
     "tests",
