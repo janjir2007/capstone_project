@@ -20,6 +20,11 @@ round(days), as in the 2.4 evaluation.
 
 Reminders (task 4.4, D-036): send_on = predicted date − buffer of the method
 that answered (ridge from the model file, b0/b1 from serving_params.json).
+Range (task 2.9): range_low/high_date = service date + round(days + low/high), with
+low/high = 10th/90th percentile of the method's TRAIN out-of-fold residuals
+(serving_params.json ``ranges``; an 80% band, never before the day after the service).
+Null when the params file has no ranges (exported before 2.9).
+
 Segments (D-007): at_risk = predicted date + 7 days grace < as_of (the
 prediction is always based on the newest service, so "not returned" holds);
 else new (1 service) / returning (2) / loyal (3+).
@@ -75,6 +80,8 @@ class Prediction:
     today: date
     days_left: int
     status: str
+    range_low_date: date | None = None
+    range_high_date: date | None = None
 
 
 def status_of(days_left: int, due_soon_days: int = DUE_SOON_DAYS) -> str:
@@ -115,6 +122,18 @@ class Predictor:
         # Reminder buffer per method (days early), tuned on validation: never typed in by hand here.
         self.buffers = {"ridge": int(bundle["buffer_days"]), "b0": int(params["buffers"]["b0"]),
                         "b1": int(params["buffers"]["b1"])}
+        # Residual band per method (task 2.9); absent in params exported before 2.9 -> no range.
+        ranges = params.get("ranges", {})
+        self.ranges = {m: (float(ranges[m][0]), float(ranges[m][1])) for m in ("ridge", "b0", "b1") if m in ranges}
+
+    def date_range(self, method: str, service_date: date, days: float) -> tuple[date | None, date | None]:
+        """(low, high) dates of the method's band around ``days``; (None, None) without ranges."""
+        if method not in self.ranges:
+            return None, None
+        low, high = self.ranges[method]
+        lo = max(days + low, MIN_DAYS)
+        hi = max(days + high, lo)
+        return service_date + timedelta(days=round(lo)), service_date + timedelta(days=round(hi))
 
     def features(self, histories: Mapping[int, Sequence[Visit]]) -> pd.DataFrame:
         """Feature row of every vehicle's newest visit, index = vehicle id (visits oldest first), via build_features (R8)."""
@@ -164,7 +183,8 @@ class Predictor:
             predicted = last.service_date + timedelta(days=round(d))
             days_left = (predicted - today).days
             out[vid] = Prediction(vid, method, reason, self.version, last.id, last.service_date, round(d, 1),
-                                  predicted, today, days_left, status_of(days_left))
+                                  predicted, today, days_left, status_of(days_left),
+                                  *self.date_range(method, last.service_date, d))
         return out
 
     def predict(self, vehicle_id: int, visits: Sequence[Visit], today: date) -> Prediction:

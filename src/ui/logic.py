@@ -175,13 +175,13 @@ def prediction_view(prediction: dict | None) -> dict[str, Any]:
     """Everything the prediction card shows, from a Prediction (contract v0.5) or null.
 
     Keys: pending, big ("5 хоног" / "Өнөөдөр"), sub ("үлдсэн" / "хэтэрсэн"),
-    date, status_label, fg, bg, progress (0–1 share of the interval used),
+    date, date_line, range_line ("(low – high)" or ""), status_label, fg, bg, progress (0–1 share of the interval used),
     note (method + fallback reason), version.
     """
     fg, bg = PENDING_COLORS
     view: dict[str, Any] = {
         "pending": True, "big": PREDICTION_PENDING, "sub": "", "date": None,
-        "status_label": "", "fg": fg, "bg": bg, "progress": None, "note": "", "version": "",
+        "status_label": "", "fg": fg, "bg": bg, "progress": None, "note": "", "version": "", "range_line": "",
     }
     if not prediction or prediction.get("days_left") is None:
         return view
@@ -203,10 +203,14 @@ def prediction_view(prediction: dict | None) -> dict[str, Any]:
     reason = FALLBACK_LABELS.get(prediction.get("fallback_reason") or "")
     if reason:
         note = f"{note} ({reason})" if note else reason
+    # Task 2.9 (contract v0.9): 80% range -> "≈ date" + "(low – high)"; older API without it -> date only.
+    low, high = prediction.get("range_low_date"), prediction.get("range_high_date")
+    approx = "≈ " if low and high else ""
     view.update(
         pending=False, big=big, sub=sub, date=prediction.get("predicted_date"),
         date_line=f"{'Солих ёстой байсан' if days < 0 else 'Дараагийн солилт'}: "
-                  f"{month_day_text(prediction.get('predicted_date'))}",
+                  f"{approx}{month_day_text(prediction.get('predicted_date'))}",
+        range_line=f"({month_day_text(low)} – {month_day_text(high)})" if approx else "",
         status_label=PREDICTION_STATUS_LABELS.get(status, status), fg=fg, bg=bg,
         progress=progress, note=note, version=prediction.get("model_version") or "",
     )

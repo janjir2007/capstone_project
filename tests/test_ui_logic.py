@@ -421,6 +421,16 @@ def test_prediction_date_line() -> None:
     assert soon["date_line"] == "Дараагийн солилт: 10-р сарын 21"
 
 
+def test_prediction_range_line() -> None:
+    """Task 2.9 (contract v0.9): "≈ date" + "(low – high)" when the API sends a range."""
+    view = logic.prediction_view({**PREDICTION, "range_low_date": "2026-10-03", "range_high_date": "2026-11-12"})
+    assert view["date_line"] == "Дараагийн солилт: ≈ 10-р сарын 21"
+    assert view["range_line"] == "(10-р сарын 3 – 11-р сарын 12)"
+    old = logic.prediction_view({**PREDICTION, "range_low_date": None, "range_high_date": None})
+    assert old["range_line"] == "" and "≈" not in old["date_line"]
+    assert logic.prediction_view(None)["range_line"] == ""
+
+
 def test_arrival_view() -> None:
     assert logic.arrival_view(None) is None
     on_time = logic.arrival_view({**PREDICTION, "days_left": 2, "predicted_date": "2026-10-14"})

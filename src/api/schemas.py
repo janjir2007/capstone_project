@@ -197,6 +197,10 @@ class PredictionOut(BaseModel):
     today: date = Field(description="Ulaanbaatar date used for days_left")
     days_left: int = Field(description="predicted_date − today; negative = overdue")
     status: Status = Field(description="D-007: ok > 14 days left, due_soon 0–14, overdue < 0")
+    range_low_date: date | None = Field(
+        default=None, description="Task 2.9: early end of the 80% range (10th percentile of validation errors); "
+                                  "null if the model files have no ranges")
+    range_high_date: date | None = Field(default=None, description="Task 2.9: late end of the 80% range (90th percentile)")
 
 
 # --------------------------------------------------------------------------

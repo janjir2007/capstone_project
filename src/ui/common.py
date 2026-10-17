@@ -221,6 +221,7 @@ h2, h3 {font-size: 14px !important; font-weight: 600 !important; color: var(--mu
 .pc-big {font-size: 34px; font-weight: 600; line-height: 1.2; margin: 8px 0 4px;}
 .pc-big span {font-size: 16px; font-weight: 500;}
 .pc-date {font-size: 15px; font-weight: 500;}
+.pc-range {font-size: 13px; opacity: .85;}
 .pc-note {font-size: 13px; margin-top: 10px; opacity: .85;}
 .pc-pending {font-size: 15px; font-weight: 500; color: var(--ink2);}
 .pc.sm .pc-big {font-size: 28px; margin: 6px 0 2px;} .pc.sm .pc-date {font-size: 13px; opacity: .85;}
@@ -526,7 +527,8 @@ def render_prediction(prediction: dict | None) -> None:
             f'<div class="pc-top">{_dot(v["fg"])}{html.escape(v["status_label"])}</div>'
             f'<div class="pc-big">{html.escape(v["big"])} <span>{html.escape(v["sub"])}</span></div>'
             f'<div class="pc-date">{html.escape(v["date_line"])}</div>'
-            f'<div class="pc-note">{html.escape(v["note"])}</div>'
+            + (f'<div class="pc-range">{html.escape(v["range_line"])}</div>' if v["range_line"] else "")
+            + f'<div class="pc-note">{html.escape(v["note"])}</div>'
         )
     html_block(f'<div class="pc" style="background:{v["bg"]};color:{v["fg"]}">{body}</div>')
 

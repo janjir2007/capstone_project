@@ -1,6 +1,6 @@
 # API contract — data, model and reminder endpoints (tasks 4.2, 4.2b, 4.3, 4.4)
 
-- **Version:** 0.8 (task 1.6, 2026-10-17) · **Owner:** Backend Engineer
+- **Version:** 0.9 (task 2.9, 2026-10-17) · **Owner:** Backend Engineer
 - Extends PROJECT_STATE §8 "API contract" with exact fields. The live, always
   current version is the OpenAPI page of the running API: `http://localhost:8000/docs`.
 - Field names follow [`data_dictionary.md`](data_dictionary.md). Code:
@@ -60,6 +60,8 @@
 | `today` | date | Ulaanbaatar date used for `days_left` |
 | `days_left` | int | `predicted_date − today`; negative = overdue |
 | `status` | `ok` \| `due_soon` \| `overdue` | D-007: ok > 14 days left, due_soon 0–14, overdue < 0 |
+| `range_low_date` | date \| null | task 2.9: `last_service_date + round(predicted_days + low)`, low = 10th percentile of the method's validation errors (never before the day after the service); null if `serving_params.json` has no `ranges` |
+| `range_high_date` | date \| null | same with the 90th percentile → together an 80% range ("≈ date (low – high)"); on the synthetic test 83% of actual visits fell inside |
 
 Method rules (checked on the newest service, in this order):
 
@@ -71,7 +73,7 @@ Method rules (checked on the newest service, in this order):
 | 4 | first visit (no earlier service) | `b1` | `first_visit` |
 | 5 | otherwise | `ridge` | null |
 
-`b0` = median days between visits in the training data (58 days on the current synthetic data);
+`b0` = median days between visits in the training data (53 days on the current synthetic data, task 2.9 export);
 `b1` = 17,500 km ÷ route km/day (D-035, D-049); `ridge` = the 2.4b model with inputs from
 `src/common/features.py`. All numbers are from SYNTHETIC training data until real calibration (D-050).
 
@@ -218,3 +220,4 @@ model version, predicted date and send day (`reminders_sent`, migration 003). No
 | 0.6 | 2026-10-12 | Task 1.1c: `name_mn` added to `GET /destinations` items and to `ServiceOut.destination` (additive; null for 2 of 7 destinations) |
 | 0.7 | 2026-10-17 | Task 4.4b (D-074): `segment` added to every `GET /reminders/due` item (additive). Migration 004 (task 6.1): `name_mn` filled for the last 2 destinations |
 | 0.8 | 2026-10-17 | Task 1.6: migration 005 adds 4 cross-border destinations (no field change). `GET /destinations` keeps `mixed` last (order by `route_category = 'mixed'`, then id) |
+| 0.9 | 2026-10-17 | Task 2.9: `range_low_date`, `range_high_date` added to Prediction (card + `GET /vehicles/{id}/prediction`; additive, nullable). `serving_params.json` gains `ranges` |

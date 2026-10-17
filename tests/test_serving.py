@@ -126,6 +126,30 @@ def test_dates_days_left_and_status_in_given_today(predictor: P.Predictor) -> No
     assert (p.days_left, p.status, p.today) == (-5, "overdue", TODAY)
 
 
+def test_no_ranges_in_params_gives_null_range(predictor: P.Predictor) -> None:
+    """serving_params.json exported before 2.9 has no ranges -> fields null, nothing else changes."""
+    p = predictor.predict(1, [visit(1, "2026-08-10", None, dest=None, route="mixed")], TODAY)
+    assert (p.range_low_date, p.range_high_date) == (None, None)
+
+
+def test_range_per_method_around_the_prediction(model_dir: Path, tmp_path: Path) -> None:
+    """Task 2.9: band = service date + round(days + low/high) of the method that answered."""
+    params = json.loads((model_dir / P.PARAMS_FILE).read_text()) | {
+        "ranges": {"ridge": [-18.4, 21.9], "b0": [-19.0, 24.0], "b1": [-80.0, 29.3], "quantiles": [0.1, 0.9]}}
+    (tmp_path / P.MODEL_FILE).write_bytes((model_dir / P.MODEL_FILE).read_bytes())
+    (tmp_path / P.PARAMS_FILE).write_text(json.dumps(params))
+    pred = P.load_predictor(tmp_path)
+    b0 = pred.predict(1, [visit(1, "2026-08-10", None, dest=None, route="mixed")], TODAY)
+    assert (b0.range_low_date, b0.range_high_date) == (date(2026, 9, 18), date(2026, 10, 31))  # 58−19, 58+24
+    b1 = pred.predict(1, [visit(1, "2026-10-01", 100_000)], TODAY)
+    assert b1.range_low_date == date(2026, 10, 2)  # never before the day after the service
+    assert b1.range_low_date <= b1.predicted_date <= b1.range_high_date
+    visits = [visit(1, "2026-06-01", 300_000), visit(2, "2026-07-20", 318_000), visit(3, "2026-09-10", 336_500)]
+    ridge = pred.predict(1, visits, TODAY)
+    assert ridge.method == "ridge"
+    assert ridge.range_low_date < ridge.predicted_date < ridge.range_high_date
+
+
 @pytest.mark.parametrize("days_left", [-30, -1, 0, 1, 13, 14, 15, 90])
 def test_status_matches_evaluation_rule(days_left: int) -> None:
     from src.ml.evaluate import status_of
