@@ -26,7 +26,7 @@ destination_match:
   # Best match must beat the second best by this much (avoid coin flips).
   min_margin: {value: 0.05, tag: "[ESTIMATE]"}
 
-# Destination list = migration 001 seed rows (names are the keys, D-040).
+# Destination list = migration 001 seed rows + migration 005 (names are the keys, D-040).
 # Aliases: Mongolian name + usual short forms. Needs Ari's check.
 destinations:
   - name: "Ulaanbaatar city (local work)"
@@ -53,6 +53,22 @@ destinations:
     route_category: mn_russia
     aliases: ["Хиагт", "Кяхта", "Kyakhta"]
     tag: "[SOURCE: migration 001] aliases [ESTIMATE]"
+  - name: "Ganqimaodu (CN side of Gashuunsukhait border)"
+    route_category: mn_china
+    aliases: ["Ганцмод", "Ganqimaodu", "Gantsmod"]
+    tag: "[SOURCE: migration 005] aliases [ESTIMATE]"
+  - name: "Ceke (CN side of Shiveekhuren border)"
+    route_category: mn_china
+    aliases: ["Сэхээ", "Ceke", "Sekhee"]
+    tag: "[SOURCE: migration 005] aliases [ESTIMATE]"
+  - name: "Ulan-Ude (via Altanbulag–Kyakhta)"
+    route_category: mn_russia
+    aliases: ["Улаан-Үд", "Улан-Удэ", "Ulan-Ude"]
+    tag: "[SOURCE: migration 005] aliases [ESTIMATE]"
+  - name: "Kosh-Agach (via Tsagaannuur–Tashanta)"
+    route_category: mn_russia
+    aliases: ["Кош-Агач", "Kosh-Agach"]
+    tag: "[SOURCE: migration 005] aliases [ESTIMATE]"
   - name: "Other / several / unknown"
     route_category: mixed
     aliases: ["Бусад", "Other", "Unknown"]

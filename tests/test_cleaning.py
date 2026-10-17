@@ -77,6 +77,14 @@ def test_text_key() -> None:
     ("Khiagt", "Kyakhta (RU side of border)"),
     ("Beejin", "Beijing"),
     ("Эрээн", "Erenhot (CN side of border)"),
+    # Task 1.6 destinations: the generator's N5 spellings must still be found.
+    ("Ганц мод", "Ganqimaodu (CN side of Gashuunsukhait border)"),
+    ("gantsmod", "Ganqimaodu (CN side of Gashuunsukhait border)"),
+    ("sehee", "Ceke (CN side of Shiveekhuren border)"),
+    ("Улаан Үд", "Ulan-Ude (via Altanbulag–Kyakhta)"),
+    ("ulaan ud", "Ulan-Ude (via Altanbulag–Kyakhta)"),
+    ("koshagach", "Kosh-Agach (via Tsagaannuur–Tashanta)"),
+    ("Кош Агач", "Kosh-Agach (via Tsagaannuur–Tashanta)"),
     ("Moscow", None),
 ])
 def test_match_destination(cfg: dict, raw: str, expected: str | None) -> None:
@@ -181,8 +189,22 @@ def test_scores_on_generated_data(cfg: dict, generated: Path) -> None:
     cleaned, issues = clean_records(dirty, cfg)
     assert len(cleaned) == len(truth)  # every duplicate removed, nothing else dropped
     scores = score_rules(cleaned, issues, noise_log, truth).set_index("Rule")
-    assert (scores["Precision"].dropna() >= 0.95).all()
-    assert (scores["Recall"].dropna() >= 0.95).all()
+    others = scores.drop(index="N8")
+    assert (others["Precision"].dropna() >= 0.95).all()
+    assert (others["Recall"].dropna() >= 0.95).all()
+    # N8: a truck with only 2 readings and a ×10/÷10 error cannot be decided (fixing
+    # either reading makes the pair consistent; the tie-break picks the later one).
+    # Since task 1.6's destination mix, this seed has one such truck. Every other N8
+    # record must be found, and every N8 find must be right.
+    found = set(issues.loc[issues["issue"] == "odometer_digit_error", "record_id"])
+    logged = set(noise_log.loc[noise_log["noise"] == "N8", "record_id"])
+    readings = truth.groupby("vehicle_id")["record_id"].transform("size")
+    vehicle_of = truth.set_index("record_id")["vehicle_id"]
+    for errors in (found - logged, logged - found):  # wrong finds, missed records
+        assert set(readings[truth["record_id"].isin(errors)]) <= {2}
+    assert {vehicle_of[r] for r in found ^ logged if r in vehicle_of.index} == \
+        {vehicle_of[r] for r in found - logged}  # misses and wrong finds are the same trucks
+    assert len(found - logged) <= 1
 
 
 def test_main_writes_files_and_same_report_twice(generated: Path, tmp_path: Path) -> None:

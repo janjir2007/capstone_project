@@ -42,7 +42,7 @@ from tests.test_schema import database_url
 SQL_DIR = Path(__file__).resolve().parent.parent / "src" / "data"
 SQL_FILES = ["schema.sql", "migrations/001_destinations.up.sql", "migrations/002_destinations_name_mn.up.sql",
              "migrations/003_reminders_sent.up.sql", "migrations/004_destinations_name_mn_rest.up.sql",
-             "sample_data.sql"]
+             "migrations/005_destinations_cross_border.up.sql", "sample_data.sql"]
 TODAY = date(2026, 9, 30)
 
 
@@ -453,16 +453,17 @@ def test_destinations_list(client: TestClient) -> None:
     response = client.get("/destinations")
     assert response.status_code == 200
     destinations = response.json()
-    assert len(destinations) == 7
+    assert len(destinations) == 11  # 7 from migration 001 + 4 from 005 (task 1.6)
     assert set(destinations[0]) == {"id", "name", "name_mn", "route_category"}
     assert destinations[0] == {"id": destinations[0]["id"], "name": "Ulaanbaatar city (local work)",
                                "name_mn": "Улаанбаатар хот", "route_category": "ub_city"}
-    assert destinations[-1]["route_category"] == "mixed"  # "Other / several / unknown" last
-    assert [d["id"] for d in destinations] == sorted(d["id"] for d in destinations)
+    assert destinations[-1]["route_category"] == "mixed"  # "Other / several / unknown" last, also after 005's rows
+    rest = [d["id"] for d in destinations[:-1]]
+    assert rest == sorted(rest)
 
 
 def test_destinations_have_mongolian_labels(client: TestClient) -> None:
-    """Migrations 002 + 004 (D-040, task 6.1): every destination shows a Mongolian label."""
+    """Migrations 002 + 004 + 005 (D-040, tasks 6.1, 1.6): every destination shows a Mongolian label."""
     labels = {d["name"]: d["name_mn"] for d in client.get("/destinations").json()}
     assert labels == {
         "Ulaanbaatar city (local work)": "Улаанбаатар хот",
@@ -471,6 +472,10 @@ def test_destinations_have_mongolian_labels(client: TestClient) -> None:
         "Beijing": "Бээжин",
         "Altanbulag (MN–RU border)": "Алтанбулаг",
         "Kyakhta (RU side of border)": "Хиагт",
+        "Ganqimaodu (CN side of Gashuunsukhait border)": "Ганцмод",
+        "Ceke (CN side of Shiveekhuren border)": "Сэхээ",
+        "Ulan-Ude (via Altanbulag–Kyakhta)": "Улаан-Үд",
+        "Kosh-Agach (via Tsagaannuur–Tashanta)": "Кош-Агач",
         "Other / several / unknown": "Бусад",
     }
 

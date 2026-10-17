@@ -31,7 +31,8 @@ fleet:
   first_service_spread_days: {value: 365, tag: "[ESTIMATE]"}
   start_odometer_km: {min: 50000, max: 600000, tag: "[ESTIMATE]", note: "odometer at first observed service"}
 
-# Destinations: docs/synthetic_rules.md §1 = migration 001 seed rows with km.
+# Destinations: docs/synthetic_rules.md §1 = migration 001 seed rows with km,
+# + migration 005 (task 1.6).
 # ub_city, mine_site and mixed are NOT generated: no km (ub_city, mixed) or no
 # named site yet (mine_site, A2). See handoff report.
 destinations:
@@ -45,6 +46,17 @@ destinations:
      tag: "[SOURCE: OSRM https://router.project-osrm.org/route/v1/driving/106.9177016,47.9184676;106.4970360,50.3141390?overview=false]"}
   - {name: "Kyakhta (RU side of border)", route_category: mn_russia, one_way_km: 351,
      tag: "[SOURCE: OSRM https://router.project-osrm.org/route/v1/driving/106.9177016,47.9184676;106.4491500,50.3531760?overview=false]"}
+  # Task 1.6: Ari's routes, OSRM through the border crossing as a waypoint
+  # (src/data/external_api.py, configs/routes_1_6.yaml). Ganqimaodu starts at
+  # Tavan Tolgoi (coal shuttle), the others at UB.
+  - {name: "Ganqimaodu (CN side of Gashuunsukhait border)", route_category: mn_china, one_way_km: 247,
+     tag: "[SOURCE: OSRM https://router.project-osrm.org/route/v1/driving/105.5713167,43.7136004;107.5688958,42.4153691;107.5733786,42.4003511?overview=false]"}
+  - {name: "Ceke (CN side of Shiveekhuren border)", route_category: mn_china, one_way_km: 928,
+     tag: "[SOURCE: OSRM https://router.project-osrm.org/route/v1/driving/106.9177016,47.9184676;101.2818646,42.5884756;101.2735126,42.5588510?overview=false]"}
+  - {name: "Ulan-Ude (via Altanbulag–Kyakhta)", route_category: mn_russia, one_way_km: 578,
+     tag: "[SOURCE: OSRM https://router.project-osrm.org/route/v1/driving/106.9177016,47.9184676;106.4886870,50.3218610;107.5839105,51.8357841?overview=false]"}
+  - {name: "Kosh-Agach (via Tsagaannuur–Tashanta)", route_category: mn_russia, one_way_km: 1786,
+     tag: "[SOURCE: OSRM https://router.project-osrm.org/route/v1/driving/106.9177016,47.9184676;89.4675213,49.6079465;88.6628218,49.9947055?overview=false]"}
 
 # Equal share for every destination above (task 1.3 brief, A3 unanswered).
 destination_mix: {value: equal, tag: "[ESTIMATE]"}
@@ -118,3 +130,7 @@ destination_variants:
   "Beijing": ["Бээжин", "beijing", "Beejin"]
   "Altanbulag (MN–RU border)": ["Алтанбулаг", "Altanbulag", "altanbulag"]
   "Kyakhta (RU side of border)": ["Хиагт", "Kyakhta", "Khiagt"]
+  "Ganqimaodu (CN side of Gashuunsukhait border)": ["Ганцмод", "Ганц мод", "Gantsmod", "gantsmod"]
+  "Ceke (CN side of Shiveekhuren border)": ["Сэхээ", "Sekhee", "sehee"]
+  "Ulan-Ude (via Altanbulag–Kyakhta)": ["Улаан-Үд", "Улаан Үд", "Ulan-Ude", "ulaan ud"]
+  "Kosh-Agach (via Tsagaannuur–Tashanta)": ["Кош-Агач", "Кош Агач", "Kosh-Agach", "koshagach"]

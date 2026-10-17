@@ -161,10 +161,10 @@ def test_return_shares_near_d031(data: tuple) -> None:
 
 
 def test_equal_destination_mix(data: tuple) -> None:
-    # Home destinations are drawn equally -> first records spread over all 5.
+    # Home destinations are drawn equally -> first records spread over all 9 (5 + 4 from task 1.6).
     first = data[0].sort_values("service_date").groupby("vehicle_id").first()
     share = first["destination_name"].value_counts(normalize=True)
-    assert len(share) == 5
+    assert len(share) == 9
     assert share.max() - share.min() < 0.08
 
 

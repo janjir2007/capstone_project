@@ -1,6 +1,6 @@
 # API contract — data, model and reminder endpoints (tasks 4.2, 4.2b, 4.3, 4.4)
 
-- **Version:** 0.7 (task 4.4b, 2026-10-17) · **Owner:** Backend Engineer
+- **Version:** 0.8 (task 1.6, 2026-10-17) · **Owner:** Backend Engineer
 - Extends PROJECT_STATE §8 "API contract" with exact fields. The live, always
   current version is the OpenAPI page of the running API: `http://localhost:8000/docs`.
 - Field names follow [`data_dictionary.md`](data_dictionary.md). Code:
@@ -153,10 +153,12 @@ Query parameter: `force` (bool, default `false`) — see 409 duplicate below.
 ### `GET /destinations`
 List for the "where are you heading next?" picker; send the chosen `id` as `destination_id`.
 
-- **200** `[{id, name, name_mn, route_category}]`, seeded order (`Other / several / unknown` last)
+- **200** `[{id, name, name_mn, route_category}]`, seeded order (id), `Other / several / unknown`
+  (`mixed`) always last (v0.8: also after the 4 rows of migration 005)
 - `name_mn` (v0.6, migration 002, D-040) = Mongolian label to SHOW, e.g. `Замын-Үүд`; `null` = no label
   yet → show `name`. Since migration 004 (task 6.1) all 7 seeded rows have one (`Улаанбаатар хот`, `Бусад`);
-  the field stays nullable.
+  the field stays nullable. Migration 005 (task 1.6) adds 4 rows, all with a label:
+  `Ганцмод`, `Сэхээ` (`mn_china`), `Улаан-Үд`, `Кош-Агач` (`mn_russia`) → 11 destinations.
   `name` stays the key; send `id` as before
 
 ### `GET /stats/segments?as_of=`
@@ -215,3 +217,4 @@ model version, predicted date and send day (`reminders_sent`, migration 003). No
 | 0.5 | 2026-10-12 | Task 4.4: `GET /reminders/due`, `POST /reminders/{service_id}/sent`; segments + card `at_risk` from the served prediction; fleet numbers ignore dashes (lookup + `POST /services`, `normalized` e.g. `ht12`); HEIC photos accepted |
 | 0.6 | 2026-10-12 | Task 1.1c: `name_mn` added to `GET /destinations` items and to `ServiceOut.destination` (additive; null for 2 of 7 destinations) |
 | 0.7 | 2026-10-17 | Task 4.4b (D-074): `segment` added to every `GET /reminders/due` item (additive). Migration 004 (task 6.1): `name_mn` filled for the last 2 destinations |
+| 0.8 | 2026-10-17 | Task 1.6: migration 005 adds 4 cross-border destinations (no field change). `GET /destinations` keeps `mixed` last (order by `route_category = 'mixed'`, then id) |

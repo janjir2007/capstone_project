@@ -56,6 +56,7 @@ Notes:
 - All trips are assumed to start and end in Ulaanbaatar, where the service happens [ARI ✓ needed].
 - Round-trip km = 2 × one-way km (same road back) [ESTIMATE].
 - Rows can be added or deleted by Ari; the generator reads only this table, nothing else.
+- Task 1.6 (2026-10-17) added 4 routes from Ari, NOT in this table (migration 005, `configs/generator.yaml`, `configs/routes_1_6.yaml`): Ganqimaodu 247 km (start **Tavan Tolgoi**, via Gashuunsukhait), Ceke 928 km (via Shiveekhuren), Ulan-Ude 578 km (via Altanbulag–Kyakhta), Kosh-Agach 1,786 km (via Tsagaannuur–Tashanta). OSRM through the border crossing as a waypoint (`src/data/external_api.py`). Road ÷ straight line = 1.13, 1.25, 1.27, 1.31 [SOURCE: computed from the OSM points in routes_1_6.yaml].
 
 **Destination mix** — share of service visits per route category (used to draw destinations in the generator):
 

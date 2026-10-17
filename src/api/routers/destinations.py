@@ -21,6 +21,8 @@ router = APIRouter(tags=["destinations"])
 @router.get("/destinations", response_model=list[DestinationOut])
 def list_destinations(session: Annotated[Session, Depends(get_session)]) -> list[DestinationOut]:
     """All destinations in seeded order (id): the list was written in a useful
-    order, with "Other / several / unknown" last."""
-    destinations = session.scalars(select(Destination).order_by(Destination.id)).all()
+    order. "Other / several / unknown" (route_category mixed) stays last, also
+    after rows added by later migrations (005, task 1.6)."""
+    mixed_last = Destination.route_category == "mixed"  # False sorts before True
+    destinations = session.scalars(select(Destination).order_by(mixed_last, Destination.id)).all()
     return [DestinationOut.model_validate(destination) for destination in destinations]

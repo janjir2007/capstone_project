@@ -1,0 +1,62 @@
+# =====================================================================
+# New cross-border routes (Task 1.6) — read by src/data/external_api.py
+#
+# Route lines from Ari (1.6 brief, Oct 17):
+#   Mongolian name | city | country | border crossing | start (blank = UB)
+#   Ганцмод  | Ganqimaodu | China  | Гашуунсухайт – Ganqimaodu | Таван толгой
+#   Сэхээ    | Ceke       | China  | Шивээхүрэн – Ceke         |
+#   Улаан-Үд | Ulan-Ude   | Russia | Алтанбулаг – Kyakhta      |
+#   Кош-Агач | Kosh-Agach | Russia | Цагааннуур – Tashanta     |
+#
+# Points: coordinates copied from OpenStreetMap objects (found with
+# Nominatim / Overpass on 2026-10-17). `osm` = the object, check it at
+# https://www.openstreetmap.org/<osm>. Town = the place point (same rule as
+# D-037: "UB centre -> town point"); crossing = the Mongolian-side
+# border_control object. Coordinates are lon, lat (OSRM order).
+# =====================================================================
+
+points:
+  ulaanbaatar:   {lon: 106.9177016, lat: 47.9184676, osm: "same point as migration 001 / generator.yaml", note: "UB city centre"}
+  tavan_tolgoi:  {lon: 105.5713167, lat: 43.7136004, osm: relation/19876255, note: "Таван толгой place (Цогтцэций sum); the coal pit is ~13 km SW"}
+  gashuunsukhait: {lon: 107.5688958, lat: 42.4153691, osm: way/799175446, note: "Гашуунсухайт border_control (MN side)"}
+  ganqimaodu:    {lon: 107.5733786, lat: 42.4003511, osm: node/4072951314, note: "甘其毛都镇 town"}
+  shiveekhuren:  {lon: 101.2818646, lat: 42.5884756, osm: way/1452707963, note: "Shivee khuren border_control (MN side)"}
+  ceke:          {lon: 101.2735126, lat: 42.5588510, osm: relation/16198214, note: "策克镇 town point (Nominatim centroid = linked town place)"}
+  altanbulag_bc: {lon: 106.4886870, lat: 50.3218610, osm: relation/10361565, note: "Altanbulag border_control (MN side)"}
+  ulan_ude:      {lon: 107.5839105, lat: 51.8357841, osm: relation/1979944, note: "Улан-Удэ city point"}
+  tsagaannuur_bc: {lon: 89.4675213, lat: 49.6079465, osm: way/323460412, note: "Цагааннуур Цогцолбор border_control (MN side, Bayan-Ölgii)"}
+  kosh_agach:    {lon: 88.6628218, lat: 49.9947055, osm: node/280515128, note: "Кош-Агач town"}
+
+# One route = start -> crossing (waypoint) -> destination. `name` is the
+# English key (destinations.name, D-040 style); `name_mn` is Ari's label.
+routes:
+  - name: "Ganqimaodu (CN side of Gashuunsukhait border)"
+    name_mn: "Ганцмод"
+    route_category: mn_china
+    start: tavan_tolgoi
+    crossing: gashuunsukhait
+    destination: ganqimaodu
+  - name: "Ceke (CN side of Shiveekhuren border)"
+    name_mn: "Сэхээ"
+    route_category: mn_china
+    start: ulaanbaatar
+    crossing: shiveekhuren
+    destination: ceke
+  - name: "Ulan-Ude (via Altanbulag–Kyakhta)"
+    name_mn: "Улаан-Үд"
+    route_category: mn_russia
+    start: ulaanbaatar
+    crossing: altanbulag_bc
+    destination: ulan_ude
+  - name: "Kosh-Agach (via Tsagaannuur–Tashanta)"
+    name_mn: "Кош-Агач"
+    route_category: mn_russia
+    start: ulaanbaatar
+    crossing: tsagaannuur_bc
+    destination: kosh_agach
+
+# OSRM snaps every point to the nearest road. If that road is farther than
+# this, the point has no road nearby -> treated as "no road route" (we do
+# not want a km value for a road that does not reach the place).
+max_snap_m: 2000
+cache_path: data/external/osrm_cache.json  # git-ignored (data/**)
