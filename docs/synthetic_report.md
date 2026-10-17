@@ -9,21 +9,21 @@ Files (git-ignored): `data/synthetic/service_records_clean.csv` (truth + target)
 
 | What | Count |
 |---|---|
-| Service records (clean) | 3,845 |
-| Service records (dirty, incl. duplicates) | 3,927 |
+| Service records (clean) | 3,884 |
+| Service records (dirty, incl. duplicates) | 3,968 |
 | Vehicles | 500 |
 | Companies | 121 |
-| Records per vehicle (min / median / max) | 1 / 7 / 20 |
+| Records per vehicle (min / median / max) | 1 / 6 / 24 |
 | Service dates | 2024-01-02 – 2026-09-30 |
-| Training rows (next visit observed) | 3,345 |
+| Training rows (next visit observed) | 3,384 |
 
 ## 2. Return behavior
 
 | Outcome | Target (D-031) | Generated |
 |---|---|---|
-| on_time | 50% | 50.2% |
+| on_time | 50% | 50.3% |
 | late | 40% | 39.3% |
-| never | 10% | 10.5% |
+| never | 10% | 10.4% |
 
 Shares are over records whose next step is known. 108 more records are **censored** (the next visit would fall after `end_date`); they have no target, like the newest real records. `never` includes late visits beyond the 60-day maximum (§4).
 
@@ -35,22 +35,26 @@ Days and km from one service to the next, for visits that came back.
 
 | Series | n | mean | p5 | p25 | p50 | p75 | p95 |
 |---|---|---|---|---|---|---|---|
-| All returned | 3,345.0 | 59.6 | 36.0 | 48.0 | 58.0 | 70.0 | 88.0 |
-| On time | 1,876.0 | 52.3 | 33.0 | 43.0 | 52.0 | 61.0 | 73.0 |
-| Late | 1,469.0 | 68.9 | 45.0 | 58.0 | 68.0 | 79.0 | 96.6 |
-| Km (all returned) | 3,345.0 | 20,183.5 | 15,491.6 | 17,236.0 | 19,446.0 | 21,875.0 | 28,091.8 |
+| All returned | 3,384.0 | 55.3 | 31.0 | 43.0 | 54.0 | 66.0 | 85.0 |
+| On time | 1,900.0 | 47.6 | 29.0 | 38.0 | 46.0 | 56.0 | 70.0 |
+| Late | 1,484.0 | 65.2 | 41.0 | 54.0 | 64.0 | 76.0 | 93.0 |
+| Km (all returned) | 3,384.0 | 20,456.5 | 15,485.0 | 17,277.8 | 19,478.5 | 22,324.0 | 28,965.4 |
 
 **By stated destination** (destination said at the service; the truck may change route afterwards, V6):
 
 | Stated destination | n | median | p25 | p75 | Formula days for 15,000 km (all ranges at middle) |
 |---|---|---|---|---|---|
-| Altanbulag (MN–RU border) | 523 | 64.0 | 53.0 | 75.0 | 70.1 |
-| Beijing | 985 | 51.0 | 41.0 | 62.0 | 29.9 |
-| Erenhot (CN side of border) | 700 | 58.0 | 49.0 | 71.0 | 43.9 |
-| Kyakhta (RU side of border) | 465 | 63.0 | 53.0 | 74.0 | 69.2 |
-| Zamyn-Uud (MN–CN border) | 672 | 60.0 | 50.0 | 71.0 | 44.4 |
+| Altanbulag (MN–RU border) | 261 | 60.0 | 50.0 | 71.0 | 70.1 |
+| Beijing | 575 | 49.0 | 40.0 | 61.0 | 29.9 |
+| Ceke (CN side of Shiveekhuren border) | 421 | 52.0 | 43.0 | 63.0 | 36.0 |
+| Erenhot (CN side of border) | 357 | 57.0 | 46.0 | 68.0 | 43.9 |
+| Ganqimaodu (CN side of Gashuunsukhait border) | 220 | 61.0 | 50.0 | 73.0 | 91.7 |
+| Kosh-Agach (via Tsagaannuur–Tashanta) | 616 | 43.0 | 34.0 | 56.0 | 26.3 |
+| Kyakhta (RU side of border) | 270 | 59.0 | 50.0 | 70.8 | 69.2 |
+| Ulan-Ude (via Altanbulag–Kyakhta) | 319 | 57.0 | 48.0 | 66.0 | 48.2 |
+| Zamyn-Uud (MN–CN border) | 345 | 55.0 | 47.0 | 68.0 | 44.4 |
 
-**Median days by season of the service:** winter 59, spring 58, summer 56, autumn 59.
+**Median days by season of the service:** winter 55, spring 53, summer 52, autumn 54.
 
 Reading: on the short Russian-border routes (~700 km round trip) the 0–5 waiting days per trip take more time than the driving, so the destinations differ less than their km suggest. If real waiting is shorter or longer, this changes a lot (see open items).
 
@@ -60,17 +64,17 @@ Why the formula column is lower than the medians, most of all for long routes: (
 
 | Rule | Config key | Target | Applied (share of clean records) |
 |---|---|---|---|
-| N1 | missing_phone | 10% | 10.8% |
-| N2 | missing_driver_name | 15% | 14.9% |
+| N1 | missing_phone | 10% | 10.7% |
+| N2 | missing_driver_name | 15% | 14.8% |
 | N3 | missing_destination | 10% | 10.7% |
 | N4 | missing_odometer | 3% | 3.1% |
-| N5 | destination_variant | 20% | 19.8% |
+| N5 | destination_variant | 20% | 20.2% |
 | N6 | plate_latin_lookalike | 5% | 4.6% |
-| N7 | plate_spacing | 5% | 5.3% |
-| N8 | odometer_digit_error | 1% | 0.7% |
-| N9 | odometer_lower_than_last | 1% | 1.0% |
+| N7 | plate_spacing | 5% | 5.4% |
+| N8 | odometer_digit_error | 1% | 0.6% |
+| N9 | odometer_lower_than_last | 1% | 0.9% |
 | N10 | phone_format | 10% | 10.8% |
-| N11 | duplicate_record | 2% | 2.1% |
+| N11 | duplicate_record | 2% | 2.2% |
 | N12 | late_entry | 5% | 4.8% |
 
 N6 is skipped when a plate has no letter with a Latin look-alike, so it lands a little under target. N13 (haul trucks) is not used: road trucks only (D-037 fallback).

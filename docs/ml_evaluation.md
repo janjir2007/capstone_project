@@ -9,18 +9,18 @@ a 0/1 `has_history` flag in `src/common/features.py` — the count was an artefa
 is cut (§1). Everything below was rerun with the new feature; generator, split and tolerance unchanged.
 
 Main run = same data and split as docs/ml_results.md (`make_split`: cutoff
-2025-08-23; train 1,745 visits / 359 trucks, test
-202 visits / 46 trucks; no truck in both). Hyperparameters, best model and
+2025-08-16; train 1,752 visits / 357 trucks, test
+197 visits / 42 trucks; no truck in both). Hyperparameters, best model and
 every reminder buffer are chosen on TRAIN out-of-fold predictions (GroupKFold by truck); test is
-only scored. Model choice on validation MAE: **XGBoost**. Serving model (PROJECT_STATE v2.1):
+only scored. Model choice on validation MAE: **Ridge**. Serving model (PROJECT_STATE v2.1):
 **Ridge**.
 
 ## 1. SHAP — what the models use (Ridge = linear, XGBoost = tree)
 
 SHAP value = days a feature adds to (or removes from) one prediction, compared with the model's
 average prediction. Base value + all SHAP values = the prediction (checked: largest error
-Ridge 1.4e-14 days, XGBoost 1.2e-04 days). Explained rows = the
-202 test visits. Ridge: `shap.LinearExplainer`, train rows as background
+Ridge 7.1e-15 days, XGBoost 3.3e-05 days). Explained rows = the
+197 test visits. Ridge: `shap.LinearExplainer`, train rows as background
 (SHAP = coefficient × (value − train mean)); XGBoost: `shap.TreeExplainer`.
 
 ![SHAP Ridge](figures/ml_shap_ridge.png)
@@ -34,18 +34,18 @@ into their feature):
 
 | Feature | Ridge | XGBoost |
 |---|---|---|
-| km_per_day_hist | 2.13 | 0.93 |
-| past_late_share | 1.66 | 1.46 |
-| one_way_km | 1.63 | 1.19 |
-| route_km_per_day | 1.47 | 0.58 |
-| season | 1.26 | 1.18 |
-| destination_name | 0.61 | 1.91 |
-| past_interval_mean_days | 0.40 | 0.83 |
-| has_history | 0.38 | 0.08 |
-| days_since_prev_visit | 0.38 | 1.18 |
-| route | 0.17 | 0.69 |
+| one_way_km | 1.99 | 2.66 |
+| route_km_per_day | 1.62 | 0.41 |
+| past_late_share | 1.20 | 1.28 |
+| km_per_day_hist | 1.02 | 0.39 |
+| season | 1.00 | 0.77 |
+| past_interval_mean_days | 0.46 | 0.79 |
+| destination_name | 0.38 | 0.66 |
+| route | 0.24 | 0.08 |
+| days_since_prev_visit | 0.07 | 0.18 |
+| has_history | 0.03 | 0.00 |
 
-**Example truck** (test truck #5 of 46; chosen as the visit, among trucks with ≥
+**Example truck** (test truck #16 of 42; chosen as the visit, among trucks with ≥
 2 earlier visits, where Ridge moves furthest from its average — chosen from
 predictions only, not from the actual answer):
 
@@ -53,38 +53,38 @@ predictions only, not from the actual answer):
 
 | Item | Value |
 |---|---|
-| destination_name | Beijing |
-| route | mn_china |
+| destination_name | Kosh-Agach (via Tsagaannuur–Tashanta) |
+| route | mn_russia |
 | season | summer |
-| one_way_km | 1330.00 |
-| route_km_per_day | 501.89 |
+| one_way_km | 1786.00 |
+| route_km_per_day | 570.61 |
 | has_history | 1 |
-| days_since_prev_visit | 46.00 |
-| past_interval_mean_days | 51.43 |
-| km_per_day_hist | 333.48 |
-| past_late_share | 0.00 |
-| prediction: B0 (median) | 58.0 days |
-| prediction: B1 (17,500 km) | 34.9 days |
-| prediction: Ridge | 47.8 days |
-| prediction: Random Forest | 47.6 days |
-| prediction: XGBoost | 43.3 days |
-| actual days to next oil change | 54 |
+| days_since_prev_visit | 34.00 |
+| past_interval_mean_days | 42.67 |
+| km_per_day_hist | 417.44 |
+| past_late_share | 0.05 |
+| prediction: B0 (median) | 53.0 days |
+| prediction: B1 (17,500 km) | 30.7 days |
+| prediction: Ridge | 41.8 days |
+| prediction: Random Forest | 44.2 days |
+| prediction: XGBoost | 42.9 days |
+| actual days to next oil change | 40 |
 
 **Reading.**
-- Top 3 features — Ridge: `km_per_day_hist`, `past_late_share`, `one_way_km`; XGBoost: `destination_name`, `past_late_share`, `one_way_km`. Effects are small: the largest
-  feature moves a Ridge prediction by ~2.1 days on average, against a test MAE of
+- Top 3 features — Ridge: `one_way_km`, `route_km_per_day`, `past_late_share`; XGBoost: `one_way_km`, `past_late_share`, `past_interval_mean_days`. Effects are small: the largest
+  feature moves a Ridge prediction by ~2.0 days on average, against a test MAE of
   ~12 days — consistent with ML ≈ B0 (docs/ml_results.md).
 - **Why `n_prior_visits` was removed (found in 2.4, fixed in 2.4b).** It was the top SHAP feature in 2.4
-  (more visits → shorter prediction). On TRAIN the count correlates +0.68 with the service date
-  and -0.11 with the target. In the generator's truth the number of visits is unrelated to a
-  truck's real pace (r = +0.039) or lateness (r = +0.004). Median target by
-  service-date quarter of TRAIN: Q1 (earliest) 58, Q2 58, Q3 60, Q4 (latest) 55. So the count mostly told the model *how late in the data
+  (more visits → shorter prediction). On TRAIN the count correlates +0.66 with the service date
+  and -0.12 with the target. In the generator's truth the number of visits is unrelated to a
+  truck's real pace (r = -0.043) or lateness (r = -0.036). Median target by
+  service-date quarter of TRAIN: Q1 (earliest) 54, Q2 53, Q3 56, Q4 (latest) 51. So the count mostly told the model *how late in the data
   window* a visit is: visits shortly before the split cutoff are only in TRAIN if their next visit came
   quickly (right-censoring), and the same happens near the end of the data for test. A property of how
   the window is cut, not of the truck — in real use it would shorten predictions for loyal trucks.
-- **Its replacement, `has_history`** (1 = the truck has an earlier visit; 79% of TRAIN visits) only
-  says whether history features exist. On TRAIN it correlates +0.48 with the service date and
-  -0.07 with the target. (The count above is recomputed for this check only; it is not a feature.)
+- **Its replacement, `has_history`** (1 = the truck has an earlier visit; 80% of TRAIN visits) only
+  says whether history features exist. On TRAIN it correlates +0.47 with the service date and
+  -0.11 with the target. (The count above is recomputed for this check only; it is not a feature.)
 
 ## 2. D-038 check: generator variation OFF → ML must ≈ B1
 
@@ -99,47 +99,47 @@ features, split function, search and buffers as the main run.
 visits, which B1 by design does not include). It is the fair "route formula" reference: an ML model
 that only learned the route formula should land here.
 
-**Needs a look.** Rule: with variation OFF, the best model must not beat the calibrated route formula by more than 0.5 days MAE. Result: Ridge gain = +0.31 days (95% interval +0.08 to +0.58) — the upper end is above the tolerance.
+**Passed (no sign of leakage).** Rule: with variation OFF, the best model on validation must not beat the calibrated route formula by more than 0.5 days MAE (tolerance in configs/ml.yaml, [ESTIMATE]). Result: Ridge gain = -0.13 days (95% interval -0.42 to +0.14). The interval includes 0: ML ≈ B1.
 
 ![D-038](figures/ml_d038_variation_off.png)
 
-Variation **ON** (train 1,721 / test 178 visits, 41 test trucks; best on validation XGBoost):
+Variation **ON** (train 1,739 / test 213 visits, 45 test trucks; best on validation Ridge):
 
 | Predictor | RMSE | MAE | R² |
 |---|---|---|---|
-| B0 (median) | 15.7 | 12.1 | -0.02 |
-| B1 (17,500 km) | 22.2 | 18.5 | -1.04 |
-| B1 refit (a·B1+b) | 15.3 | 11.7 | 0.03 |
-| Ridge | 14.8 | 11.5 | 0.09 |
-| Random Forest | 14.8 | 11.5 | 0.09 |
-| XGBoost | 14.8 | 11.6 | 0.09 |
+| B0 (median) | 16.4 | 12.8 | -0.04 |
+| B1 (17,500 km) | 24.3 | 19.0 | -1.28 |
+| B1 refit (a·B1+b) | 15.8 | 12.2 | 0.03 |
+| Ridge | 15.8 | 12.3 | 0.03 |
+| Random Forest | 16.0 | 12.6 | 0.00 |
+| XGBoost | 16.0 | 12.6 | 0.00 |
 
-Variation **OFF** (train 1,598 / test 181 visits, 44 test trucks; best on validation Ridge):
+Variation **OFF** (train 1,699 / test 182 visits, 40 test trucks; best on validation Ridge):
 
 | Predictor | RMSE | MAE | R² |
 |---|---|---|---|
-| B0 (median) | 20.7 | 16.1 | -0.06 |
-| B1 (17,500 km) | 14.8 | 10.8 | 0.46 |
-| B1 refit (a·B1+b) | 12.8 | 9.9 | 0.59 |
-| Ridge | 12.4 | 9.6 | 0.62 |
-| Random Forest | 12.6 | 9.8 | 0.61 |
-| XGBoost | 12.5 | 9.7 | 0.61 |
+| B0 (median) | 24.3 | 18.0 | -0.15 |
+| B1 (17,500 km) | 15.5 | 11.4 | 0.53 |
+| B1 refit (a·B1+b) | 13.2 | 9.8 | 0.66 |
+| Ridge | 13.4 | 9.9 | 0.65 |
+| Random Forest | 13.2 | 9.8 | 0.66 |
+| XGBoost | 13.1 | 9.8 | 0.66 |
 
 MAE gain vs B1, variation OFF (positive = better than B1; 95% interval, whole test trucks resampled):
 
 | vs B1 | MAE gain (days) | 95% interval | Result |
 |---|---|---|---|
-| B1 refit (a·B1+b) | +0.86 | -0.17 to +1.89 | ≈ (interval includes 0) |
-| Ridge | +1.17 | +0.07 to +2.24 | better |
-| Random Forest | +1.03 | -0.05 to +2.07 | ≈ (interval includes 0) |
-| XGBoost | +1.06 | -0.04 to +2.16 | ≈ (interval includes 0) |
+| B1 refit (a·B1+b) | +1.65 | +0.65 to +2.66 | better |
+| Ridge | +1.51 | +0.45 to +2.57 | better |
+| Random Forest | +1.57 | +0.52 to +2.64 | better |
+| XGBoost | +1.64 | +0.60 to +2.71 | better |
 
 MAE gain vs B1 refit (a·B1+b):
 
 | Run | Ridge | Random Forest | XGBoost |
 |---|---|---|---|
-| variation ON | +0.23 (-0.13 to +0.61) | +0.25 (-0.18 to +0.67) | +0.17 (-0.27 to +0.58) |
-| variation OFF | +0.31 (+0.08 to +0.58) | +0.17 (+0.04 to +0.30) | +0.20 (-0.01 to +0.41) |
+| variation ON | -0.08 (-0.57 to +0.42) | -0.39 (-0.89 to +0.11) | -0.40 (-0.94 to +0.14) |
+| variation OFF | -0.13 (-0.42 to +0.14) | -0.08 (-0.29 to +0.15) | -0.00 (-0.21 to +0.22) |
 
 **What explains the gap?** A model that only knew the route formula should land on `B1 refit (a·B1+b)`.
 The ML models also see three things B1 does not: the season (V3 stays on in both runs), a
@@ -149,15 +149,15 @@ least-squares fits on TRAIN with only those inputs (nothing tuned):
 
 | Run | B1 refit + season | B1 refit + has_history | destination means + season + has_history |
 |---|---|---|---|
-| variation ON: test MAE (gain vs B1 refit) | 11.79 (-0.04, -0.32 to +0.25) | 11.75 (-0.00, -0.03 to +0.03) | 11.65 (+0.10, -0.21 to +0.42) |
-| variation OFF: test MAE (gain vs B1 refit) | 9.80 (+0.13, -0.10 to +0.38) | 9.90 (+0.03, +0.01 to +0.05) | 9.72 (+0.21, -0.00 to +0.46) |
+| variation ON: test MAE (gain vs B1 refit) | 12.19 (+0.00, -0.22 to +0.23) | 12.19 (+0.00, -0.05 to +0.05) | 12.57 (-0.38, -0.89 to +0.17) |
+| variation OFF: test MAE (gain vs B1 refit) | 9.65 (+0.11, -0.08 to +0.30) | 9.75 (+0.00, -0.01 to +0.01) | 9.78 (-0.02, -0.25 to +0.21) |
 
 ML vs the last of these ("destination means + season + has_history"), MAE gain with 95% interval:
 
 | Run | Ridge | Random Forest | XGBoost |
 |---|---|---|---|
-| variation ON | +0.13 (-0.03 to +0.32) | +0.15 (-0.13 to +0.43) | +0.07 (-0.22 to +0.35) |
-| variation OFF | +0.10 (+0.01 to +0.21) | -0.04 (-0.21 to +0.10) | -0.01 (-0.13 to +0.11) |
+| variation ON | +0.30 (+0.00 to +0.58) | -0.01 (-0.35 to +0.32) | -0.02 (-0.38 to +0.33) |
+| variation OFF | -0.11 (-0.25 to +0.02) | -0.05 (-0.22 to +0.12) | +0.02 (-0.09 to +0.13) |
 
 **Reading.** If the ML gain over B1 came from leakage, a three-input linear fit could not
 reproduce it. Compare the two tables: the more of the ML gain the simple fit recovers, and the
@@ -171,8 +171,8 @@ inputs (season, destination, first visit or not); the censoring artefact `n_prio
 Status on day t after a service: days left = predicted date − t. **OK** > 14 days left,
 **due soon** 0–14, **overdue** < 0 (D-007). True status uses the actual next visit as the
 due date (the only due date we observe). Each test visit is checked every 7 days from
-the service until 14 days after its actual next visit → 2,222 checks
-(true classes: OK 63%, due soon 19%, overdue 18%).
+the service until 14 days after its actual next visit → 2,058 checks
+(true classes: OK 60%, due soon 20%, overdue 19%).
 Predicted date = round(prediction), as on the vehicle card (no reminder buffer).
 ROC-AUC score = days past the predicted date.
 
@@ -180,11 +180,11 @@ ROC-AUC score = days past the predicted date.
 
 | Predictor | F1 OK | F1 due soon | F1 overdue | Macro F1 | Accuracy | ROC-AUC overdue (pooled) | ROC-AUC overdue (same day) | ROC-AUC needs reminder |
 |---|---|---|---|---|---|---|---|---|
-| B0 (median) | 0.87 | 0.35 | 0.62 | 0.61 | 73.0% | 0.908 | 0.500 | 0.918 |
-| B1 (17,500 km) | 0.81 | 0.28 | 0.59 | 0.56 | 65.9% | 0.866 | 0.630 | 0.870 |
-| Ridge | 0.88 | 0.40 | 0.64 | 0.64 | 74.1% | 0.913 | 0.673 | 0.924 |
-| Random Forest | 0.88 | 0.38 | 0.63 | 0.63 | 73.7% | 0.911 | 0.664 | 0.922 |
-| XGBoost | 0.87 | 0.39 | 0.63 | 0.63 | 73.7% | 0.910 | 0.645 | 0.920 |
+| B0 (median) | 0.85 | 0.36 | 0.62 | 0.61 | 70.4% | 0.891 | 0.500 | 0.900 |
+| B1 (17,500 km) | 0.81 | 0.35 | 0.60 | 0.59 | 67.0% | 0.847 | 0.664 | 0.854 |
+| Ridge | 0.86 | 0.39 | 0.63 | 0.63 | 72.1% | 0.902 | 0.672 | 0.913 |
+| Random Forest | 0.86 | 0.37 | 0.62 | 0.62 | 71.3% | 0.902 | 0.669 | 0.913 |
+| XGBoost | 0.86 | 0.37 | 0.62 | 0.62 | 71.3% | 0.901 | 0.661 | 0.912 |
 
 How to read the three AUCs: **pooled** mixes check days, and elapsed time alone already tells
 overdue from not (B0, one number for everyone, scores high too). **Same day** compares trucks on the
@@ -206,33 +206,33 @@ configurable: `reminder.window_days_early` in configs/ml.yaml.
 
 | Baseline | Buffer (days early) | RMSE (days) | MAE (days) | R² | Reminder hit rate | Too early | Too late | Hit rate, no buffer |
 |---|---|---|---|---|---|---|---|---|
-| B0 (median) | 12 | 15.7 | 12.3 | -0.00 | 33.7% | 44.1% | 22.3% | 30.7% |
-| B1 (17,500 km) | 1 | 20.9 | 16.8 | -0.78 | 21.3% | 36.1% | 42.6% | 22.3% |
-| Ridge | 7 | 15.1 | 11.9 | 0.06 | 37.6% | 26.7% | 35.6% | 29.7% |
-| Random Forest | 8 | 15.3 | 12.1 | 0.04 | 35.1% | 30.7% | 34.2% | 31.2% |
-| XGBoost | 14 | 15.5 | 12.2 | 0.02 | 34.2% | 48.0% | 17.8% | 31.2% |
+| B0 (median) | 13 | 16.9 | 13.3 | -0.01 | 35.5% | 45.2% | 19.3% | 27.4% |
+| B1 (17,500 km) | 4 | 22.2 | 17.2 | -0.76 | 30.5% | 36.0% | 33.5% | 33.5% |
+| Ridge | 16 | 15.6 | 12.3 | 0.14 | 38.6% | 49.2% | 12.2% | 25.4% |
+| Random Forest | 16 | 15.7 | 12.4 | 0.13 | 40.1% | 48.2% | 11.7% | 22.8% |
+| XGBoost | 16 | 15.7 | 12.5 | 0.13 | 40.6% | 47.2% | 12.2% | 22.8% |
 
 Hit-rate difference vs B0 on test (95% interval, whole test trucks resampled):
 
 | vs B0 | Hit-rate gain | 95% interval |
 |---|---|---|
-| B1 (17,500 km) | -12.4% | -20.4% to -4.5% |
-| Ridge | +4.0% | -4.0% to +11.2% |
-| Random Forest | +1.5% | -5.2% to +7.7% |
-| XGBoost | +0.5% | -7.0% to +8.3% |
+| B1 (17,500 km) | -5.1% | -14.5% to +3.7% |
+| Ridge | +3.0% | -3.0% to +8.7% |
+| Random Forest | +4.6% | -2.1% to +10.8% |
+| XGBoost | +5.1% | -1.4% to +11.1% |
 
 Sensitivity: old window (D-049), buffers retuned on validation the same way:
 
 | Window | Predictor | Buffer | Test hit rate |
 |---|---|---|---|
-| 3–7 days | B0 (median) | 11 | 14.9% |
-| 3–7 days | B1 (17,500 km) | 4 | 8.4% |
-| 3–7 days | Ridge | 9 | 14.9% |
-| 3–7 days | Random Forest | 1 | 14.9% |
-| 3–7 days | XGBoost | 6 | 10.9% |
+| 3–7 days | B0 (median) | 6 | 13.7% |
+| 3–7 days | B1 (17,500 km) | 0 | 10.7% |
+| 3–7 days | Ridge | 11 | 12.7% |
+| 3–7 days | Random Forest | 11 | 15.7% |
+| 3–7 days | XGBoost | 11 | 14.2% |
 
 ## 5. Serving model
 
-`models/next_change_model.joblib` (git-ignored) = **Ridge** pipeline + buffer 7 days (tuned for the
+`models/next_change_model.joblib` (git-ignored) = **Ridge** pipeline + buffer 16 days (tuned for the
 1–14 day window on validation) + feature list + metadata (`.json` next to it).
 The API (task 4.3) loads this file and uses `src/common/features.py` for its inputs.
