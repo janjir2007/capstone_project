@@ -5,6 +5,7 @@ All plates, names and phones are invented (RISK-06).
 
 from datetime import date
 from pathlib import Path
+from urllib.parse import unquote
 
 import pytest
 
@@ -447,3 +448,25 @@ def test_reminder_counts() -> None:
             {"days_left": -20, "segment": "at_risk"}]
     assert logic.reminder_counts(rows) == {"to_send": 2, "at_risk": 1, "overdue": 2}
     assert logic.reminder_counts([]) == {"to_send": 0, "at_risk": 0, "overdue": 0}
+
+
+# --- Viber link (5.5, D-091) ---------------------------------------------------------
+
+def test_viber_forward_url_encodes_cyrillic_as_utf8() -> None:
+    assert logic.viber_forward_url("Тос") == "viber://forward?text=%D0%A2%D0%BE%D1%81"
+
+
+def test_viber_forward_url_round_trips_real_message_shape() -> None:
+    """Spaces -> %20 (not "+"), newline and reserved URL characters encoded, text comes back exact."""
+    message = "Сайн байна уу! 1234 УБА машины тос солих хугацаа 10/20.\nХолбогдох: +976 9911-0002 & #ГеоЭксперт?=1"
+    url = logic.viber_forward_url(message)
+    query = url.removeprefix("viber://forward?text=")
+    assert url.startswith("viber://forward?text=")
+    assert all(ch not in query for ch in " \n+&#?=/") and query.isascii()
+    assert "%20" in query and "%0A" in query and "%2B976" in query
+    assert unquote(query) == message
+
+
+@pytest.mark.parametrize("message", [None, "", "   "])
+def test_viber_forward_url_none_without_text(message) -> None:
+    assert logic.viber_forward_url(message) is None

@@ -9,6 +9,8 @@ install requirements-ui.txt to run these).
 """
 
 import json
+from typing import Any
+from urllib.parse import unquote
 from pathlib import Path
 
 import httpx
@@ -753,9 +755,60 @@ def test_dashboard_tiles_and_two_groups(fake_api) -> None:
     assert '<div class="v" style="color:#B42318">2</div><div class="k">Хэтэрсэн</div>' in page
     assert texts(at.subheader) == ["Өнөөдрийн дараалал (2)", "Эрсдэлтэй (1)"]
     assert "0003 ТЕС" in page and "Тест Д." in page and "9911\u00a00002" in page
-    assert [b.url for b in at.get("link_button")][0] == "tel:99110002"     # «Залгах»
+    assert links(at)["Залгах"].url == "tel:99110002"
     assert [c.value for c in at.code][0].startswith("Сайн байна уу! 0001 ТЕС")  # copyable text
     assert "GEO_EXPERT_PHONE" in page and not at.warning  # placeholder contact = one small line (T7)
+
+
+def links(at: AppTest) -> dict[str, Any]:
+    """st.link_button elements by label (AppTest can read them but not click them)."""
+    return {b.proto.label: b.proto for b in at.get("link_button")}
+
+
+def test_viber_button_opens_prefilled_message(fake_api) -> None:
+    """5.5 (D-091): one Viber link per reminder, text = the exact message_mn, and the tap is a
+    widget (has an id) so the app reruns and can ask «Илгээсэн үү?». Copy box stays (fallback)."""
+    fake_api.reminders = [reminder(1, "0001 ТЕС", 5, "due_soon"), reminder(3, "0003 ТЕС", -20, "overdue")]
+    at = run_app(REMINDERS)
+    vibers = [b.proto for b in at.get("link_button") if b.proto.label == "Viber-ээр илгээх"]
+    assert len(vibers) == 2
+    url = vibers[0].url
+    assert url.startswith("viber://forward?text=") and " " not in url and "ТЕС" not in url
+    assert unquote(url.removeprefix("viber://forward?text=")) == reminder(1, "0001 ТЕС", 5, "due_soon")["message_mn"]
+    assert vibers[0].id.endswith("viber_1") and not links(at)["Залгах"].id  # tap reruns; tel: does not
+    assert [c.value for c in at.code][0].startswith("Сайн байна уу! 0001 ТЕС")
+    assert "Илгээсэн үү?" not in html_blocks(at)  # asked only after the tap
+
+
+def tapped_viber(service_id: int) -> AppTest:
+    """Reminders screen as it is after the Viber link of this row was tapped (callback state)."""
+    at = run_app(REMINDERS)
+    at.session_state["rem_viber_tapped"] = {service_id}
+    return at.run()
+
+
+def test_viber_tap_asks_then_yes_marks_sent(fake_api) -> None:
+    fake_api.reminders = [reminder(1, "0001 ТЕС", 5, "due_soon"), reminder(2, "0002 ТЕС", -3, "overdue")]
+    at = tapped_viber(1)
+    assert "Илгээсэн үү?" in html_blocks(at)
+    assert [b.label for b in at.button].count("Илгээсэн") == 1  # row 2 keeps the plain button
+    at = click(at, "Тийм")
+    assert any("Илгээсэн гэж тэмдэглэлээ" in t for t in texts(at.success))
+    assert list(fake_api.sent) == [1]                             # POST /reminders/1/sent
+    assert "Илгээсэн үү?" not in html_blocks(at)
+
+
+def test_viber_tap_no_hides_question(fake_api) -> None:
+    fake_api.reminders = [reminder(1, "0001 ТЕС", 5, "due_soon")]
+    at = click(tapped_viber(1), "Үгүй")
+    assert "Илгээсэн үү?" not in html_blocks(at) and "Илгээсэн" in [b.label for b in at.button]
+    assert not fake_api.sent
+
+
+def test_no_viber_button_without_message(fake_api) -> None:
+    fake_api.reminders = [{**reminder(1, "0001 ТЕС", 5, "due_soon"), "message_mn": ""}]
+    at = run_app(REMINDERS)
+    assert "Viber-ээр илгээх" not in links(at) and "Илгээсэн" in [b.label for b in at.button]
 
 
 def test_mark_sent_removes_row(fake_api) -> None:

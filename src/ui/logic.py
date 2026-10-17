@@ -9,6 +9,7 @@ NOT repeated here (they live in the backend / src/common/plates.py).
 
 from datetime import date
 from typing import Any
+from urllib.parse import quote
 
 # --- Labels (UI text in Mongolian) ------------------------------------------
 
@@ -360,6 +361,19 @@ def reminder_counts(reminders: list[dict]) -> dict[str, int]:
     return {"to_send": len(to_send), "at_risk": len(at_risk),
             "overdue": sum(1 for r in reminders if (r.get("days_left") or 0) < 0)}
 
+
+VIBER_FORWARD = "viber://forward?text="  # D-091: opens Viber's share screen, the manager picks the chat
+
+
+def viber_forward_url(message: str | None) -> str | None:
+    """«Viber-ээр илгээх» link with the reminder text pre-filled, or None when there is no text.
+
+    quote(safe="") percent-encodes everything except A-Z a-z 0-9 _.-~ as UTF-8, so Cyrillic,
+    spaces (%20, not "+"), newlines and the reserved "&", "#", "+", "?", "=" all survive.
+    """
+    if not message or not message.strip():
+        return None
+    return VIBER_FORWARD + quote(message, safe="")
 
 # --- Choice lists (T6): tap/select instead of typing ---------------------------------
 

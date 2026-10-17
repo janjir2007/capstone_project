@@ -1,10 +1,12 @@
 """«Сануулга» (task 5.4, DESIGN v5 / T9 mockup), contract v0.7.
 
-- How it works card: the API sends nothing; the manager copies the text, sends it and taps «Илгээсэн».
+- How it works card: the API sends nothing; the manager sends the text and taps «Илгээсэн».
+- «Viber-ээр илгээх» (task 5.5, D-091): viber://forward link with the text pre-filled; the tap also
+  reruns the app, so that row then asks «Илгээсэн үү?» -> «Тийм» marks it sent. No Viber API / auto send.
 - 3 numbers from GET /reminders/due: to send today, overdue, at risk (D-007).
 - «Өнөөдрийн дараалал» and «Эрсдэлтэй» (API `segment` = at_risk, D-074): one card
   per group, a row per truck = plate, driver, send day · phone, status pill; the message text
-  (st.code has a built-in copy button); «Залгах» (tel: link) and «Илгээсэн»
+  (st.code has a built-in copy button = desktop fallback); «Залгах» (tel: link) and «Илгээсэн»
   -> POST /reminders/{service_id}/sent (already_sent shown).
 - «Удахгүй»: GET /reminders/due?as_of=<API today + 7> minus today's list = scheduled this week.
 - Link to «Тойм» (segment counts, views/dashboard.py).
@@ -18,10 +20,26 @@ import streamlit as st
 from src.ui import api_client, common, logic
 
 UPCOMING_DAYS = 7
+VIBER_TAPPED = "rem_viber_tapped"  # session: service_ids whose Viber link was tapped -> ask «Илгээсэн үү?»
+
+
+def viber_tapped() -> set[int]:
+    return st.session_state.setdefault(VIBER_TAPPED, set())
+
+
+def on_viber(service_id: int) -> None:
+    """«Viber-ээр илгээх» tapped: the browser opens Viber; this rerun shows the confirm question."""
+    viber_tapped().add(service_id)
+
+
+def on_not_sent(service_id: int) -> None:
+    """«Үгүй»: hide the question again (e.g. the manager closed Viber without sending)."""
+    viber_tapped().discard(service_id)
 
 
 def on_sent(service_id: int) -> None:
-    """«Илгээсэн»: mark in the API, keep the answer for the message, reload the list."""
+    """«Илгээсэн» / «Тийм»: mark in the API, keep the answer for the message, reload the list."""
+    viber_tapped().discard(service_id)
     try:
         row = api_client.mark_reminder_sent(service_id)
     except api_client.NotLatestService:
@@ -46,12 +64,25 @@ def reminder_row(r: dict, first: bool) -> None:
         f'<div class="m">{html.escape(meta)}</div></div>'
         f'<span class="pill-st" style="color:{fg};background:{bg}">{html.escape(status)}</span></div>'
     )
-    st.code(r.get("message_mn", ""), language=None, wrap_lines=True)
-    with st.container(horizontal=True, key=f"rem_act_{r['service_id']}"):
+    sid = r["service_id"]
+    st.code(r.get("message_mn", ""), language=None, wrap_lines=True)  # copy button = desktop fallback
+    viber_url = logic.viber_forward_url(r.get("message_mn"))
+    if viber_url:
+        st.link_button("Viber-ээр илгээх", viber_url, key=f"viber_{sid}", on_click=on_viber, args=(sid,),
+                       type="primary", width="stretch", icon=":material/send:")
+    asking = sid in viber_tapped()
+    with st.container(horizontal=True, key=f"rem_act_{sid}"):
         if r.get("phone"):
             st.link_button("Залгах", f"tel:{r['phone']}", width="stretch", icon=":material/call:")
-        st.button("Илгээсэн", key=f"sent_{r['service_id']}", on_click=on_sent, args=(r["service_id"],),
-                  width="stretch", icon=":material/check:")
+        if not asking:
+            st.button("Илгээсэн", key=f"sent_{sid}", on_click=on_sent, args=(sid,),
+                      width="stretch", icon=":material/check:")
+    if asking:
+        with st.container(horizontal=True, vertical_alignment="center", key=f"rem_ask_{sid}"):
+            common.html_block('<span class="act-t">Илгээсэн үү?</span>')
+            st.button("Тийм", key=f"yes_{sid}", on_click=on_sent, args=(sid,), type="primary",
+                      icon=":material/check:")
+            st.button("Үгүй", key=f"no_{sid}", on_click=on_not_sent, args=(sid,))
 
 
 def upcoming(as_of: str, today_ids: set[int]) -> list[dict]:
@@ -74,7 +105,8 @@ with st.container(key="card_how"):
     common.html_block(
         f'<div class="act"><span class="act-ic green">{common.icon("send")}</span><div>'
         '<div class="act-t">Гараар илгээнэ</div>'
-        '<div class="act-s">Мессежийг хуулж Viber эсвэл SMS-ээр илгээгээд «Илгээсэн» дарна.</div></div></div>'
+        '<div class="act-s">«Viber-ээр илгээх» дарж чатаа сонгоод илгээнэ, дараа нь «Тийм» дарна. '
+        'Компьютер дээр мессежийг хуулж илгээгээд «Илгээсэн» дарна.</div></div></div>'
     )
 
 try:
