@@ -1,0 +1,118 @@
+# Production stack on ONE Linux server (task 6.1, D-061): db + api + ui + Caddy (HTTPS).
+# Host-agnostic: any VPS with Docker + Compose. Runbook: docs/deploy.md.
+#
+#   cp .env.prod.example .env      # then fill in real values (never committed)
+#   docker compose -f docker-compose.prod.yml build
+#   docker compose -f docker-compose.prod.yml run --rm api python -m scripts.migrate
+#   docker compose -f docker-compose.prod.yml run --rm api python -m src.data.seed_demo --as-of 2026-10-20
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# Differences from docker-compose.yml (local dev):
+# - Only Caddy publishes ports (80, 443). db, api and ui are reachable only inside the
+#   compose network: the API is not public (D-061), the UI is behind HTTPS.
+# - No default passwords: compose refuses to start if a required value is missing in .env.
+# - The db container runs ONLY schema.sql on a fresh volume; migrations 001+ are applied by
+#   scripts/migrate.py, which records them in schema_migrations (D-041, D-069).
+# - Own project name -> own volumes and network, never mixed with the dev database.
+
+name: ocp-prod
+
+x-logging: &logging
+  # Keep container logs from filling a small server's disk.
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-oil}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-oil_change}
+      # Business runs in Mongolia: CURRENT_DATE and now() use Ulaanbaatar time.
+      TZ: Asia/Ulaanbaatar
+      PGTZ: Asia/Ulaanbaatar
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Runs ONCE, when the volume is empty. Migrations come from scripts/migrate.py.
+      - ./src/data/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    logging: *logging
+
+  api:
+    build: .
+    image: ocp-api:prod
+    environment:
+      APP_ENV: prod
+      POSTGRES_USER: ${POSTGRES_USER:-oil}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-oil_change}
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      TZ: Asia/Ulaanbaatar
+      # Model files are git-ignored and not in the image: copied to ./models on the server
+      # (docs/deploy.md step 3), mounted read-only. Includes plate_ocr/char_cnn_version.json
+      # (served CNN + its auto-fill threshold, D-089). Missing files -> prediction null / 503.
+      MODEL_DIR: /app/models
+      GEO_EXPERT_NAME: ${GEO_EXPERT_NAME:-Geo-Expert}
+      # 99000000 = placeholder; the API then reports contact_is_placeholder: true (D-068).
+      GEO_EXPERT_PHONE: ${GEO_EXPERT_PHONE:-99000000}
+    volumes:
+      - ./models:/app/models:ro
+    expose:
+      - "8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *logging
+
+  ui:
+    # Values from docs/ui_run.md §3 (task T5).
+    build:
+      context: .
+      dockerfile: src/ui/Dockerfile
+    image: ocp-ui:prod
+    environment:
+      API_URL: http://api:8000
+      UI_PASSWORD: ${UI_PASSWORD:?set UI_PASSWORD in .env (company login, D-061)}
+    expose:
+      - "8501"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *logging
+
+  caddy:
+    # HTTPS (the phone browser's camera needs it, D-061). Caddy gets and renews a Let's Encrypt
+    # certificate for DOMAIN by itself; for DOMAIN=localhost it uses its own local certificate.
+    image: caddy:2.11.7-alpine
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env (e.g. service.example.mn, <ip>.sslip.io or localhost)}
+    ports:
+      - "80:80"        # Let's Encrypt HTTP challenge + redirect to https
+      - "443:443"
+      - "443:443/udp"  # HTTP/3
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates live here: keep this volume, or Let's Encrypt rate limits can hit on re-deploys.
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - ui
+      - api
+    restart: unless-stopped
+    logging: *logging
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

@@ -706,6 +706,8 @@ def reminder(service_id: int, plate: str, days_left: int, status: str) -> dict:
         "phone": "99110002", "driver_name": "Тест Д.", "last_change_date": "2026-08-10",
         "oil_grade": "15W-40", "liters": 32.0, "method": "b0", "buffer_days": 12,
         "predicted_date": "2026-10-07", "send_on": "2026-09-25", "days_left": days_left, "status": status,
+        # like the API (contract v0.7): at_risk = predicted date + 7 days grace has passed
+        "segment": "at_risk" if days_left < -7 else "loyal",
         "message_mn": f"Сайн байна уу! {plate} дугаартай машины тос солих хугацаа болсон байна.",
     }
 

@@ -1,6 +1,6 @@
 # API contract — data, model and reminder endpoints (tasks 4.2, 4.2b, 4.3, 4.4)
 
-- **Version:** 0.6 (task 1.1c, 2026-10-12) · **Owner:** Backend Engineer
+- **Version:** 0.7 (task 4.4b, 2026-10-17) · **Owner:** Backend Engineer
 - Extends PROJECT_STATE §8 "API contract" with exact fields. The live, always
   current version is the OpenAPI page of the running API: `http://localhost:8000/docs`.
 - Field names follow [`data_dictionary.md`](data_dictionary.md). Code:
@@ -155,7 +155,8 @@ List for the "where are you heading next?" picker; send the chosen `id` as `dest
 
 - **200** `[{id, name, name_mn, route_category}]`, seeded order (`Other / several / unknown` last)
 - `name_mn` (v0.6, migration 002, D-040) = Mongolian label to SHOW, e.g. `Замын-Үүд`; `null` = no label
-  yet (now `Ulaanbaatar city (local work)` and `Other / several / unknown`) → show `name`.
+  yet → show `name`. Since migration 004 (task 6.1) all 7 seeded rows have one (`Улаанбаатар хот`, `Бусад`);
+  the field stays nullable.
   `name` stays the key; send `id` as before
 
 ### `GET /stats/segments?as_of=`
@@ -191,6 +192,7 @@ only services up to `as_of` are used.
 | `predicted_date`, `send_on` | date | |
 | `days_left` | int | `predicted_date − as_of` |
 | `status` | `ok` \| `due_soon` \| `overdue` | D-007 |
+| `segment` | `new` \| `returning` \| `loyal` \| `at_risk` | v0.7 (D-074): segment on `as_of`, same rule as the card and `GET /stats/segments`. The UI groups «Эрсдэлтэй» by `segment == "at_risk"` (no copy of the 7-day grace in the UI) |
 | `message_mn` | string | Mongolian text: plate, last change date + oil, Geo-Expert contact (`GEO_EXPERT_NAME`, `GEO_EXPERT_PHONE`). Wording: draft, Ari to approve |
 
 ### `POST /reminders/{service_id}/sent`
@@ -212,3 +214,4 @@ model version, predicted date and send day (`reminders_sent`, migration 003). No
 | 0.4 | 2026-10-12 | Task 4.3: card `prediction` filled (Prediction object with `method` + `model_version`); `GET /vehicles/{id}/prediction`; `POST /plates/recognize`. Model files are mounted from `./models` (not in the image); without them the API runs and these answer null / 503 |
 | 0.5 | 2026-10-12 | Task 4.4: `GET /reminders/due`, `POST /reminders/{service_id}/sent`; segments + card `at_risk` from the served prediction; fleet numbers ignore dashes (lookup + `POST /services`, `normalized` e.g. `ht12`); HEIC photos accepted |
 | 0.6 | 2026-10-12 | Task 1.1c: `name_mn` added to `GET /destinations` items and to `ServiceOut.destination` (additive; null for 2 of 7 destinations) |
+| 0.7 | 2026-10-17 | Task 4.4b (D-074): `segment` added to every `GET /reminders/due` item (additive). Migration 004 (task 6.1): `name_mn` filled for the last 2 destinations |

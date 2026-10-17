@@ -212,6 +212,18 @@ def test_due_list_has_the_right_trucks(client: TestClient) -> None:
                                   "Сүүлд сольсон: 2026.09.01 (10W-40, 36.5 л). Geo-Expert: 99000001")
 
 
+def test_due_items_carry_the_segment(client: TestClient) -> None:
+    """4.4b (contract v0.7, D-074): each due item has the D-007 segment, the same as the vehicle card."""
+    a = new_service(client, "0000 ТЕС", "2026-09-01", "Beijing")["vehicle_id"]
+    items = {r["vehicle_id"]: r for r in due(client)["reminders"]}
+    # a: 1 service, predicted 10-06 + 7 = 10-13, not < 10-12 -> new (overdue, but not at risk yet)
+    # v4: predicted 07-07 + 7 = 07-14 < 10-12 -> at_risk
+    assert (items[a]["segment"], items[a]["status"]) == ("new", "overdue")
+    assert items[4]["segment"] == "at_risk"
+    for vid, item in items.items():
+        assert item["segment"] == client.get(f"/vehicles/{vid}").json()["segment"]
+
+
 def test_due_list_as_of_uses_only_services_until_then(client: TestClient) -> None:
     # as_of 2026-06-30: v1's newest service by then = 05-20 -> 07-17, send 07-05 -> not due yet;
     # v4 (05-10 -> send 06-25) is due. Later services do not exist yet on that day.

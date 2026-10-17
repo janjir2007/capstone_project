@@ -330,11 +330,15 @@ def test_prev_summary_only_filled_parts() -> None:
 
 # --- reminders dashboard (5.4) ----------------------------------------------------------
 
-def test_split_reminders_uses_d007_grace() -> None:
-    reminders = [{"service_id": 1, "days_left": 3}, {"service_id": 2, "days_left": -8},
-                 {"service_id": 3, "days_left": -7}, {"service_id": 4, "days_left": -30}]
+def test_split_reminders_uses_api_segment() -> None:
+    """D-074: the API's `segment` decides «Эрсдэлтэй»; days_left alone no longer does (no D-007 copy in the UI)."""
+    reminders = [{"service_id": 1, "days_left": 3, "segment": "loyal"},
+                 {"service_id": 2, "days_left": -8, "segment": "at_risk"},
+                 {"service_id": 3, "days_left": -30, "segment": "returning"},
+                 {"service_id": 4, "days_left": -30, "segment": "at_risk"},
+                 {"service_id": 5, "days_left": -30}]
     to_send, at_risk = logic.split_reminders(reminders)
-    assert [r["service_id"] for r in to_send] == [1, 3]   # -7 = exactly the grace -> not yet at risk
+    assert [r["service_id"] for r in to_send] == [1, 3, 5]
     assert [r["service_id"] for r in at_risk] == [2, 4]   # order kept
 
 
@@ -439,6 +443,7 @@ def test_prev_visit_and_destination_note() -> None:
 
 
 def test_reminder_counts() -> None:
-    rows = [{"days_left": 5}, {"days_left": -3}, {"days_left": -20}]
+    rows = [{"days_left": 5, "segment": "loyal"}, {"days_left": -3, "segment": "new"},
+            {"days_left": -20, "segment": "at_risk"}]
     assert logic.reminder_counts(rows) == {"to_send": 2, "at_risk": 1, "overdue": 2}
     assert logic.reminder_counts([]) == {"to_send": 0, "at_risk": 0, "overdue": 0}

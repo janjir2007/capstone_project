@@ -1,5 +1,8 @@
 # CI = Continuous Integration. On every push / pull request to main,
 # GitHub starts a fresh Linux machine, installs our dependencies and runs tests.
+#
+# Task 6.2: a Postgres service so the database tests RUN (they skip without one), the UI
+# packages so the UI screen tests run, and a second job that builds both Docker images.
 name: CI
 
 on:
@@ -11,6 +14,30 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      # Same image as docker-compose.yml. Tests create throwaway schemas and roll back.
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: oil
+          POSTGRES_PASSWORD: oil_ci_password
+          POSTGRES_DB: oil_change
+          TZ: Asia/Ulaanbaatar
+          PGTZ: Asia/Ulaanbaatar
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U oil -d oil_change"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      # Read by tests/test_schema.py database_url() and src/api/config.py.
+      POSTGRES_USER: oil
+      POSTGRES_PASSWORD: oil_ci_password
+      POSTGRES_DB: oil_change
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
     steps:
       - name: Check out the code
         uses: actions/checkout@v7
@@ -21,10 +48,48 @@ jobs:
           python-version: "3.11"
           cache: pip
 
-      - name: Install dependencies
+      - name: Install dependencies (backend + UI)
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements.txt -r requirements-ui.txt
 
+      - name: Migrations apply on an empty database, second run is a no-op
+        run: |
+          python -c "import psycopg; from tests.test_schema import database_url; \
+            psycopg.connect(database_url(), autocommit=True).execute(open('src/data/schema.sql').read())"
+          python -m scripts.migrate
+          python -m scripts.migrate | tee migrate2.txt
+          grep -q "nothing to apply" migrate2.txt
+
+      # Exit code 134 after all tests passed = known abort in native teardown (task 6.2);
+      # scripts/ci_check_pytest.py judges the run from the JUnit report and fails on any
+      # skip except the allowed ones listed there (so DB and UI tests must really run).
       - name: Run tests
-        run: pytest -v
+        run: |
+          set +e
+          pytest -v -rs --junitxml=pytest-report.xml
+          code=$?
+          set -e
+          python -m scripts.ci_check_pytest pytest-report.xml "$code"
+
+  images:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v7
+
+      - name: Production compose file is valid
+        run: |
+          cp .env.prod.example .env.ci
+          docker compose -f docker-compose.prod.yml --env-file .env.ci config --quiet
+
+      - name: Build API image
+        run: docker build -t ocp-api:ci .
+
+      - name: Build UI image
+        run: docker build -f src/ui/Dockerfile -t ocp-ui:ci .
+
+      - name: Images contain what the deploy runs (API + migrate + seed; UI)
+        run: |
+          docker run --rm ocp-api:ci python -c "import src.api.main, scripts.migrate, src.data.seed_demo; print('api imports ok')"
+          docker run --rm ocp-ui:ci python -c "import streamlit; print('ui imports ok')"

@@ -6,7 +6,7 @@ served model: ridge 7, b0 12, b1 1) and checked for the "done when" of the
 brief: every segment and status, 5–10 due reminders, fake identities only.
 
 Part 2 writes the demo into a throwaway schema of the local Postgres
-(schema + migrations 001–003, nothing else) and calls the real endpoints.
+(schema + migrations 001–004, nothing else) and calls the real endpoints.
 SKIPPED if Postgres is not running.
 """
 
@@ -41,7 +41,7 @@ from tests.test_serving import model_dir, predictor  # noqa: F401  (fixtures: fa
 ROOT = Path(__file__).resolve().parent.parent
 SQL_DIR = ROOT / "src" / "data"
 SQL_FILES = ["schema.sql", "migrations/001_destinations.up.sql", "migrations/002_destinations_name_mn.up.sql",
-             "migrations/003_reminders_sent.up.sql"]
+             "migrations/003_reminders_sent.up.sql", "migrations/004_destinations_name_mn_rest.up.sql"]
 TODAY = date(2026, 10, 12)
 CONTACT = Contact(name="Geo-Expert", phone="99000001", is_placeholder=False)
 
@@ -163,7 +163,7 @@ def test_fit_dates_never_puts_a_service_in_the_future(trucks: list[D.DemoTruck],
 
 @pytest.fixture(scope="module")
 def empty_pg() -> Iterator[Connection]:
-    """Throwaway schema with schema.sql + migrations 001–003 and NO rows (like a fresh compose)."""
+    """Throwaway schema with schema.sql + migrations 001–004 and NO rows (like a fresh compose)."""
     engine = create_db_engine(to_sqlalchemy_url(database_url()))
     if not database_is_up(engine):
         engine.dispose()

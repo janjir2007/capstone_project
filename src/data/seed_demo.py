@@ -17,7 +17,7 @@ generator's fake names. Oil grade and liters are demo values, not facts.
 The dates are relative to the seed day, so the demo slowly goes stale:
 re-seed on the demo day (docs/demo_data.md).
 
-Run on an EMPTY database (schema.sql + migrations 001–003), model files in models/:
+Run on an EMPTY database (schema.sql + migrations 001–004), model files in models/:
     POSTGRES_PASSWORD=oil_dev_password python -m src.data.seed_demo [--as-of 2026-10-20]
 The script refuses to write into a database that already has companies,
 vehicles or service records (it must never mix with real data).

@@ -300,6 +300,8 @@ class DueReminder(BaseModel):
     send_on: date = Field(description="predicted_date − buffer_days")
     days_left: int = Field(description="predicted_date − as_of")
     status: Status
+    segment: Segment = Field(description="Segment on as_of (D-007, same rule as the card and GET /stats/segments); "
+                                         "at_risk = predicted date + 7 days grace has passed (v0.7, D-074)")
     message_mn: str = Field(description="Mongolian reminder text (copy into the SMS / messenger)")
 
 

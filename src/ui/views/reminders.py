@@ -1,8 +1,8 @@
-"""«Сануулга» (task 5.4, DESIGN v5 / T9 mockup), contract v0.5.
+"""«Сануулга» (task 5.4, DESIGN v5 / T9 mockup), contract v0.7.
 
 - How it works card: the API sends nothing; the manager copies the text, sends it and taps «Илгээсэн».
 - 3 numbers from GET /reminders/due: to send today, overdue, at risk (D-007).
-- «Өнөөдрийн дараалал» and «Эрсдэлтэй» (overdue by more than logic.AT_RISK_GRACE_DAYS): one card
+- «Өнөөдрийн дараалал» and «Эрсдэлтэй» (API `segment` = at_risk, D-074): one card
   per group, a row per truck = plate, driver, send day · phone, status pill; the message text
   (st.code has a built-in copy button); «Залгах» (tel: link) and «Илгээсэн»
   -> POST /reminders/{service_id}/sent (already_sent shown).

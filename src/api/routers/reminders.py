@@ -1,4 +1,4 @@
-"""Reminders (task 4.4, D-036): who to remind today, and "I sent it".
+"""Reminders (tasks 4.4, 4.4b, D-036): who to remind today, and "I sent it".
 
 GET  /reminders/due?as_of=              vehicles whose reminder day has come and is not sent yet
 POST /reminders/{service_id}/sent       mark the reminder for that (vehicle, newest service) as sent
@@ -23,7 +23,7 @@ from src.api.config import Contact, reminder_contact
 from src.api.db import get_session
 from src.api.history import records_as_of, service_records, to_visit
 from src.api.models import ReminderSent, ServiceRecord, Vehicle
-from src.api.prediction import Prediction, Predictor
+from src.api.prediction import Prediction, Predictor, segment_of
 from src.api.reminders import message_mn
 from src.api.routers.vehicles import get_predictor
 from src.api.schemas import DueReminder, DueReminders, ReminderSentOut
@@ -82,7 +82,9 @@ def due_reminders(
             phone=service.driver_phone, driver_name=service.driver_name, last_change_date=service.service_date,
             oil_grade=service.oil_grade, liters=float(service.liters), method=p.method,
             buffer_days=predictor.buffers[p.method], predicted_date=p.predicted_date, send_on=predictor.send_on(p),
-            days_left=p.days_left, status=p.status, message_mn=text_for(vehicle, service, p, contact),
+            days_left=p.days_left, status=p.status,
+            segment=segment_of(len(records[vid]), p.predicted_date, as_of),  # D-074: the UI keeps no copy of D-007
+            message_mn=text_for(vehicle, service, p, contact),
         ))
     items.sort(key=lambda r: (r.send_on, r.vehicle_id))
     return DueReminders(as_of=as_of, contact_is_placeholder=contact.is_placeholder, reminders=items)

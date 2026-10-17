@@ -1,0 +1,29 @@
+# Caddy = HTTPS reverse proxy in front of the Streamlit UI (task 6.1, D-061).
+# DOMAIN comes from .env (docker-compose.prod.yml). Caddy picks the certificate itself:
+#   a public name (service.example.mn, 1.2.3.4.sslip.io) -> Let's Encrypt, renewed automatically
+#   localhost                                             -> Caddy's own local CA (browser warns once)
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	# Only the API's health check is public (uptime checks, docs/deploy.md).
+	# Every other API route stays inside the compose network (D-061).
+	handle /health {
+		reverse_proxy api:8000
+	}
+
+	# Everything else = the UI. reverse_proxy passes WebSockets (Streamlit's /_stcore/stream)
+	# by default. Request body limit = Streamlit's own 15 MB upload limit (+ form overhead).
+	handle {
+		request_body {
+			max_size 16MB
+		}
+		reverse_proxy ui:8501
+	}
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+}

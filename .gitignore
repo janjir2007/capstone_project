@@ -35,6 +35,7 @@ exports/**/*.txt
 .env
 .env.*
 !.env.example
+!.env.prod.example
 
 # --- Photos anywhere in the repo (truck photos show real plates)
 *.jpg

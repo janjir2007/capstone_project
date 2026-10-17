@@ -107,7 +107,12 @@ Demo plates (`1001 УБА`, `1002 УБЕ`, `1003 УНА`): [`docs/demo_data.md`]
 
 Tests that need the database run against `docker compose up -d db` and skip if it is not reachable. Real-browser UI
 checks are opt-in: `UI_BROWSER=1 .venv/bin/pytest tests/test_ui_browser.py` (see `docs/ui_run.md`).
-CI (GitHub Actions) runs `pytest` on every push to `main`.
+CI (GitHub Actions) runs on every push to `main`: a Postgres service (DB tests run, never skip), the UI
+packages (UI tests run), migrations twice (second = no-op), `pytest`, and builds both Docker images.
+
+### Production (one server, HTTPS)
+
+`docker-compose.prod.yml` = db + api + ui + Caddy (HTTPS). Step by step: [`docs/deploy.md`](docs/deploy.md).
 
 ### Rebuild the models (optional)
 

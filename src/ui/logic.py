@@ -260,16 +260,13 @@ def recognize_error_message(status: int) -> str:
 
 # --- Reminders dashboard (5.4) ---------------------------------------------------
 
-# At risk = predicted date + AT_RISK_GRACE_DAYS < as_of, i.e. days_left < -AT_RISK_GRACE_DAYS.
-# The only copy of this number in src/ui (D-052: no backend imports).
-AT_RISK_GRACE_DAYS = 7  # mirrors D-007 / backend; remove when API adds segment field
 SEGMENT_ORDER = ("new", "returning", "loyal", "at_risk")
 
 
 def is_at_risk(reminder: dict) -> bool:
-    """True if this due reminder belongs to «Эрсдэлтэй» (overdue beyond the grace)."""
-    days_left = reminder.get("days_left")
-    return days_left is not None and days_left < -AT_RISK_GRACE_DAYS
+    """True if this due reminder belongs to «Эрсдэлтэй». The API decides (contract v0.7 `segment`,
+    D-074): the D-007 grace rule lives only in the backend."""
+    return reminder.get("segment") == "at_risk"
 
 
 WEEKDAYS_MN = ("Даваа", "Мягмар", "Лхагва", "Пүрэв", "Баасан", "Бямба", "Ням")

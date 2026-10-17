@@ -15,6 +15,10 @@ RUN pip install --no-cache-dir -r requirements-api.txt
 # Only the source code (.dockerignore keeps data, models, .env out of the context).
 # Models are mounted at runtime (docker-compose: ./models -> /app/models, read-only, task 4.3).
 COPY src/ ./src/
+# Task 6.1: one-off jobs run in this same image on the server (docs/deploy.md):
+#   scripts/migrate.py (migrations) and src.data.seed_demo (reads configs/generator.yaml).
+COPY scripts/ ./scripts/
+COPY configs/ ./configs/
 
 # Run as a normal user, not root.
 RUN useradd --create-home appuser
