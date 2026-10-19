@@ -16,12 +16,10 @@ baseRadius = "12px"
 buttonRadius = "14px"
 baseFontSize = 15
 baseFontWeight = 400
-# Montserrat from Google Fonts. The CSS includes the cyrillic-ext subset, which has the
-# Mongolian letters Ө ө Ү ү (U+04E8/9, U+04AE/F); checked in the browser (docs/ui_handoff_t6.md).
-# Only 400/500/600 are loaded: max weight anywhere = 600 (T7).
-# Streamlit splits this value at the FIRST colon, so a ", sans-serif" after the URL is not a
-# fallback. The fallback stack (system font, for blocked web fonts) is in common.CSS (task 5.6).
-font = "Montserrat:https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600&display=swap"
+# Task 5.6: no web font. The real font stack (phone system font: San Francisco on iPhone) is set in
+# common.CSS, because Montserrat 400 looked too light on iPhone and web fonts are blocked in Lockdown
+# Mode. ("sans-serif" here only sets Streamlit's own default; our CSS overrides it.)
+font = "sans-serif"
 headingFontWeights = [600, 600, 600, 600, 600, 600]
 
 [client]

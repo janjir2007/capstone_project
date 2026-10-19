@@ -1,7 +1,7 @@
 """Streamlit pieces shared by the screens — DESIGN v5 (task T9: the mockup PDF).
 
 Design: background #F6F7F9 (theme, .streamlit/config.toml), white cards (radius 18, soft
-shadow, no borders), Montserrat 400/500/600 only (system-font fallback, 5.6), line-height 1.4, primary #1F4E9D only for
+shadow, no borders), system font (5.6), weights 400/500/600 only, line-height 1.4, primary #1F4E9D only for
 main actions and selected chips, one 480 px column, Mongolian only. CSS hooks onto Streamlit's
 `st-key-<key>` classes: a container whose key starts with "card_" becomes a white card, "grp_" a
 white card of tappable rows ("act_" rows, divided by thin lines).
@@ -49,10 +49,10 @@ CSS = """
   --pri:#1F4E9D; --pri-dark:#173B78; --pri-tint:#EAF0FA; --r:18px;
   --shadow:0 1px 2px rgba(16,24,40,.04), 0 4px 16px rgba(16,24,40,.05);}
 .stApp, .stApp p, .stApp input, .stApp button, .stApp label {line-height: 1.4;}
-/* 5.6: font stack with system fallbacks. Web fonts can be blocked (iPhone Lockdown Mode), and
-   Streamlit's own theme font has no fallback -> iOS then shows SF (-apple-system) at the same weights.
-   Material icon spans keep their icon font. */
-.stApp, .stApp *:not([data-testid="stIconMaterial"]) {font-family: Montserrat, -apple-system, BlinkMacSystemFont,
+/* 5.6: the phone's own system font (iPhone: San Francisco, Android: Roboto). Montserrat 400 has thin
+   strokes and read as "light" on iPhone at 13-15 px; a system font also works when web fonts are
+   blocked (Lockdown Mode) and needs no download. Material icon spans keep their icon font. */
+body, body *:not([data-testid="stIconMaterial"]) {font-family: -apple-system, BlinkMacSystemFont,
   "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif !important;}
 .stApp {font-weight: 400;}
 .stApp input::placeholder, .stApp textarea::placeholder {color: var(--muted) !important; opacity: 1 !important;}
@@ -269,7 +269,7 @@ h2, h3 {font-size: 14px !important; font-weight: 600 !important; color: var(--mu
 .rem .who {flex: 1; min-width: 96px;} .rem .n {font-size: 15px; font-weight: 500;}
 .rem .m {font-size: 13px; color: var(--muted);}
 [data-testid="stCode"] pre {background: #F6F7F9; border: none; border-radius: 12px; font-size: 14px;}
-[data-testid="stCode"] pre, [data-testid="stCode"] code {font-family: Montserrat, -apple-system, BlinkMacSystemFont,
+[data-testid="stCode"] pre, [data-testid="stCode"] code {font-family: -apple-system, BlinkMacSystemFont,
   "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif !important;}
 .note-line {display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted);}
 
