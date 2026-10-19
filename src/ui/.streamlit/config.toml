@@ -2,7 +2,7 @@
 # Streamlit reads .streamlit/config.toml from the CURRENT folder, so start the app
 # from src/ui/:   cd src/ui && streamlit run app.py   (docs/ui_run.md)
 # Primary color #1F4E9D is a placeholder until Geo-Expert's brand color is known.
-# Contrast (WCAG): text #111827 16:1, secondary #6B7280 4.8:1 on white, white on primary 8:1.
+# Contrast (WCAG): text #111827 16:1, secondary grey #4B5563 ≥ 6.6:1 on every background, white on primary 8:1 (5.6).
 
 [theme]
 base = "light"
@@ -19,7 +19,9 @@ baseFontWeight = 400
 # Montserrat from Google Fonts. The CSS includes the cyrillic-ext subset, which has the
 # Mongolian letters Ө ө Ү ү (U+04E8/9, U+04AE/F); checked in the browser (docs/ui_handoff_t6.md).
 # Only 400/500/600 are loaded: max weight anywhere = 600 (T7).
-font = "Montserrat:https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600&display=swap, sans-serif"
+# Streamlit splits this value at the FIRST colon, so a ", sans-serif" after the URL is not a
+# fallback. The fallback stack (system font, for blocked web fonts) is in common.CSS (task 5.6).
+font = "Montserrat:https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600&display=swap"
 headingFontWeights = [600, 600, 600, 600, 600, 600]
 
 [client]

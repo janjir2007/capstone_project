@@ -1,7 +1,7 @@
 """Streamlit pieces shared by the screens — DESIGN v5 (task T9: the mockup PDF).
 
 Design: background #F6F7F9 (theme, .streamlit/config.toml), white cards (radius 18, soft
-shadow, no borders), Montserrat 400/500/600 only, line-height 1.4, primary #1F4E9D only for
+shadow, no borders), Montserrat 400/500/600 only (system-font fallback, 5.6), line-height 1.4, primary #1F4E9D only for
 main actions and selected chips, one 480 px column, Mongolian only. CSS hooks onto Streamlit's
 `st-key-<key>` classes: a container whose key starts with "card_" becomes a white card, "grp_" a
 white card of tappable rows ("act_" rows, divided by thin lines).
@@ -45,10 +45,17 @@ RECENT_MAX = 5
 # Max weight 600, line-height 1.4. Spacing: page 12/20/40, element 12, card padding 20, field 16.
 CSS = """
 <style>
-:root {--ink:#111827; --ink2:#4B5563; --muted:#6B7280; --faint:#9CA3AF; --line:#EEF0F3; --fill:#F3F4F6;
+:root {--ink:#111827; --ink2:#374151; --muted:#4B5563; --faint:#6B7280; --line:#EEF0F3; --fill:#F3F4F6;
   --pri:#1F4E9D; --pri-dark:#173B78; --pri-tint:#EAF0FA; --r:18px;
   --shadow:0 1px 2px rgba(16,24,40,.04), 0 4px 16px rgba(16,24,40,.05);}
 .stApp, .stApp p, .stApp input, .stApp button, .stApp label {line-height: 1.4;}
+/* 5.6: font stack with system fallbacks. Web fonts can be blocked (iPhone Lockdown Mode), and
+   Streamlit's own theme font has no fallback -> iOS then shows SF (-apple-system) at the same weights.
+   Material icon spans keep their icon font. */
+.stApp, .stApp *:not([data-testid="stIconMaterial"]) {font-family: Montserrat, -apple-system, BlinkMacSystemFont,
+  "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif !important;}
+.stApp {font-weight: 400;}
+.stApp input::placeholder, .stApp textarea::placeholder {color: var(--muted) !important; opacity: 1 !important;}
 /* page: no Streamlit top bar; 480 px column, centered */
 [data-testid="stHeader"], [data-testid="stToolbar"], [data-testid="stDecoration"] {display: none !important;}
 .block-container {padding: 12px 20px 40px !important; max-width: 480px;}
@@ -64,7 +71,14 @@ b, strong, th {font-weight: 600 !important;}
 .st-key-topbar {min-height: 48px; gap: 4px !important; margin-bottom: 4px;}
 .st-key-back button {min-height: 40px !important; width: 40px; padding: 0 !important; margin-left: -10px; color: var(--ink) !important;}
 .st-key-back button p {position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0);}  /* label for screen readers */
-.st-key-back button [data-testid="stIconMaterial"] {font-size: 22px;}
+.st-key-back button [data-testid="stIconMaterial"] {font-size: 0 !important;}
+/* 5.6: chevron drawn as a CSS mask (an image, not a font), so it shows even when icon fonts are blocked */
+.st-key-back button::before {content: ""; width: 22px; height: 22px; background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 -960 960 960'%3E%3Cpath d='M400-80 0-480l400-400 71 71-329 329 329 329-71 71Z'/%3E%3C/svg%3E") center / 18px no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 -960 960 960'%3E%3Cpath d='M400-80 0-480l400-400 71 71-329 329 329 329-71 71Z'/%3E%3C/svg%3E") center / 18px no-repeat;}
+/* 5.6: other icons: if the icon font is blocked, the icon NAME ("keyboard") would show as text ->
+   clip each icon to one 1em box (a loaded icon is exactly 1em wide, so nothing changes then) */
+[data-testid="stIconMaterial"] {display: inline-block; width: 1em; overflow: hidden; white-space: nowrap; flex: none;}
 .stHeading h1, .stHeading h2, .stHeading h3 {margin: 0 !important; padding: 0 !important;}
 h1 {font-size: 20px !important; font-weight: 600 !important; letter-spacing: -.01em; line-height: 1.4 !important;}
 .st-key-home_title h1 {font-size: 26px !important;}
@@ -78,7 +92,7 @@ h2, h3 {font-size: 14px !important; font-weight: 600 !important; color: var(--mu
 
 /* widgets: labels 14/500 dark, inputs 52 px grey fill, no border (primary border on focus) */
 [data-testid="stWidgetLabel"] {margin-bottom: 8px !important; min-height: 0 !important;}
-[data-testid="stWidgetLabel"] p {font-size: 14px !important; font-weight: 500 !important; color: #374151;}
+[data-testid="stWidgetLabel"] p {font-size: 14px !important; font-weight: 500 !important; color: var(--ink2);}
 [data-baseweb="input"], [data-baseweb="select"] > div, [data-baseweb="textarea"] {
   border: 1px solid transparent !important; border-radius: 14px !important; background: var(--fill) !important;}
 [data-baseweb="input"] {min-height: 52px;}
@@ -114,7 +128,7 @@ h2, h3 {font-size: 14px !important; font-weight: 600 !important; color: var(--mu
 [data-testid="stButtonGroup"] button {min-height: 40px; padding: 6px 18px; border: none; background: var(--fill); border-radius: 999px;}
 [data-testid="stButtonGroup"] button p {font-size: 15px; font-weight: 500;}
 [data-testid="stButtonGroup"] button[aria-checked="true"] {background: var(--pri) !important; color: #fff !important;}
-.st-key-f_destination_id button:last-child:not([aria-checked="true"]) p {color: var(--faint);}  /* «Бусад» */
+.st-key-f_destination_id button:last-child:not([aria-checked="true"]) p {color: var(--muted);}  /* «Бусад» */
 /* oil grade = segmented control: grey track, selected segment white */
 .st-key-f_oil_choice, .st-key-f_oil_choice [data-testid="stButtonGroup"], .st-key-f_oil_choice div:has(> button) {width: 100% !important; max-width: none !important;}
 .st-key-f_oil_choice div:has(> button) {display: flex; background: var(--fill); border-radius: 14px; padding: 4px; gap: 0 !important;}
@@ -221,10 +235,10 @@ h2, h3 {font-size: 14px !important; font-weight: 600 !important; color: var(--mu
 .pc-big {font-size: 34px; font-weight: 600; line-height: 1.2; margin: 8px 0 4px;}
 .pc-big span {font-size: 16px; font-weight: 500;}
 .pc-date {font-size: 15px; font-weight: 500;}
-.pc-range {font-size: 13px; opacity: .85;}
-.pc-note {font-size: 13px; margin-top: 10px; opacity: .85;}
+.pc-range {font-size: 13px;}
+.pc-note {font-size: 13px; margin-top: 10px;}
 .pc-pending {font-size: 15px; font-weight: 500; color: var(--ink2);}
-.pc.sm .pc-big {font-size: 28px; margin: 6px 0 2px;} .pc.sm .pc-date {font-size: 13px; opacity: .85;}
+.pc.sm .pc-big {font-size: 28px; margin: 6px 0 2px;} .pc.sm .pc-date {font-size: 13px;}
 
 /* label · value rows (card facts, «Өмнөх удаа», oil/driver) */
 .kv > div {display: flex; justify-content: space-between; align-items: baseline; gap: 16px; padding: 14px 0;}
@@ -255,7 +269,8 @@ h2, h3 {font-size: 14px !important; font-weight: 600 !important; color: var(--mu
 .rem .who {flex: 1; min-width: 96px;} .rem .n {font-size: 15px; font-weight: 500;}
 .rem .m {font-size: 13px; color: var(--muted);}
 [data-testid="stCode"] pre {background: #F6F7F9; border: none; border-radius: 12px; font-size: 14px;}
-[data-testid="stCode"] pre, [data-testid="stCode"] code {font-family: Montserrat, sans-serif !important;}
+[data-testid="stCode"] pre, [data-testid="stCode"] code {font-family: Montserrat, -apple-system, BlinkMacSystemFont,
+  "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif !important;}
 .note-line {display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted);}
 
 /* success */
