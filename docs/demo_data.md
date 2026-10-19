@@ -14,12 +14,16 @@ generator's fake names. Oil grades and liters are demo values only.
 
 ```bash
 docker compose down -v          # WARNING: deletes the local dev database volume
-docker compose up -d --build    # schema.sql + migrations 001, 002, 003 run automatically; API on :8000
+docker compose up -d --build    # fresh volume: schema.sql only; API on :8000
+POSTGRES_PASSWORD=oil_dev_password .venv/bin/python -m scripts.migrate     # applies + records 001–005
 POSTGRES_PASSWORD=oil_dev_password .venv/bin/python -m src.data.seed_demo
 ```
 
 - Needs the model files in `models/` (task 4.3 handoff). The script uses the same predictor
-  as the API.
+  as the API, with the served reminder buffers (task 2.9: Ridge 16, B1 4, B0 13 days). A truck is
+  on the due list when its days left ≤ its method's buffer, so the plan in `seed_demo.py` keeps
+  "not due yet" Ridge trucks at 19+ days (task 7.2). If the buffers change again, run
+  `pytest tests/test_seed_demo.py`: it checks the plan against the real model files.
 - It refuses to write into a database that already has companies, vehicles or services,
   so it can never mix with real records.
 - `--as-of YYYY-MM-DD` builds the demo for another day. The default is today in Ulaanbaatar.
@@ -45,14 +49,14 @@ More trucks:
 |---|---|
 | **1004 УБВ** | **At risk**: predicted date + 7 days has passed and the truck has not come back. Its reminder is already marked sent, so it is not on the due list |
 | phone **0000 0009** | Phone lookup → **2 trucks** (1002 УБЕ, and 1001 УБА from that driver's older trips; D-004) |
-| `GET /reminders/due` | 7 trucks (statuses overdue + due soon; methods Ridge + B1) |
-| `GET /destinations` | Mongolian labels (`name_mn`) for the 5 road destinations |
+| `GET /reminders/due` | 8 trucks: 4 overdue + 4 due soon; Ridge 6 + B1 2. The app shows 6 «today» + 2 «at risk» |
+| `GET /destinations` | 11 destinations, all with a Mongolian label (`name_mn`). The form hides the «Бусад» list row: its own «Бусад» asks for the place + route |
 
 Two more trucks show the **B0** fallback: one went to "Ulaanbaatar city" (a route the model
 does not cover) and one had its destination typed by hand ("Сайншанд"). Find them with
 the plates the seed prints, or in the vehicle list.
 
-## What the database looks like (seeded 2026-10-12, real model files)
+## What the database looks like (seeded 2026-10-19, real model files, task 7.2 plan)
 
 Output of `seed_demo.py`, checked through the running API (`/stats/segments`, `/reminders/due`):
 
@@ -60,11 +64,12 @@ Output of `seed_demo.py`, checked through the running API (`/stats/segments`, `/
 |---|---|
 | Trucks / services | 40 / 105, in 6 "Демо …" companies |
 | Segments | new 8 · returning 11 · loyal 17 · **at_risk 4** |
-| Statuses | ok 24 · due soon 10 · overdue 6 |
+| Statuses | ok 28 · due soon 6 · overdue 6 |
 | Methods | Ridge 29 · B1 9 · B0 2 |
-| Due reminders | 7 (2 more at-risk trucks already marked sent) |
+| Due reminders | 8 (2 more at-risk trucks already marked sent) |
 
-On another day the counts can differ by one or two. The model's season feature changes
+Checked for seed days 2026-10-19 … 10-26: the same counts every day. On other days they can
+differ by one or two. The model's season feature changes
 at month edges (e.g. Aug → Sep), so a truck can land a day or two away from its planned
 date. The script prints the counts. If a segment would be empty or the due list would not
 have 5–10 trucks, it stops and writes nothing (`NOT seeded: …`).

@@ -47,6 +47,14 @@ def test_db_runs_only_schema_sql_migrations_come_from_migrate_py() -> None:
     assert init == ["./src/data/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro"]
 
 
+def test_dev_compose_also_leaves_migrations_to_migrate_py() -> None:
+    """Task 7.2: dev = prod. Fresh volume -> schema.sql only; scripts.migrate applies AND records 001+
+    (mounting them as init scripts skipped schema_migrations, so migrate refused, and 005 was forgotten)."""
+    dev = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))["services"]
+    init = [v for v in dev["db"]["volumes"] if "docker-entrypoint-initdb.d" in v]
+    assert init == ["./src/data/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro"]
+
+
 @pytest.mark.parametrize(("service", "var"), [
     ("db", "POSTGRES_PASSWORD"), ("api", "POSTGRES_PASSWORD"), ("ui", "UI_PASSWORD"), ("caddy", "DOMAIN")])
 def test_secrets_have_no_default(service: str, var: str) -> None:

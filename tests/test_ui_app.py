@@ -46,6 +46,7 @@ class FakeApi:
         self.reminders: list[dict] | None = []      # None -> 503 (model not loaded)
         self.sent: dict[int, dict] = {}             # service_id -> stored "sent" row
         self.hide_sent = True                       # False = stale list (another manager's open tab)
+        self.destinations: list[dict] = DESTINATIONS  # GET /destinations
 
     # -- data ---------------------------------------------------------------
     def add_vehicle(self, identifier: str, company: str, identifier_type: str = "plate", **service) -> dict:
@@ -109,7 +110,7 @@ class FakeApi:
     def handle(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
         if path == "/destinations":
-            return httpx.Response(200, json=DESTINATIONS)
+            return httpx.Response(200, json=self.destinations)
         if path.startswith("/vehicles/") and path.split("/")[-1].isdigit():
             vid = int(path.split("/")[-1])
             vehicle = next((v for v in self.vehicles if v["id"] == vid), None)
@@ -490,6 +491,15 @@ def test_destination_pills_with_name_mn_and_other(fake_api) -> None:
     body, _ = fake_api.posts[-1]
     assert (body["destination_raw"], body["route"]) == ("Сайншанд", "mixed")
     assert "destination_id" not in body and "company_name" not in body
+
+
+def test_only_one_other_pill_after_migration_004(fake_api) -> None:
+    """Task 7.2: with name_mn «Бусад» on the 'Other' row (migration 004) the form shows ONE «Бусад»."""
+    fake_api.destinations = [{**d, "name_mn": "Бусад"} if d["id"] == 7 else d for d in DESTINATIONS]
+    seed_existing(fake_api)
+    at = to_form(run_app(RECORD), "0002 ТЕС")
+    labels = at.pills(key="f_destination_id").options
+    assert labels.count("Бусад") == 1 and labels[-1] == "Бусад"
 
 
 def test_duplicate_then_force_save(fake_api) -> None:

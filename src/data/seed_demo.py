@@ -17,7 +17,7 @@ generator's fake names. Oil grade and liters are demo values, not facts.
 The dates are relative to the seed day, so the demo slowly goes stale:
 re-seed on the demo day (docs/demo_data.md).
 
-Run on an EMPTY database (schema.sql + migrations 001–004), model files in models/:
+Run on an EMPTY database (schema.sql + migrations 001–005), model files in models/:
     POSTGRES_PASSWORD=oil_dev_password python -m src.data.seed_demo [--as-of 2026-10-20]
 The script refuses to write into a database that already has companies,
 vehicles or service records (it must never mix with real data).
@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
@@ -87,22 +87,28 @@ PLATE_AT_RISK = "1004УБВ"
 SHARED_DRIVER_PLATE = PLATE_OVERDUE
 
 PLAN: tuple[Slot, ...] = (
-    # --- new: 1 service, first visit -> B1 (reminder buffer 1 day)
+    # Due list = days_left <= the reminder buffer of the method that answers (send_on = predicted
+    # date − buffer). Served buffers since task 2.9: Ridge 16, B1 4, B0 13 days. Ridge's 16 is
+    # longer than due_soon (0–14), so EVERY Ridge truck that is due_soon or 15–16 days out is on
+    # the list; "not due yet" Ridge trucks must be ok and >= 19 days out (3 days off the edge,
+    # the fit can land a day or two away). Target: 8 due (planned_due).
+    # --- new: 1 service, first visit -> B1 (buffer 4 days)
     Slot(1, 10, plate=PLATE_NEW),             # due_soon, not due yet
     Slot(1, 20), Slot(1, 28), Slot(1, 24), Slot(1, 22), Slot(1, 25),  # ok
-    Slot(1, 6),                               # due_soon, not due yet
+    Slot(1, 8),                               # due_soon, not due yet
     Slot(1, 0),                               # due_soon, on the due list
-    # --- returning: 2 services -> Ridge (buffer 7 days)
+    # --- returning: 2 services -> Ridge (buffer 16 days)
     Slot(2, -4, plate=PLATE_OVERDUE),         # overdue, on the due list
-    Slot(2, 18), Slot(2, 25), Slot(2, 29), Slot(2, 21), Slot(2, 27),  # ok
-    Slot(2, 11), Slot(2, 13),                 # due_soon, not due yet
+    Slot(2, 20), Slot(2, 25), Slot(2, 29), Slot(2, 21), Slot(2, 27),  # ok
+    Slot(2, 23), Slot(2, 19),                 # ok
     Slot(2, 3),                               # due_soon, on the due list
     # --- loyal: 3–5 services -> Ridge
     Slot(5, 26, plate=PLATE_LOYAL),           # ok; older services had another driver (phone lookup)
-    Slot(3, 16), Slot(4, 24), Slot(5, 19), Slot(3, 22), Slot(4, 27),
-    Slot(5, 18), Slot(3, 26), Slot(4, 17),    # ok
+    Slot(3, 21), Slot(4, 24), Slot(5, 19), Slot(3, 22), Slot(4, 27),
+    Slot(5, 20), Slot(3, 26), Slot(4, 22),    # ok
     Slot(2, 24), Slot(3, 20), Slot(5, 23),    # ok
-    Slot(3, 10), Slot(4, 12), Slot(4, 9),     # due_soon, not due yet
+    Slot(3, 10),                              # due_soon, on the due list
+    Slot(4, 28), Slot(4, 25),                 # ok
     Slot(3, 5),                               # due_soon, on the due list
     Slot(4, -6),                              # overdue (not yet at risk), on the due list
     # --- at_risk: predicted date + 7 days passed, not back
@@ -110,10 +116,22 @@ PLAN: tuple[Slot, ...] = (
     Slot(4, -40, reminder_sent=True),
     Slot(2, -12),                             # on the due list
     Slot(1, -30),                             # on the due list
-    # --- B0 fallback (route not modelled), ok, buffer 12 days -> not due yet
+    # --- B0 fallback (route not modelled / typed by hand), ok, buffer 13 days -> not due yet
     Slot(3, 25, newest_destination=UB_CITY),
     Slot(2, 22, newest_raw=RAW_DESTINATION),
 )
+
+
+def slot_method(slot: Slot) -> str:
+    """Which predictor will answer for this slot (prediction.py rules): B0 fallbacks, B1 first visit, else Ridge."""
+    if slot.newest_destination == UB_CITY or slot.newest_raw:
+        return "b0"
+    return "b1" if slot.services == 1 else "ridge"
+
+
+def planned_due(buffers: Mapping[str, int], plan: Sequence[Slot] = PLAN) -> int:
+    """How many planned trucks land on the due list with these reminder buffers (before date fitting)."""
+    return sum(1 for s in plan if not s.reminder_sent and s.days_left <= buffers[slot_method(s)])
 
 
 @dataclass(frozen=True)

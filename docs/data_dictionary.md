@@ -304,10 +304,13 @@ A second run changes nothing. `--dry-run` lists what would run. A database migra
 | 002 | `002_destinations_name_mn.up.sql` / `.down.sql` | `destinations.name_mn` + the 5 Mongolian labels (task 1.1c, D-040); stops if a label's destination is missing. Tested by `tests/test_migration_002_name_mn.py` |
 | 003 | `003_reminders_sent.up.sql` / `.down.sql` | `reminders_sent` table (task 4.4). Tested by `tests/test_reminders.py` (up → down → up, constraints) |
 | 004 | `004_destinations_name_mn_rest.up.sql` / `.down.sql` | `name_mn` for UB city + Other (task 6.1); stops if one is missing. Tested by `tests/test_migrate.py` |
+| 005 | `005_destinations_cross_border.up.sql` / `.down.sql` | 4 cross-border destinations (task 1.6, D-081). Tested by `tests/test_migration_005.py` |
 
 - **New dev DB** (`docker compose down -v && docker compose up -d db`): docker-compose runs
-  `schema.sql` then every up migration automatically (no `schema_migrations` rows). To use the
-  runner on it later: `POSTGRES_PASSWORD=oil_dev_password .venv/bin/python -m scripts.migrate --mark-applied 001 002 003 004`.
+  only `schema.sql` (same as production, task 7.2); then
+  `POSTGRES_PASSWORD=oil_dev_password .venv/bin/python -m scripts.migrate` applies and records 001+.
+  A dev volume made before task 7.2 has the migrations without `schema_migrations` rows:
+  `--mark-applied` the versions it has (or `docker compose down -v` and start over).
 - **Existing dev DB**: `--mark-applied` the versions it already has, then `python -m scripts.migrate`;
   or run a single file by hand
   ```bash

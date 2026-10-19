@@ -4,6 +4,7 @@
 #          docker compose up -d --build   (database + API on http://localhost:8000)
 # Stop:    docker compose down          (keeps data)
 # Reset:   docker compose down -v       (deletes the volume -> schema.sql runs again)
+#          then: python -m scripts.migrate   (applies + records migrations 001+)
 #
 # Credentials come from environment variables / the .env file (never committed).
 # The ":-" defaults are for local development only.
@@ -24,13 +25,10 @@ services:
     volumes:
       # Database files live in a named volume, so data survives container restarts.
       - pgdata:/var/lib/postgresql/data
-      # Scripts in /docker-entrypoint-initdb.d/ run ONCE, when the volume is empty.
+      # Runs ONCE, when the volume is empty: the base tables only (same as docker-compose.prod.yml).
+      # Migrations 001+ come from `python -m scripts.migrate`, which records them in
+      # schema_migrations (task 7.2; mounting them here skipped that record, and 005 was missed).
       - ./src/data/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
-      # Migrations, in order. An existing volume: `python -m scripts.migrate` (docs/deploy.md §6).
-      - ./src/data/migrations/001_destinations.up.sql:/docker-entrypoint-initdb.d/02_migration_001_destinations.sql:ro
-      - ./src/data/migrations/002_destinations_name_mn.up.sql:/docker-entrypoint-initdb.d/03_migration_002_destinations_name_mn.sql:ro
-      - ./src/data/migrations/003_reminders_sent.up.sql:/docker-entrypoint-initdb.d/04_migration_003_reminders_sent.sql:ro
-      - ./src/data/migrations/004_destinations_name_mn_rest.up.sql:/docker-entrypoint-initdb.d/05_migration_004_destinations_name_mn_rest.sql:ro
       # All SQL files, available inside the container for manual psql -f runs.
       - ./src/data:/sql:ro
     healthcheck:

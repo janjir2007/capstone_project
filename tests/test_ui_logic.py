@@ -480,3 +480,11 @@ def test_viber_forward_url_round_trips_real_message_shape() -> None:
 @pytest.mark.parametrize("message", [None, "", "   "])
 def test_viber_forward_url_none_without_text(message) -> None:
     assert logic.viber_forward_url(message) is None
+
+
+def test_picker_hides_the_list_row_labelled_like_the_other_option() -> None:
+    """Task 7.2: migration 004 labels 'Other / several / unknown' «Бусад" -> one «Бусад» pill only."""
+    dests = [{"id": 1, "name": "Beijing", "name_mn": "Бээжин"},
+             {"id": 7, "name": "Other / several / unknown", "name_mn": "Бусад"},
+             {"id": 8, "name": "Other / several / unknown (old DB)", "name_mn": None}]
+    assert [d["id"] for d in logic.picker_destinations(dests)] == [1, 8]

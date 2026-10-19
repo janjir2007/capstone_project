@@ -442,6 +442,16 @@ FORM_FIELDS = (
 OTHER_DESTINATION = -1  # sentinel option: "not in the list" -> free text + route
 
 
+def picker_destinations(destinations: list[dict]) -> list[dict]:
+    """Destinations to offer as pills: every list row EXCEPT one labelled like the «Бусад» option.
+
+    Migration 004 gave 'Other / several / unknown' the label «Бусад», the same text as the form's
+    own «Бусад» (OTHER_DESTINATION -> place name + route, D-039), so the form showed two «Бусад»
+    pills (task 7.2). The form's option asks for more (the place), so the list row is hidden.
+    """
+    return [d for d in destinations if destination_label(d) != OTHER_CHOICE]
+
+
 def empty_form() -> dict[str, Any]:
     """Blank form values for a new vehicle."""
     return {name: None for name in FORM_FIELDS}

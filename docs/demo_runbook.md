@@ -26,8 +26,9 @@ Docker Desktop must be running.
 docker compose down -v                  # WARNING: deletes the local dev DB (demo data only)
 docker compose up -d --build
 curl http://localhost:8000/health       # {"status":"ok","db":"ok"}
+POSTGRES_PASSWORD=oil_dev_password .venv/bin/python -m scripts.migrate     # applies 001–005
 POSTGRES_PASSWORD=oil_dev_password .venv/bin/python -m src.data.seed_demo
-#   expect: 40 trucks · due reminders: 7 · 1001 УБА ridge · 1002 УБЕ overdue · 1003 УНА b1
+#   expect: 40 trucks · due reminders: 8 · 1001 УБА ridge · 1002 УБЕ overdue · 1003 УНА b1
 
 # terminal 2: UI (start FROM src/ui so the theme loads)
 cd src/ui
@@ -42,17 +43,17 @@ Browser at phone width: Chrome DevTools → device toolbar → 390 px (iPhone 12
 
 | # | Do | Expect |
 |---|---|---|
-| 1 | Open the UI, password `demo-pass` → «Нэвтрэх» | Home: «Өнөөдөр 5 машин сануулга хүлээж байна.», 3 numbers |
+| 1 | Open the UI, password `demo-pass` → «Нэвтрэх» | Home: «Өнөөдөр 6 машин сануулга хүлээж байна.», 3 numbers |
 | 2 | «Хайх» → `1001 УБА` | Card: «Байнгын · 5 удаа», green «Хэвийн», ~26 days left, «Загварын таамаглал» (= Ridge), history timeline |
 | 3 | Back → `1002 УБЕ` | Red «Хэтэрсэн», «4 хоног хоцорсон», «Загварын таамаглал» |
 | 4 | Back → `1003уна` (any spacing/case) | «Удахгүй», «Маршрутын тооцоо (анхны үйлчилгээ)» = B1 fallback, first visit |
 | 5 | Back → phone `0000 0009` | «утасны дугаараар · 2 машин»: 1002 УБЕ and 1001 УБА |
-| 6 | Home → «Сануулга» | 5 today · 4 overdue · 2 at risk; 1002 УБЕ row with its Mongolian message (copy button) |
+| 6 | Home → «Сануулга» | 6 today · 4 overdue · 2 at risk; 1002 УБЕ row with its Mongolian message, «Viber-ээр илгээх» |
 | 7 | «Илгээсэн» on one row | «Илгээсэн гэж тэмдэглэлээ», the row leaves the list |
 | 8 | «Машинуудын тойм харах» | Segments: new 8 · returning 11 · loyal 17 · at risk 4 |
 | 9 | Plate reading: «Хайх» → «Камераар хайх» → «Эсвэл зураг оруулах» → photo | «Дугаар уншигдлаа: …» → lookup, or a yellow «check the plate» message → type it |
 
-Numbers in rows 1, 2, 3, 6 and 8 are from the 2026-10-13 seed. Seeded on another day they can
+Numbers in rows 1, 2, 3, 6 and 8 are from the 2026-10-19 seed (task 7.2; checked in a 390 px browser). Seeded on another day they can
 differ by one or two.
 
 Step 7 changes the data. To run the demo again from the start, repeat the 3 commands in §1
@@ -67,7 +68,9 @@ Step 7 changes the data. To run the demo again from the start, repeat the 3 comm
 | Uploading a photo of a printed / on-screen «1001 УБА» | **Not detected** in our check (synthetic plate images → `no_plate`). Don't rely on it. Type `1001 УБА` instead |
 | Card shows no prediction / reminders say model not loaded | Model files missing in `models/` → §0, then `docker compose up -d --build` |
 | `curl /health` fails | `docker compose ps`, `docker compose logs api --tail 50`; Docker Desktop running? |
-| `seed_demo` says `NOT seeded: … already has …` | DB not empty → `docker compose down -v && docker compose up -d`, then seed again |
+| `seed_demo` says `NOT seeded: … already has …` | DB not empty → `docker compose down -v && docker compose up -d`, then migrate + seed again |
+| `seed_demo` says `NOT seeded: destinations missing` | Migrations not applied → `python -m scripts.migrate`, then seed again |
+| `migrate: FAILED: migrations were applied by hand…` | Volume made before task 7.2 (compose used to run migrations itself) → `docker compose down -v`, then §1 |
 | UI looks unstyled | Streamlit was not started from `src/ui/` → restart from there |
 | Port 8501 busy | `lsof -i :8501`, stop the old Streamlit (Ctrl+C in its terminal) |
 
@@ -82,8 +85,9 @@ docker compose down -v     # also deletes it
 ## 5. Notes for the presenter
 
 - The reminder text ends with the placeholder contact `Geo-Expert: 99000000`. The UI shows a
-  yellow note about it. Set the real number before the demo: `GEO_EXPERT_PHONE=<number>` in
-  `.env` (never committed), then `docker compose up -d`.
+  yellow note about it. Set the real number before the demo: `cp .env.example .env` (if there is
+  no `.env` yet), set `GEO_EXPERT_PHONE=<number>` in `.env` (never committed), then
+  `docker compose up -d`.
 - **Privacy (RISK-06):** a test-split photo is a real truck. The read plate appears on screen.
   Show plate reading with a photo the company has approved for showing, or a truck on site.
 - Optional automatic screen check (390 px, screenshots): see [`ui_run.md`](ui_run.md) §0

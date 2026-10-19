@@ -280,7 +280,7 @@ def _destination_inputs(label: str, last: dict) -> None:
     except api_client.ApiError:
         destinations = []
         st.warning("Газрын жагсаалт ачаалагдсангүй — «Бусад» сонгож бичнэ үү.")
-    dest_by_id = {d["id"]: d for d in destinations}
+    dest_by_id = {d["id"]: d for d in logic.picker_destinations(destinations)}
     st.pills(
         label,
         options=list(dest_by_id) + [logic.OTHER_DESTINATION],

@@ -1,9 +1,11 @@
 """Demo seed tests (task 4.5): src/data/seed_demo.py.
 
 Part 1 needs no database: the demo is built from the real generator config
-with a FAKE Ridge model (tests/test_serving.py fixture, same buffers as the
-served model: ridge 7, b0 12, b1 1) and checked for the "done when" of the
-brief: every segment and status, 5–10 due reminders, fake identities only.
+with a FAKE Ridge model (tests/test_serving.py fixture, the pre-2.9 buffers:
+ridge 7, b0 12, b1 1) and checked for the "done when" of the brief: every
+segment and status, 5–10 due reminders, fake identities only. The plan is also
+checked against the SERVED buffers (task 2.9: ridge 16, b0 13, b1 4), and, when
+models/ exists, built with the real served model (task 7.2).
 
 Part 2 writes the demo into a throwaway schema of the local Postgres
 (schema + migrations 001–005, nothing else) and calls the real endpoints.
@@ -80,6 +82,34 @@ def test_every_segment_status_and_5_to_10_due(clean: pd.DataFrame, predictor: P.
     """The brief's 'done when', on several seed days (summer, autumn, winter)."""
     trucks = D.build_demo(clean, predictor, today)
     assert D.problems(D.summary(trucks, predictor, today)) == []
+
+
+SERVED_2_9_BUFFERS = {"ridge": 16, "b0": 13, "b1": 4}  # models/ since task 2.9 (docs/ml_results.md)
+FIXTURE_BUFFERS = {"ridge": 7, "b0": 12, "b1": 1}  # tests/test_serving.py fake model
+
+
+@pytest.mark.parametrize("buffers", [SERVED_2_9_BUFFERS, FIXTURE_BUFFERS])
+def test_plan_gives_5_to_10_due_with_these_buffers(buffers: dict[str, int]) -> None:
+    """Task 7.2: the 2.9 buffers put 13 trucks on the list with the old plan; the plan must fit both."""
+    assert 5 <= D.planned_due(buffers) <= 10
+
+
+def test_slot_method_follows_prediction_rules() -> None:
+    assert D.slot_method(D.Slot(1, 10)) == "b1"
+    assert D.slot_method(D.Slot(3, 10)) == "ridge"
+    assert D.slot_method(D.Slot(3, 25, newest_destination=D.UB_CITY)) == "b0"
+    assert D.slot_method(D.Slot(2, 22, newest_raw=D.RAW_DESTINATION)) == "b0"
+
+
+@pytest.mark.skipif(not (ROOT / "models" / "next_change_model.joblib").exists(),
+                    reason="needs the served model files in models/ (git-ignored)")
+def test_real_served_model_builds_a_seedable_demo(clean: pd.DataFrame) -> None:
+    """What `python -m src.data.seed_demo` checks before writing, with the REAL model + buffers."""
+    real = P.load_predictor(ROOT / "models")
+    built = D.build_demo(clean, real, TODAY)
+    assert D.problems(D.summary(built, real, TODAY)) == []
+    overdue = by_plate(built, D.PLATE_OVERDUE)
+    assert overdue.prediction.status == "overdue" and D.is_due(overdue, real, TODAY)
 
 
 def test_problems_reports_what_is_missing() -> None:
