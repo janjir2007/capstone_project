@@ -177,3 +177,22 @@ Paired exact reads on old_test: v1 vs v3: only first 1, only second 2, McNemar p
 ### Serving change (D-065)
 
 The auto-fill threshold is now read from `models/plate_ocr/char_cnn_version.json` (`threshold` + `served_sha256_8` of the served ONNX), so a model promoted later with a val-chosen threshold carries it; a threshold for a different file is refused. No threshold in the file → 0.6 (D-044 default). Today nothing changes: v1 is served at 0.6.
+
+## Task 3.6d — override: char CNN v2 served (D-097)
+
+**This is an explicit product override by Ari, not a rule pass.** v2 did NOT meet the pre-registered rules: D-085 (needs ≥ 3 more exact reads than v1 on test; v2 has +1) and D-087 (needs ≥ 18/27 correct auto-fills; v2 has 14/27). Reason for serving it anyway: on the same test run (Task 3.6b, `final_3_6b.json`) v2 is ≥ v1 on every accuracy metric and made 0 wrong auto-fills, so it only moves plates from "type it by hand" to "correct auto-fill".
+
+| old_test, 27 plates, threshold 0.60 | v1 | v2 |
+|---|---|---|
+| exact reads | 19/27 | 20/27 |
+| char accuracy | 0.810 | 0.815 |
+| correct auto-fills | 9/27 | **14/27** |
+| wrong auto-fills | 0 | 0 |
+| sent to manual | 18/27 | 13/27 |
+| length errors (segmentation) | 4 | 4 |
+
+new_test (1 plate): both read it; v2 auto-fills it, v1 sends it to manual. Latency is the same (median 2.7 vs 2.9 ms per plate; noise).
+
+Caveats: exact reads v1 vs v2 differ on 3 plates (v1 only 1, v2 only 2, McNemar p = 1.0), so "v2 reads better" is not significant; the auto-fill gain (+5) comes mostly from v2 being more confident on plates both read. 0 wrong auto-fills on 27 plates does not prove 0 wrong in the field; staff still see and can edit every pre-filled plate.
+
+Serving: `models/plate_ocr/char_cnn.onnx` = v2 (sha256_8 `ebd12a4c`); `char_cnn_version.json` has `threshold 0.60` (v2's val threshold, 3.6b) + `served_sha256_8`, which the API checks at start-up. v1 kept as `char_cnn_v1.onnx/.pt` (`e057fa9d`) + `char_cnn_version_v1.json` for rollback.
