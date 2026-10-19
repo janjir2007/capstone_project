@@ -1,0 +1,12 @@
+-- service_records for 1001 УБА (vehicle_id 18, Демо Экспресс ХХК)
+-- demo data from src/data/seed_demo.py (synthetic, RISK-06); rows as returned by
+-- GET /vehicles/lookup?q=1001УБА (same columns as the table)
+
+ id | vehicle_id | service_date | odometer_km | engine_hours | oil_grade | liters | route    | destination_id | destination_raw | driver_name | driver_phone | oil_changer 
+----+------------+--------------+-------------+--------------+-----------+--------+----------+----------------+-----------------+-------------+--------------+--------------
+ 27 | 18         | 2026-04-12   | 440448      |              | 10W-40    | 32.0   | mn_china | 9              |                 | Э. Энхбаяр  | 00000009     | Демо ажилтан
+ 28 | 18         | 2026-05-24   | 457637      |              | 10W-40    | 32.0   | mn_china | 8              |                 | Э. Энхбаяр  | 00000009     | Демо ажилтан
+ 29 | 18         | 2026-07-17   | 476119      |              | 10W-40    | 32.0   | mn_china | 4              |                 | Г. Оюун     | 00000018     | Демо ажилтан
+ 30 | 18         | 2026-08-09   | 492147      |              | 10W-40    | 32.0   | mn_china | 9              |                 | Г. Оюун     | 00000018     | Демо ажилтан
+ 31 | 18         | 2026-09-27   | 511548      |              | 10W-40    | 32.0   | mn_china | 4              |                 | Г. Оюун     | 00000018     | Демо ажилтан
+(5 rows)

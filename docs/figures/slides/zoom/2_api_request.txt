@@ -1,0 +1,21 @@
+$ curl -s -X POST http://localhost:8000/plates/recognize -F "file=@docs/figures/slides/zoom/0_demo_photo.png"
+
+{
+  "plate_raw": "1001УБА",
+  "plate_normalized": "1001УБА",
+  "confidence": 0.7851,
+  "needs_manual": false,
+  "reason": null,
+  "detection": {
+    "box": [
+      495.3,
+      663.4,
+      781.2,
+      735.0
+    ],
+    "confidence": 0.6985
+  },
+  "detector": "yolo26n (onnx)",
+  "recognizer": "char_cnn (onnx)",
+  "ms": 103.1
+}

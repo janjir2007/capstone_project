@@ -1,0 +1,15 @@
+{
+  "vehicle_id": 18,
+  "method": "ridge",
+  "fallback_reason": null,
+  "model_version": "ridge-08bdef90",
+  "based_on_service_id": 31,
+  "last_service_date": "2026-09-27",
+  "predicted_days": 48.4,
+  "predicted_date": "2026-11-14",
+  "today": "2026-10-19",
+  "days_left": 26,
+  "status": "ok",
+  "range_low_date": "2026-10-27",
+  "range_high_date": "2026-12-06"
+}
