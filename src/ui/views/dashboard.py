@@ -1,11 +1,11 @@
-"""«Тойм» — manager overview (task 5.4, DESIGN v5 / T9): segment counts from GET /stats/segments
+"""«Хяналтын самбар» (8.1; was «Тойм») — manager overview (task 5.4, DESIGN v5 / T9): segment counts from GET /stats/segments
 as 2×2 tiles (colored dot + word + number), total and as_of. Opened from «Сануулга»."""
 
 import streamlit as st
 
 from src.ui import api_client, common, logic
 
-common.header("Тойм", back=common.REMINDERS_PAGE)
+common.header("Хяналтын самбар", back=common.HOME_PAGE)  # 8.1: opened from home
 
 st.subheader("Сегмент")
 try:

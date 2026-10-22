@@ -51,6 +51,6 @@ else:
         st.Page(common.SEARCH_PAGE, title="Хайх"),
         st.Page(common.CARD_PAGE, title="Машины карт"),
         st.Page(common.REMINDERS_PAGE, title="Сануулга"),
-        st.Page(common.DASHBOARD_PAGE, title="Тойм"),
+        st.Page(common.DASHBOARD_PAGE, title="Хяналтын самбар"),
     ]
     st.navigation(pages, position="hidden").run()

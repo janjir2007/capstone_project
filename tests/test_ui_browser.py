@@ -163,7 +163,8 @@ def test_max_font_weight_600(ui_url, phone_page, path) -> None:
 
 @pytest.mark.parametrize("x_frac", [0.08, 0.5, 0.95])
 @pytest.mark.parametrize(("card", "proof"), [
-    ("act_record", "Дугаарыг гараар оруулах"), ("act_search", "Камераар хайх"), ("act_reminders", "Гараар илгээнэ")])
+    ("act_record", "Дугаарыг гараар оруулах"), ("act_search", "Камераар хайх"), ("act_reminders", "Гараар илгээнэ"),
+    ("act_dashboard", "Сегмент")])
 def test_home_card_tap_opens_screen(ui_url, phone_page, card, proof, x_frac) -> None:
     """T7 / 5.9b: the WHOLE card is the tap target (button stretched over the HTML card), for
     every home card, tapped at its left, middle and right."""
@@ -222,3 +223,32 @@ def test_oil_segment_selected_is_white(ui_url, phone_page) -> None:
     track = phone_page.locator(".st-key-f_oil_choice").bounding_box()
     card = phone_page.locator(".st-key-card_fresh").bounding_box()
     assert track["width"] >= card["width"] - 2 * 20 - 1                  # full card width (padding 20)
+
+
+NO_ZOOM_JS = """() => {
+  const fields = [...document.querySelectorAll('input, textarea, select')]
+    .filter(e => e.offsetParent !== null && e.type !== 'file');
+  const taps = [...document.querySelectorAll('button, [data-baseweb="select"]')].filter(e => e.offsetParent !== null);
+  return {fields: fields.length,
+          small: fields.filter(e => parseFloat(getComputedStyle(e).fontSize) < 16).map(e => e.outerHTML.slice(0, 80)),
+          taps: taps.length,
+          zoomable: taps.filter(e => getComputedStyle(e).touchAction !== 'manipulation').map(e => e.outerHTML.slice(0, 80)),
+          viewport: document.querySelector('meta[name=viewport]')?.content || ''};
+}"""
+
+
+def test_no_tap_zoom_on_new_vehicle_form(ui_url, phone_page) -> None:
+    """8.1: on the longest form (new truck: text, number, model dropdown, pills) every visible
+    field is >= 16 px (iOS does not zoom on focus) and every button / dropdown has
+    touch-action: manipulation; the viewport does not block pinch zoom."""
+    phone_page.goto(ui_url + "/record")
+    phone_page.wait_for_selector("text=Дугаарыг гараар оруулах", timeout=20000)
+    phone_page.get_by_role("button", name="Дугаарыг гараар оруулах").click()
+    phone_page.get_by_label("Улсын дугаар").fill("0000 ТЕС")
+    phone_page.get_by_role("button", name="Шалгах").click()
+    phone_page.wait_for_selector("text=Машины загвар", timeout=10000)
+    phone_page.wait_for_timeout(800)
+    m = phone_page.evaluate(NO_ZOOM_JS)
+    assert m["fields"] > 0 and m["taps"] > 0, m
+    assert m["small"] == [] and m["zoomable"] == [], m
+    assert "maximum-scale" not in m["viewport"] and "user-scalable" not in m["viewport"], m

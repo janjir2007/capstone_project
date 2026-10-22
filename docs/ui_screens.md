@@ -22,7 +22,7 @@ Streamlit `AppTest` and are skipped if Streamlit is not installed).
 | `src/ui/views/search.py` | Search (5.3) |
 | `src/ui/views/card.py` | Vehicle card (5.3) |
 | `src/ui/views/reminders.py` | «Сануулга» manager screen (5.4) |
-| `src/ui/views/dashboard.py` | «Тойм»: segment tiles (5.4), opened from «Сануулга» |
+| `src/ui/views/dashboard.py` | «Хяналтын самбар» (was «Тойм»): segment tiles (5.4), opened from home (8.1) and «Сануулга»; back → home |
 | `src/ui/common.py` | DESIGN v5 CSS, header, plate chip, chips, row cards, status/arrival blocks, fact rows, timeline, plate strip, navigation hand-off |
 | `src/ui/api_client.py` | HTTP client (no Streamlit): one function per endpoint, `ApiError`, `DuplicateService` |
 | `src/ui/logic.py` | Pure helpers: labels, pre-fill, payload, prediction view, recognize outcome, errors |
@@ -106,7 +106,7 @@ driver, «5 хоног хэтэрсэн · 9911 0002», status pill, `message_mn
 before) → «Удахгүй»: `GET /reminders/due?as_of=<API today + 7>` minus today's list → «Машинуудын
 тойм харах», «Шинэчлэх». 503 → «Таамаглалын загвар ачаалагдаагүй».
 
-**Тойм (dashboard, 5.4)**: 2×2 segment tiles (number + dot + word: Шинэ / Давтан / Байнгын /
+**Хяналтын самбар (dashboard, 5.4; «Тойм» until 8.1)**: 2×2 segment tiles (number + dot + word: Шинэ / Давтан / Байнгын /
 Эрсдэлтэй), «Нийт N машин · as_of».
 
 ## Streamlit limits (accepted, "close is enough")

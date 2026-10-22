@@ -332,8 +332,10 @@ def test_home_buttons_open_screens(fake_api) -> None:
     assert texts(at.title) == ["Хайх"]
 
 
-def test_back_button_goes_home(fake_api) -> None:
-    at = click(run_app(SEARCH), "Буцах")
+@pytest.mark.parametrize("view", [SEARCH, DASHBOARD])
+def test_back_button_goes_home(fake_api, view) -> None:
+    """8.1: the manager screen's back arrow also goes home (was «Сануулга»)."""
+    at = click(run_app(view), "Буцах")
     assert texts(at.title) == ["Сайн байна уу"]
 
 
@@ -725,13 +727,34 @@ def reminder(service_id: int, plate: str, days_left: int, status: str) -> dict:
 
 
 @pytest.mark.parametrize(("key", "title"), [
-    ("home_record", "Үйлчилгээ бүртгэх"), ("home_search", "Хайх"), ("home_reminders", "Сануулга")])
+    ("home_record", "Үйлчилгээ бүртгэх"), ("home_search", "Хайх"), ("home_reminders", "Сануулга"),
+    ("home_dashboard", "Хяналтын самбар")])
 def test_home_card_navigates(fake_api, key, title) -> None:
     """5.9b: every home card is a real button that opens its screen (the «Сануулга» card was a
     page_link whose <a> covered only one text line of the card, so taps did nothing)."""
     at = run_app()
     at.button(key=key).click().run()
     assert texts(at.title) == [title]
+
+
+def test_home_dashboard_button(fake_api) -> None:
+    """8.1: «Хяналтын самбар» on home opens the manager screen (5.4) with its segment tiles."""
+    at = run_app()
+    assert at.button(key="home_dashboard").label == "Хяналтын самбар"
+    at.button(key="home_dashboard").click().run()
+    assert not at.exception
+    assert texts(at.subheader) == ["Сегмент"]
+    assert '<div class="tiles two">' in html_blocks(at)
+
+
+def test_css_stops_iphone_tap_zoom() -> None:
+    """8.1: fields are 16 px (iOS zooms on focus below 16 px) and tap targets have
+    touch-action: manipulation; pinch zoom is never switched off."""
+    from src.ui import common
+    css = common.CSS
+    assert ".stApp input, .stApp textarea, .stApp select, [data-baseweb=\"select\"] > div {font-size: 16px !important;}" in css
+    assert ".stApp button, .stApp a" in css and "touch-action: manipulation;" in css
+    assert "maximum-scale" not in css and "user-scalable" not in css
 
 
 def test_home_reminder_summary(fake_api) -> None:
@@ -844,7 +867,7 @@ def test_mark_sent_not_latest_service(fake_api) -> None:
 
 def test_overview_segment_tiles(fake_api) -> None:
     at = click(run_app(REMINDERS), "Машинуудын тойм харах")
-    assert texts(at.title) == ["Тойм"]
+    assert texts(at.title) == ["Хяналтын самбар"]
     page = html_blocks(at)
     for label, count in (("Шинэ", 2), ("Давтан", 3), ("Байнгын", 1), ("Эрсдэлтэй", 1)):
         assert f'<div class="v">{count}</div><div class="k">' in page and f"</i>{label}</div>" in page

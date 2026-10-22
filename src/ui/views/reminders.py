@@ -9,7 +9,7 @@
   (st.code has a built-in copy button = desktop fallback); «Залгах» (tel: link) and «Илгээсэн»
   -> POST /reminders/{service_id}/sent (already_sent shown).
 - «Удахгүй»: GET /reminders/due?as_of=<API today + 7> minus today's list = scheduled this week.
-- Link to «Тойм» (segment counts, views/dashboard.py).
+- Link to «Хяналтын самбар» (segment counts, views/dashboard.py).
 """
 
 import html

@@ -1,6 +1,7 @@
 """Home screen (DESIGN v5 / T9 mockup): «ГЭ Гео-Эксперт» + date, «Сайн байна уу» + today's
 reminder line, 3 numbers (to remind / overdue / all trucks), the blue «Үйлчилгээ бүртгэх» card,
-one card with «Хайх» and «Сануулга» (red count badge), and «Сүүлд үзсэн» (this session)."""
+one card with «Хайх», «Сануулга» (red count badge) and «Хяналтын самбар» (8.1), and «Сүүлд үзсэн»
+(this session)."""
 
 from datetime import date
 
@@ -64,6 +65,9 @@ with st.container(key="grp_nav"):
         # the stretched wrapper, so most of the card did nothing when tapped (5.9b).
         if st.button("Сануулга", key="home_reminders", width="stretch"):
             st.switch_page(common.REMINDERS_PAGE)
+    with common.action_card("act_dashboard", "chart", "Хяналтын самбар", "Сегмент, машины тоо", tone="green"):
+        if st.button("Хяналтын самбар", key="home_dashboard", width="stretch"):  # 8.1 -> 5.4 manager screen
+            st.switch_page(common.DASHBOARD_PAGE)
 
 if st.session_state.get(common.RECENT):
     common.section("Сүүлд үзсэн", right="Өнөөдөр")

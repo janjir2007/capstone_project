@@ -56,6 +56,12 @@ body, body *:not([data-testid="stIconMaterial"]) {font-family: -apple-system, Bl
   "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif !important;}
 .stApp {font-weight: 400;}
 .stApp input::placeholder, .stApp textarea::placeholder {color: var(--muted) !important; opacity: 1 !important;}
+/* 8.1: iPhone Safari zooms the page in when a field under 16 px gets focus -> every field 16 px
+   (bigger rules further down, e.g. liters 18 px, still win). touch-action: manipulation turns off
+   double-tap zoom on tap targets only; pinch zoom stays (viewport meta is not touched). */
+.stApp input, .stApp textarea, .stApp select, [data-baseweb="select"] > div {font-size: 16px !important;}
+.stApp button, .stApp a, .stApp label, .stApp [role="button"], .stApp [role="option"],
+  [data-baseweb="select"], [data-baseweb="popover"] li {touch-action: manipulation;}
 /* page: no Streamlit top bar; 480 px column, centered */
 [data-testid="stHeader"], [data-testid="stToolbar"], [data-testid="stDecoration"] {display: none !important;}
 .block-container {padding: 12px 20px 40px !important; max-width: 480px;}
@@ -296,6 +302,7 @@ ICONS = {
     "chevron": "M10 6 8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z",
     "check": "M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z",
     "send": "M2.01 21 23 12 2.01 3 2 10l15 2-15 2z",
+    "chart": "M5 9.2h3V19H5zM10.6 5h2.8v14h-2.8zm5.6 8H19v6h-2.8z",
 }
 
 
