@@ -1,0 +1,74 @@
+{
+ "task": "6.4",
+ "note": "Two separate measurements. A = API speed on the server (private network, no internet). B = what a user's browser waits for one HTTPS request over the internet (health check only).",
+ "A_server_private_api": {
+  "date": "2026-10-19",
+  "code_commit": "ee82e22 (server clone)",
+  "machine": "Linux-6.8.0-142-generic-x86_64-with-glibc2.41, x86_64",
+  "setup": "DigitalOcean droplet, Singapore, 1 vCPU / 2 GB (Ubuntu 24.04); production stack running (docker-compose.prod.yml: uvicorn 1 process + Postgres 16 + UI + Caddy); benchmark ran in a throw-away container from the api image on the compose network, calling http://api:8000 (private API, not through Caddy); one client, sequential calls",
+  "photo": "synthetic 4032x3024 JPEG, no plate (detector runs, char CNN skipped)",
+  "warmup_calls": 10,
+  "plates_recognize": {
+   "calls": 200,
+   "ok_200": 200,
+   "needs_manual": 200,
+   "round_trip_ms": {
+    "p50": 430.3,
+    "p95": 904.9,
+    "p99": 1104.5,
+    "mean": 500.6,
+    "max": 1335.3
+   },
+   "server_ms": {
+    "p50": 157.8,
+    "p95": 352.6,
+    "p99": 464.3,
+    "mean": 183.2,
+    "max": 543.8
+   },
+   "photo_bytes": 1542175
+  },
+  "vehicle_prediction": {
+   "calls": 200,
+   "status_codes": {
+    "200": 200
+   },
+   "vehicles": 40,
+   "round_trip_ms": {
+    "p50": 33.0,
+    "p95": 91.4,
+    "p99": 110.8,
+    "mean": 40.2,
+    "max": 129.1
+   }
+  }
+ },
+ "B_mac_https_health": {
+  "date": "2026-10-19",
+  "url": "https://168.144.143.203.sslip.io/health",
+  "client": "Ari's Mac (macOS-26.5.2-arm64-arm-64bit), Python urllib, one client, sequential calls",
+  "setup": "public internet -> Caddy (HTTPS, Let's Encrypt) -> api /health (runs SELECT 1 on Postgres); urllib opens a NEW TCP + TLS connection per request (no keep-alive) = worst case per call",
+  "warmup_calls": 10,
+  "health_https": {
+   "calls": 200,
+   "status_codes": {
+    "200": 200
+   },
+   "round_trip_ms": {
+    "p50": 325.7,
+    "p95": 409.1,
+    "p99": 462.5,
+    "mean": 345.4,
+    "max": 1628.5
+   }
+  },
+  "network_ping_ms": {
+   "count": 10,
+   "min": 86.3,
+   "avg": 111.0,
+   "max": 163.5,
+   "note": "ICMP ping Mac -> server, same session"
+  },
+  "client_location": "Ulaanbaatar, home Wi-Fi (Ari)"
+ }
+}

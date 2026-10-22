@@ -1,0 +1,42 @@
+{
+ "date": "2026-10-18",
+ "code_commit": "e898ec6",
+ "machine": "macOS-26.5.2-arm64-arm-64bit, arm",
+ "setup": "uvicorn (1 process) from .venv on the Mac + local Postgres in Docker; one client, sequential calls; round trip = urllib on the same machine",
+ "photo": "synthetic 4032x3024 JPEG, no plate (detector runs, char CNN skipped)",
+ "warmup_calls": 10,
+ "plates_recognize": {
+  "calls": 200,
+  "ok_200": 200,
+  "needs_manual": 200,
+  "round_trip_ms": {
+   "p50": 56.0,
+   "p95": 73.3,
+   "p99": 83.9,
+   "mean": 58.5,
+   "max": 86.4
+  },
+  "server_ms": {
+   "p50": 25.2,
+   "p95": 36.5,
+   "p99": 48.0,
+   "mean": 26.8,
+   "max": 48.7
+  },
+  "photo_bytes": 1542175
+ },
+ "vehicle_prediction": {
+  "calls": 200,
+  "status_codes": {
+   "200": 200
+  },
+  "vehicles": 40,
+  "round_trip_ms": {
+   "p50": 9.1,
+   "p95": 10.9,
+   "p99": 12.0,
+   "mean": 8.9,
+   "max": 15.6
+  }
+ }
+}
