@@ -96,7 +96,9 @@ services:
     # certificate for DOMAIN by itself; for DOMAIN=localhost it uses its own local certificate.
     image: caddy:2.11.7-alpine
     environment:
-      DOMAIN: ${DOMAIN:?set DOMAIN in .env (e.g. service.example.mn, <ip>.sslip.io or localhost)}
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env (e.g. app.geoexpert.mn, <ip>.sslip.io or localhost)}
+      # Previous public address -> redirected to DOMAIN (task 8.3). Optional.
+      OLD_DOMAIN: ${OLD_DOMAIN:-old.localhost}
     ports:
       - "80:80"        # Let's Encrypt HTTP challenge + redirect to https
       - "443:443"

@@ -1,7 +1,8 @@
 # Caddy = HTTPS reverse proxy in front of the Streamlit UI (task 6.1, D-061).
 # DOMAIN comes from .env (docker-compose.prod.yml). Caddy picks the certificate itself:
-#   a public name (service.example.mn, 1.2.3.4.sslip.io) -> Let's Encrypt, renewed automatically
-#   localhost                                             -> Caddy's own local CA (browser warns once)
+#   a public name (app.geoexpert.mn, 1.2.3.4.sslip.io) -> Let's Encrypt, renewed automatically
+#   localhost                                           -> Caddy's own local CA (browser warns once)
+# Live since task 8.3: DOMAIN=app.geoexpert.mn, OLD_DOMAIN=168.144.143.203.sslip.io.
 
 {$DOMAIN} {
 	encode zstd gzip
@@ -26,4 +27,14 @@
 		Referrer-Policy strict-origin-when-cross-origin
 		-Server
 	}
+}
+
+# Task 8.3: the previous public address (OLD_DOMAIN in .env, e.g. the <ip>.sslip.io name) keeps
+# its certificate and sends every request to the same path on DOMAIN, so old links and
+# bookmarks still work. 302 = temporary for now (PM, 8.3): browsers do not cache it, so a
+# rollback works at once. Switch to `permanent` (301) after 2 weeks stable (docs/deploy.md §11).
+# Without OLD_DOMAIN in .env, compose fills in
+# old.localhost (never matched; a block address cannot be empty, Caddy refuses to start).
+{$OLD_DOMAIN} {
+	redir https://{$DOMAIN}{uri} temporary
 }

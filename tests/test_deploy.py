@@ -74,6 +74,20 @@ def test_caddy_proxies_ui_and_only_health_of_api() -> None:
     assert api_routes == ["/health"]
 
 
+def test_old_domain_redirects_to_domain() -> None:
+    """Task 8.3: the old sslip.io address sends every request (same path) to DOMAIN; nothing else.
+    302 (temporary) until 2 weeks stable, then 301 (PM review 8.3)."""
+    caddyfile = (ROOT / "deploy" / "Caddyfile").read_text(encoding="utf-8")
+    block = re.search(r"^\{\$OLD_DOMAIN\} \{\n(.*?)^\}", caddyfile, re.S | re.M)
+    assert block is not None
+    assert block.group(1).strip() == "redir https://{$DOMAIN}{uri} temporary"
+
+
+def test_old_domain_is_optional_but_never_empty() -> None:
+    """An empty site address makes Caddy refuse the whole Caddyfile, so compose fills in a dummy name."""
+    assert SERVICES["caddy"]["environment"]["OLD_DOMAIN"] == "${OLD_DOMAIN:-old.localhost}"
+
+
 def test_env_example_covers_compose_and_holds_no_real_values() -> None:
     """Every ${VAR} the prod compose reads is in .env.prod.example; secrets are CHANGE_ME, phone is the placeholder."""
     text = (ROOT / "docker-compose.prod.yml").read_text(encoding="utf-8")
