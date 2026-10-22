@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import matplotlib
 import numpy as np
 import pytest
 
@@ -9,6 +10,9 @@ from scripts import zoom_figures as zf
 
 MODELS = Path(__file__).resolve().parent.parent / "models"
 FONT_MISSING = not Path(zf.FONT).exists()
+MODELS_MISSING = not (MODELS / "plate_ocr" / "char_cnn.onnx").exists()
+# 8.1b: Linux CI has no macOS fonts; matplotlib (requirements.txt) ships DejaVu Sans Bold, which has Cyrillic.
+FALLBACK_FONT = Path(matplotlib.get_data_path()) / "fonts" / "ttf" / "DejaVuSans-Bold.ttf"
 
 
 def _card(phone: str | None = "00000009", company: str = "Демо Экспресс ХХК") -> dict:
@@ -54,8 +58,10 @@ def test_curl_text_keeps_cyrillic() -> None:
     assert '"plate_raw": "1001УБА"' in text
 
 
-@pytest.mark.skipif(FONT_MISSING, reason="macOS font not available")
-def test_demo_photo_is_deterministic() -> None:
+def test_demo_photo_is_deterministic(monkeypatch) -> None:
+    """Same seed -> same pixels. Without the macOS font (CI) it runs with DejaVu instead of skipping (8.1b)."""
+    if FONT_MISSING:
+        monkeypatch.setattr(zf, "FONT", str(FALLBACK_FONT))
     a, b = zf.render_demo_photo(), zf.render_demo_photo()
     assert a.size == (1280, 960)
     assert np.array_equal(np.asarray(a), np.asarray(b))
@@ -73,8 +79,11 @@ def test_y4m_header_and_frames(tmp_path: Path) -> None:
     assert len(data) == header + 3 * (len(b"FRAME\n") + 640 * 480 * 3 // 2)
 
 
-@pytest.mark.skipif(FONT_MISSING or not (MODELS / "plate_ocr" / "char_cnn.onnx").exists(),
-                    reason="needs models/ (git-ignored) and the macOS font")
+# pytest reports the skipif closest to the function first: models is the reason CI must see when both
+# are missing (allowed in scripts/ci_check_pytest.py). Only the macOS font gives the photo the detector
+# was tuned on, so no DejaVu fallback here.
+@pytest.mark.skipif(FONT_MISSING, reason=f"macOS font missing: {zf.FONT} (demo photo is tuned on it)")
+@pytest.mark.skipif(MODELS_MISSING, reason="needs models/ (git-ignored): plate_ocr/char_cnn.onnx")
 def test_demo_photo_read_and_per_char_matches_reader() -> None:
     """The synthetic photo is read as 1001УБА, and per_char gives the same text + product as predict_chars."""
     from src.cv.char_segment import segment

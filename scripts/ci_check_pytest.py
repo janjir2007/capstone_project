@@ -27,7 +27,10 @@ ACCEPTED_EXIT_CODES = (0, 134)
 # - tests/test_ui_browser.py needs a real browser + running stack, opt-in by design (UI_BROWSER=1, docs/ui_run.md)
 # - tests/test_serving.py real-ONNX checks: model files are git-ignored, so CI never has them
 #   (the same code paths run on fake models in the other serving tests)
-ALLOWED_SKIPS = ("opt-in: set UI_BROWSER=1", "exported ONNX files missing")
+# - tests/test_seed_demo.py (7.2) and tests/test_zoom_figures.py (7.1e) real-model checks: same reason,
+#   models/ is git-ignored; seed_demo and per_char logic are tested on fake/in-memory data elsewhere (8.1b)
+ALLOWED_SKIPS = ("opt-in: set UI_BROWSER=1", "exported ONNX files missing",
+                 "needs the served model files in models/ (git-ignored)", "needs models/ (git-ignored)")
 
 
 @dataclass
