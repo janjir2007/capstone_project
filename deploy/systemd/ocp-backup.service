@@ -1,0 +1,12 @@
+# Daily database backup (task 8.2), started by ocp-backup.timer. Install: docs/deploy.md §12.
+# One run by hand: systemctl start ocp-backup.service && journalctl -u ocp-backup -n 20
+[Unit]
+Description=Oil change predictor: database backup (scripts/backup.sh)
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+Environment=BACKUP_DIR=/root/backups
+Environment=KEEP_DAYS=14
+ExecStart=/root/oil-change-predictor/scripts/backup.sh

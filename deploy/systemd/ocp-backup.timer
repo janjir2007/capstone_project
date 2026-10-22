@@ -1,0 +1,11 @@
+# Every day at 03:00 Ulaanbaatar time, whatever the server clock's own time zone is (task 8.2).
+# Persistent=true: if the server was off at 03:00, the backup runs once as soon as it is back up.
+[Unit]
+Description=Daily database backup at 03:00 Asia/Ulaanbaatar
+
+[Timer]
+OnCalendar=*-*-* 03:00:00 Asia/Ulaanbaatar
+Persistent=true
+
+[Install]
+WantedBy=timers.target

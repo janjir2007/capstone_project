@@ -160,8 +160,9 @@ dcl down -v                             # remove everything (incl. the test data
 | Update code | `git pull && dc build && dc run --rm api python -m scripts.migrate && dc up -d` |
 | Logs | `dc logs -f api` (or `ui`, `caddy`, `db`) |
 | Restart | `dc restart` (data stays in the `pgdata` volume) |
-| Backup DB | `dc exec -T db pg_dump -U oil oil_change \| gzip > backup_$(date +%F).sql.gz` |
+| Backup DB | automatic daily 03:00 (§12); now: `scripts/backup.sh` → `/root/backups/` |
 | Re-seed demo | `dc down && docker volume rm ocp-prod_pgdata && dc up -d db` → §4 migrate + seed → `dc up -d`. **Deletes all data** — demo only, never once real records exist |
+| Remove demo data before real use | `scripts/wipe_demo.sh` (§12: backup first, typed confirmation) |
 | Existing DB from before the runner | `dc run --rm api python -m scripts.migrate --mark-applied 001 002 003` then migrate |
 
 Never `dc down -v` on the server without a backup: `-v` also deletes the certificates volume
@@ -268,3 +269,61 @@ change `temporary` → `permanent`, update `test_old_domain_redirects_to_domain`
 server `git pull && dc up -d --force-recreate caddy` (the Caddyfile is a mounted file; recreate so
 Caddy reads it). A 301 is cached by browsers, so after that switch a rollback no longer reaches
 phones that already followed it.
+
+## 12. Backups, restore test, removing the demo data (task 8.2)
+
+**What runs:** `scripts/backup.sh` = `pg_dump` inside the `db` container → gzip →
+`/root/backups/oil_change_<YYYY-MM-DD_HHMMSS>.sql.gz` (Ulaanbaatar time in the name, mode 600:
+the file holds driver names and phones). A backup only counts if the gzip is intact and the dump
+reached its last line; then files older than **14 days** are deleted (only `oil_change_*.sql.gz`).
+A systemd timer runs it **every day at 03:00 Asia/Ulaanbaatar** (= 19:00 UTC; checked with
+`systemd-analyze calendar` on systemd 255 / Ubuntu 24.04); `Persistent=true` catches up after a
+power-off. Backups stay **on the same server** until an off-server copy is chosen (task 8.2c).
+
+Install once (server, repo folder, after `git pull`):
+
+```bash
+mkdir -p /root/backups && chmod 700 /root/backups
+cp deploy/systemd/ocp-backup.service deploy/systemd/ocp-backup.timer /etc/systemd/system/
+systemctl daemon-reload && systemctl enable --now ocp-backup.timer
+systemctl list-timers ocp-backup.timer            # NEXT = tomorrow 03:00 UB (19:00 UTC)
+systemctl start ocp-backup.service                # one backup now
+journalctl -u ocp-backup -n 5 --no-pager          # "backup: OK … (1 kept, 14 days)"
+ls -l /root/backups
+```
+
+**Restore test** (monthly, and after any change to the database): loads a backup into a
+throw-away database in the `db` container, compares every table's row count with the rows in
+the dump, then drops it. The live database is only read.
+
+```bash
+scripts/restore_test.sh                           # newest backup; or: scripts/restore_test.sh <file>
+#   table  in_dump  restored  live_now  result  … then "restore_test: OK, 8 tables …" (exit 0)
+```
+
+**Real restore** (data lost or wrong; stops the app for a minute):
+
+```bash
+dc stop api ui
+dc exec -T db sh -c 'dropdb -U "$POSTGRES_USER" "$POSTGRES_DB" && createdb -U "$POSTGRES_USER" "$POSTGRES_DB"'
+gunzip -c /root/backups/<file>.sql.gz | dc exec -T db sh -c 'psql -X -q -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+dc run --rm api python -m scripts.migrate         # "nothing to apply" if the backup was current
+dc start api ui
+```
+
+**Remove the demo data** before real customers (once):
+
+```bash
+scripts/wipe_demo.sh
+#   1) runs backup.sh (stops if it fails)  2) lists what is emptied / kept  3) asks you to type
+#   WIPE oil_change   -> anything else deletes nothing
+```
+
+Emptied: companies, vehicles, service_records, reminders_sent and every table that references
+them (found from the foreign keys: today predictions and reminders); ids restart at 1. Kept:
+destinations and schema_migrations (the script stops if either would be touched). One
+transaction: all or nothing. Undo = "Real restore" above with the backup it names.
+
+**Off-server copy (8.2c, not built):** a fire, a deleted droplet or a lost account takes the
+local backups with it. Options and cost: handoff 8.2 / PROJECT_STATE.
+
