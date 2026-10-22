@@ -25,6 +25,10 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 common.inject_css()
+# 8.4 phone check: open any page with ?diag=1 -> the record screen shows the photo size for this
+# session (in-app page switches drop query params, so remember it here).
+if st.query_params.get("diag") == "1":
+    st.session_state[common.DIAG] = True
 
 
 def login_screen() -> None:

@@ -69,16 +69,23 @@ exists, so a direct URL cannot skip it.
 rows (plate · company · status), this session only.
 
 **Бүртгэх (Record)**
-1. *Capture*: camera + upload (jpg/png/heic/heif, RISK-17) → `POST /plates/recognize`. Clear read →
-   lookup → form. `needs_manual` / recognizer down → manual. «Дугаарыг гараар оруулах»; small
-   «Дугааргүй машин» → manual in fleet-number mode (D-005).
-2. *Manual*: plate (or fleet number) → «Шалгах» → lookup → form.
+1. *Capture* (8.4, Ari's mockup): square live view of the rear camera (getUserMedia, playsinline,
+   highest resolution offered) with «Арын камер» + «2–3 метрээс, урдаас нь авна уу», round 80 px
+   shutter. Camera blocked / missing / no HTTPS → automatically the phone's own camera button
+   «Зураг авах» (`capture="environment"`). Then «Галерей» | «Гараар бичих», then «Дугааргүй машин»
+   (fleet-number mode, D-005). Every photo is shrunk in the browser to ≤ 2560 px (JPEG 0.9; an
+   undecodable HEIC is sent as is, RISK-17) → `POST /plates/recognize`. No «Гарах» on this screen.
+2. *Result* (8.4): photo (zoomed to the detected plate) + green «Дугаарыг таньлаа — шалгаад зөв
+   бол үргэлжлүүлнэ үү» with the plate in a big editable field, or orange «Дугаарыг уншиж
+   чадсангүй — гараар оруулна уу» with an empty field (also recognizer down). «Гараар бичих» /
+   «Дугааргүй машин» open it without a photo. «Үргэлжлүүлэх» → lookup → form; «Дахин зураг авах» →
+   capture. No automatic lookup any more (changes D-072). Opening any page with `?diag=1` shows the photo size there (session only).
 3. *Confirm* (fleet number found in one or more companies only): «Аль компанийн машин бэ?».
    A plate goes straight to the form (T9).
 4. *Form*, two layouts:
    - **«Машин танигдлаа»** (existing truck read from a photo): plate strip (crop of the photo
      around the detected box, in memory only, D-070) with «✓ Автоматаар уншсан» → truck card
-     (plate, segment · N удаа · company, «Буруу» → manual) + arrival block + «Өмнөх удаа
+     (plate, segment · N удаа · company, «Буруу» → result) + arrival block + «Өмнөх удаа
      08-19 · 186 300 км · Замын-Үүд» → «Энэ удаагийн мэдээлэл»: odometer, «Одоо хаашаа явах вэ?»
      pills (+ amber note when it differs from last time), rows Тос / Жолооч, «Тос, жолооч өөрчлөх»
      (oil, liters, name, phone) → «Хадгалах» → «Машины карт бүтэн харах».

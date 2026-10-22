@@ -36,7 +36,7 @@ PHONE = {"width": 390, "height": 844}
 # path -> text that proves the screen rendered
 SCREENS = {
     "/": "Сайн байна уу",
-    "/record": "Дугаарыг гараар оруулах",
+    "/record": "Гараар бичих",
     "/search": "Камераар хайх",
     "/reminders": "Гараар илгээнэ",
     "/dashboard": "Сегмент",
@@ -163,7 +163,7 @@ def test_max_font_weight_600(ui_url, phone_page, path) -> None:
 
 @pytest.mark.parametrize("x_frac", [0.08, 0.5, 0.95])
 @pytest.mark.parametrize(("card", "proof"), [
-    ("act_record", "Дугаарыг гараар оруулах"), ("act_search", "Камераар хайх"), ("act_reminders", "Гараар илгээнэ"),
+    ("act_record", "Гараар бичих"), ("act_search", "Камераар хайх"), ("act_reminders", "Гараар илгээнэ"),
     ("act_dashboard", "Сегмент")])
 def test_home_card_tap_opens_screen(ui_url, phone_page, card, proof, x_frac) -> None:
     """T7 / 5.9b: the WHOLE card is the tap target (button stretched over the HTML card), for
@@ -209,10 +209,10 @@ def test_oil_segment_selected_is_white(ui_url, phone_page) -> None:
     """T9 mockup: oil grade = segmented control; the selected segment (default 15W-40 on a new
     truck) is white on the grey track, full width, nothing cut off."""
     phone_page.goto(ui_url + "/record")
-    phone_page.wait_for_selector("text=Дугаарыг гараар оруулах", timeout=20000)
-    phone_page.get_by_role("button", name="Дугаарыг гараар оруулах").click()
+    phone_page.wait_for_selector("text=Гараар бичих", timeout=20000)
+    phone_page.get_by_role("button", name="Гараар бичих").click()
     phone_page.get_by_label("Улсын дугаар").fill("0000 ТЕС")
-    phone_page.get_by_role("button", name="Шалгах").click()
+    phone_page.get_by_role("button", name="Үргэлжлүүлэх").click()
     chip = phone_page.locator('.st-key-f_oil_choice button[aria-checked="true"]', has_text="15W-40")
     chip.wait_for(timeout=10000)
     phone_page.wait_for_timeout(500)
@@ -242,10 +242,10 @@ def test_no_tap_zoom_on_new_vehicle_form(ui_url, phone_page) -> None:
     field is >= 16 px (iOS does not zoom on focus) and every button / dropdown has
     touch-action: manipulation; the viewport does not block pinch zoom."""
     phone_page.goto(ui_url + "/record")
-    phone_page.wait_for_selector("text=Дугаарыг гараар оруулах", timeout=20000)
-    phone_page.get_by_role("button", name="Дугаарыг гараар оруулах").click()
+    phone_page.wait_for_selector("text=Гараар бичих", timeout=20000)
+    phone_page.get_by_role("button", name="Гараар бичих").click()
     phone_page.get_by_label("Улсын дугаар").fill("0000 ТЕС")
-    phone_page.get_by_role("button", name="Шалгах").click()
+    phone_page.get_by_role("button", name="Үргэлжлүүлэх").click()
     phone_page.wait_for_selector("text=Машины загвар", timeout=10000)
     phone_page.wait_for_timeout(800)
     m = phone_page.evaluate(NO_ZOOM_JS)

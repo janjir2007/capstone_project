@@ -39,6 +39,7 @@ CARD_ID = "card_id"                # vehicle shown on the card screen
 SEARCH_PENDING = "search_pending"  # query to search on arrival
 RECENT = "recent_vehicles"         # "Сүүлд үзсэн": [{id, identifier, company, status}], this session only
 RECENT_MAX = 5
+DIAG = "diag"                      # True -> record result shows the photo size (8.4, ?diag=1)
 
 # DESIGN v5 (T9, mockup). Type: home title 26/600 · screen title 20/600 · section 13/600 grey
 # (or 16/600 dark) · body 15/400 · labels 14/500 · big numbers 34/600 (status) and 26/600 (tiles).
@@ -234,6 +235,28 @@ h2, h3 {font-size: 14px !important; font-weight: 600 !important; color: var(--mu
 .strip .ok {position: absolute; top: 10px; left: 12px; display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px;
   border-radius: 10px; background: rgba(17,24,39,.6); color: #fff; font-size: 13px; font-weight: 500;}
 .strip .ok svg {width: 16px; height: 16px; fill: currentColor;}
+
+/* 8.4 record start + result (Ari's mockup) */
+.st-key-rec_alt {flex-wrap: nowrap !important; gap: 12px !important; align-items: stretch;}
+.st-key-rec_alt > [data-testid="stElementContainer"] {flex: 1 1 0 !important; min-width: 0; width: auto !important;}
+.st-key-btn_manual button {min-height: 56px; height: 56px; border: 1px solid #D5D9E0 !important; border-radius: 14px;
+  background: #fff; box-shadow: none !important;}
+.st-key-btn_manual button p {font-weight: 500;}
+.st-key-link_fleet_capture button {padding: 0 4px;}
+.rec-photo {height: 200px; border-radius: var(--r); overflow: hidden; background: #2B2F36;}
+.rec-photo img {width: 100%; height: 100%; object-fit: contain; display: block;}
+.rec-banner {display: flex; align-items: center; gap: 8px; border-radius: 12px; padding: 12px 14px; font-size: 15px; font-weight: 500;}
+.rec-banner.ok {background: #E7F5EC; color: #14532D;}
+.rec-banner.warn {background: #FFF4E5; color: #7A3E00;}
+.rec-banner svg {width: 20px; height: 20px; fill: currentColor; flex: none;}
+/* Streamlit 1.64 text input = react-aria: the visible box is stTextInputRootElement */
+[class*="st-key-plate_field"] [data-testid="stTextInputRootElement"] {height: 64px; background: #fff !important;
+  border: 2px solid #D5D9E0 !important; border-radius: 14px !important;}
+.st-key-plate_field_read [data-testid="stTextInputRootElement"] {border-color: var(--pri) !important;}
+[class*="st-key-plate_field"] [data-testid="stTextInputRootElement"]:focus-within {border-color: var(--pri) !important;}
+.stApp [class*="st-key-plate_field"] input {height: 100%; font-size: 28px !important; font-weight: 600; letter-spacing: 2px;
+  text-align: center; padding: 0 8px;}
+.stApp [class*="st-key-plate_field"] input::placeholder {font-weight: 400; letter-spacing: 0;}
 
 /* status block (card) + arrival block (recognized truck) */
 .pc {border-radius: 16px; padding: 18px 20px;}
@@ -519,21 +542,43 @@ def plate_strip(data: bytes | None, box: list[float] | None) -> None:
     The crop is made here, in memory, and sent only to this browser (D-070). No photo or an
     undecodable one (HEIC) -> the strip without an image.
     """
-    img_html = ""
-    if data and _decodable(data):
-        with Image.open(io.BytesIO(data)) as img:
-            img = img.convert("RGB")
-            if box and len(box) == 4:
-                x1, y1, x2, y2 = box
-                cx, cy, w = (x1 + x2) / 2, (y1 + y2) / 2, max(x2 - x1, 1) * 2.6
-                h = w / 4.2  # strip aspect
-                img = img.crop((max(cx - w / 2, 0), max(cy - h / 2, 0),
-                                min(cx + w / 2, img.width), min(cy + h / 2, img.height)))
-            img.thumbnail((900, 300))
-            buf = io.BytesIO()
-            img.save(buf, "JPEG", quality=80)
-        img_html = f'<img alt="" src="data:image/jpeg;base64,{base64.b64encode(buf.getvalue()).decode()}">'
+    jpeg = _plate_crop(data, box, zoom=2.6, aspect=4.2, size=(900, 300))
+    img_html = f'<img alt="" src="data:image/jpeg;base64,{base64.b64encode(jpeg).decode()}">' if jpeg else ""
     html_block(f'<div class="strip">{img_html}<span class="ok">{icon("check")}Автоматаар уншсан</span></div>')
+
+
+def _plate_crop(data: bytes | None, box: list[float] | None, zoom: float, aspect: float,
+                size: tuple[int, int]) -> bytes | None:
+    """JPEG of the area around the plate box (zoom x box width, width/height = aspect), or the
+    whole photo when there is no box; shrunk to fit `size`. In memory only (D-070).
+    None when there is no photo or it cannot be decoded (HEIC)."""
+    if not data or not _decodable(data):
+        return None
+    with Image.open(io.BytesIO(data)) as img:
+        img = img.convert("RGB")
+        if box and len(box) == 4:
+            x1, y1, x2, y2 = box
+            cx, cy, w = (x1 + x2) / 2, (y1 + y2) / 2, max(x2 - x1, 1) * zoom
+            h = w / aspect
+            img = img.crop((max(cx - w / 2, 0), max(cy - h / 2, 0),
+                            min(cx + w / 2, img.width), min(cy + h / 2, img.height)))
+        img.thumbnail(size)
+        buf = io.BytesIO()
+        img.save(buf, "JPEG", quality=80)
+    return buf.getvalue()
+
+
+def photo_view(data: bytes | None, box: list[float] | None, name: str | None = None) -> None:
+    """Result screen (8.4): the photo in a dark 200 px box — zoomed to the plate when the
+    detector found one, else the whole photo. Undecodable (HEIC) -> one text line."""
+    if not data:
+        return
+    jpeg = _plate_crop(data, box, zoom=3.0, aspect=2.2, size=(900, 420))
+    if jpeg is None:
+        html_block(f'<span class="muted">Зураг: {html.escape(name or "")} (урьдчилж харах боломжгүй)</span>')
+        return
+    html_block(f'<div class="rec-photo"><img alt="Машины зураг" '
+               f'src="data:image/jpeg;base64,{base64.b64encode(jpeg).decode()}"></div>')
 
 
 # --- vehicle card parts ------------------------------------------------------------------

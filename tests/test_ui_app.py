@@ -244,12 +244,11 @@ def step(at: AppTest) -> str:
 
 
 def type_plate(at: AppTest, plate: str, kind: str = "plate") -> AppTest:
-    """Record: manual entry -> «Шалгах» -> form (T9; a fleet number found in a company -> confirm)."""
-    at = click(at, "Дугаарыг гараар оруулах")
-    if kind == "fleet_no":
-        at = click(at, "Дугааргүй машин")
+    """Record start: «Гараар бичих» (or «Дугааргүй машин») -> type -> «Үргэлжлүүлэх» -> form
+    (a fleet number found in a company -> confirm)."""
+    at = click(at, "Дугааргүй машин" if kind == "fleet_no" else "Гараар бичих")
     at.text_input(key="rec_manual").set_value(plate).run()
-    return click(at, "Шалгах")
+    return click(at, "Үргэлжлүүлэх")
 
 
 def to_form(at: AppTest, plate: str, kind: str = "plate") -> AppTest:
@@ -279,6 +278,36 @@ def seed_existing(fake: FakeApi) -> dict:
 
 def upload_photo(at: AppTest, key: str) -> AppTest:
     return at.file_uploader(key=key).upload("truck.jpg", b"fake-jpeg", "image/jpeg").run()
+
+
+@pytest.fixture
+def phone(monkeypatch):
+    """Fake plate camera (task 8.4). The browser part cannot run in AppTest, so the record
+    screen's camera() / gallery_button() are replaced: shoot(at, ...) makes the NEXT run get one
+    photo, exactly like the component's one-shot trigger value."""
+    from src.ui import native_camera
+    pending: dict[str, native_camera.CapturedPhoto] = {}
+
+    def mount(source: str):
+        return lambda key, max_side=native_camera.MAX_SIDE: pending.pop(source, None)
+
+    monkeypatch.setattr(native_camera, "camera", mount("live"))
+    monkeypatch.setattr(native_camera, "gallery_button", mount("gallery"))
+
+    def shoot(at: AppTest, data: bytes = b"fake-jpeg", name: str = "photo.jpg", type_: str = "image/jpeg",
+              source: str = "live") -> AppTest:
+        pending[source] = native_camera.CapturedPhoto(data, name, type_, 1920, 2560, None, False, source, 1920, 2560)
+        return at.run()
+
+    return shoot
+
+
+def tiny_jpeg() -> bytes:
+    import io
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", (40, 20), (200, 200, 200)).save(buf, format="JPEG")
+    return buf.getvalue()
 
 
 # --- login (D-061) + home ------------------------------------------------------------
@@ -441,15 +470,12 @@ def test_existing_fleet_truck_sends_its_company(fake_api) -> None:
     assert body["company_name"] == "Уурхай А ХХК" and body["identifier_type"] == "fleet_no"
 
 
-def test_photo_preview_on_confirm_and_form(fake_api) -> None:
-    import io
-    from PIL import Image
-    buf = io.BytesIO()
-    Image.new("RGB", (40, 20), (200, 200, 200)).save(buf, format="JPEG")
+def test_photo_preview_on_result_and_form(fake_api, phone) -> None:
     seed_existing(fake_api)
     fake_api.recognize = (200, RECOGNIZED)
-    at = run_app(RECORD)
-    at = at.file_uploader(key="rec_upload").upload("truck.jpg", buf.getvalue(), "image/jpeg").run()
+    at = phone(run_app(RECORD), tiny_jpeg())
+    assert step(at) == "result" and '<div class="rec-photo"><img' in html_blocks(at)  # 8.4 result screen
+    at = click(at, "Үргэлжлүүлэх")
     assert step(at) == "form" and texts(at.title) == ["Машин танигдлаа"]
     assert 'src="data:image/jpeg;base64,' in html_blocks(at)        # plate strip from the photo (T9)
     assert "Автоматаар уншсан" in html_blocks(at)
@@ -457,17 +483,16 @@ def test_photo_preview_on_confirm_and_form(fake_api) -> None:
     at = click(at, "Буцах")                                        # leave; photo stays session-only
 
 
-def test_unreadable_photo_shows_text_not_crash(fake_api) -> None:
+def test_unreadable_photo_shows_text_not_crash(fake_api, phone) -> None:
     fake_api.recognize = (200, RECOGNIZED)
-    at = run_app(RECORD)
-    at = at.file_uploader(key="rec_upload").upload("IMG_0002.HEIC", b"not-decodable", "").run()
+    at = phone(run_app(RECORD), b"not-decodable", "IMG_0002.HEIC", "", source="gallery")
     assert not at.exception
     assert "урьдчилж харах боломжгүй" in html_blocks(at)
 
 
 def test_wrong_plate_goes_back_to_edit(fake_api) -> None:
     at = click(type_plate(run_app(RECORD), "0001 ТЕС"), "Засах")
-    assert step(at) == "manual"
+    assert step(at) == "result"
     assert at.text_input(key="rec_manual").value == "0001 ТЕС"
 
 
@@ -550,19 +575,25 @@ def test_api_down_shows_message(fake_api) -> None:
     at = type_plate(run_app(RECORD), "0001 ТЕС")
     assert not at.exception
     assert any("холбогдож" in t for t in texts(at.error))
-    assert step(at) == "manual"
+    assert step(at) == "result"
 
 
 # --- photo -> recognize ------------------------------------------------------------------
 
-def test_photo_recognized_existing_truck(fake_api) -> None:
-    """T9 mockup «Машин танигдлаа»: truck line, arrival block, previous visit, oil/driver rows."""
+def test_photo_recognized_existing_truck(fake_api, phone) -> None:
+    """Photo -> 8.4 result (green, plate pre-filled) -> «Үргэлжлүүлэх» -> T9 «Машин танигдлаа»:
+    truck line, arrival block, previous visit, oil/driver rows."""
     seed_existing(fake_api)
     fake_api.prediction = PREDICTION
     fake_api.recognize = (200, {**RECOGNIZED, "detection": {"box": [1, 1, 30, 10], "confidence": 0.9}})
-    at = upload_photo(run_app(RECORD), "rec_upload")
+    at = phone(run_app(RECORD), tiny_jpeg())
     assert not at.exception
     assert b'name="file"' in fake_api.uploads[0]
+    assert step(at) == "result" and texts(at.title) == ["Үйлчилгээ бүртгэх"]
+    assert "Дугаарыг таньлаа — шалгаад зөв бол үргэлжлүүлнэ үү" in html_blocks(at)
+    assert at.text_input(key="rec_manual").value == "0002ТЕС"
+    assert len(fake_api.uploads) == 1 and "rec_checked" not in at.session_state  # no auto lookup (8.4)
+    at = click(at, "Үргэлжлүүлэх")
     assert step(at) == "form" and texts(at.title) == ["Машин танигдлаа"]
     page = html_blocks(at)
     assert "Шинэ · 1 удаа · Говь Тест ХХК" in page
@@ -578,42 +609,101 @@ def test_photo_recognized_existing_truck(fake_api) -> None:
     assert "company_name" not in fake_api.posts[-1][0]             # existing plate: no company (T8)
 
 
-def test_recognized_wrong_goes_back_to_edit(fake_api) -> None:
+def test_recognized_wrong_goes_back_to_edit(fake_api, phone) -> None:
     seed_existing(fake_api)
     fake_api.recognize = (200, RECOGNIZED)
-    at = click(upload_photo(run_app(RECORD), "rec_upload"), "Буруу")
-    assert step(at) == "manual" and at.text_input(key="rec_manual").value == "0002ТЕС"
+    at = click(click(phone(run_app(RECORD)), "Үргэлжлүүлэх"), "Буруу")
+    assert step(at) == "result" and at.text_input(key="rec_manual").value == "0002ТЕС"
+    assert "таньлаа" not in html_blocks(at)  # no green banner once he said it is wrong
 
 
-def test_photo_needs_manual_opens_manual_with_text(fake_api) -> None:
+def test_photo_needs_manual_shows_orange_and_empty_field(fake_api, phone) -> None:
+    """8.4: not read -> orange message + EMPTY field (a partial read is not pre-filled)."""
     fake_api.recognize = (200, {**RECOGNIZED, "plate_normalized": None, "plate_raw": "0002ТЕ",
                                 "needs_manual": True, "reason": "invalid_format"})
-    at = upload_photo(run_app(RECORD), "rec_upload")
-    assert step(at) == "manual"
-    assert at.text_input(key="rec_manual").value == "0002ТЕ"
-    assert any("шалгаад" in t for t in texts(at.warning))
+    at = phone(run_app(RECORD))
+    assert step(at) == "result"
+    assert at.text_input(key="rec_manual").value == ""
+    page = html_blocks(at)
+    assert "Дугаарыг уншиж чадсангүй — гараар оруулна уу" in page and "4 тоо + 3 үсэг" in page
+    assert {"Үргэлжлүүлэх", "Дахин зураг авах"} <= {b.label for b in at.button}
 
 
-def test_iphone_heic_upload_is_sent(fake_api) -> None:
-    """RISK-17: an iPhone photo (upper-case .HEIC, browser sends no type) is accepted
-    by the uploader and sent to the API as image/heic in the "file" field."""
+def test_edited_plate_opens_normal_form(fake_api, phone) -> None:
+    """A read plate the oil changer corrected is no longer «Машин танигдлаа» (not auto-read)."""
+    seed_existing(fake_api)
+    fake_api.add_vehicle("0003 ТЕС", "Тест ХХК", oil_grade="15W-40", liters=30.0)
+    fake_api.recognize = (200, RECOGNIZED)
+    at = phone(run_app(RECORD))
+    at.text_input(key="rec_manual").set_value("0003 ТЕС").run()
+    at = click(at, "Үргэлжлүүлэх")
+    assert step(at) == "form" and texts(at.title) == ["Үйлчилгээ бүртгэх"]
+    assert at.session_state["rec_checked"]["identifier"] == "0003 ТЕС"
+
+
+def test_retake_returns_to_camera_and_forgets_photo(fake_api, phone) -> None:
+    fake_api.recognize = (200, RECOGNIZED)
+    at = click(phone(run_app(RECORD), tiny_jpeg()), "Дахин зураг авах")
+    assert step(at) == "capture"
+    assert "rec_photo" not in at.session_state and "rec_read" not in at.session_state
+
+
+def test_start_screen_mockup(fake_api, monkeypatch) -> None:
+    """8.4 start: live camera component (not st.camera_input / st.file_uploader), «Гараар бичих»,
+    «Дугааргүй машин», no «Гарах» here (it stays on home)."""
+    monkeypatch.setenv("UI_PASSWORD", "demo-pass")
+    at = run_app()
+    at.text_input[0].set_value("demo-pass")
+    at = click(at, "Нэвтрэх")
+    assert "Гарах" in [b.label for b in at.button]                        # home keeps it
+    at = on(click(at, "Үйлчилгээ бүртгэх"), RECORD).run()
+    assert not at.exception and step(at) == "capture"
+    labels = [b.label for b in at.button]
+    assert {"Гараар бичих", "Дугааргүй машин"} <= set(labels) and "Гарах" not in labels
+    assert not at.get("camera_input") and not at.get("file_uploader")
+    assert "Зураг хадгалагдахгүй." in html_blocks(at)
+
+
+def test_fleet_number_from_start(fake_api) -> None:
+    at = click(run_app(RECORD), "Дугааргүй машин")
+    assert step(at) == "result" and at.text_input(key="rec_manual").label == "Парк дугаар"
+    assert "4 тоо + 3 үсэг" not in html_blocks(at)
+
+
+def test_photo_size_line_only_with_diag(fake_api, phone) -> None:
+    """?diag=1 on ANY page (e.g. home, where login lands) is remembered for the session and the
+    record result shows what reached Python (8.4 phone check); hidden otherwise."""
+    fake_api.recognize = (200, RECOGNIZED)
+    at = phone(run_app(RECORD))
+    assert "Зураг: 1920×2560" not in html_blocks(at)
+    at = run_app()
+    at.query_params["diag"] = "1"
+    at = on(click(at.run(), "Үйлчилгээ бүртгэх"), RECORD).run()
+    at.query_params.clear()                                   # page switch drops the URL param
+    at = phone(at)
+    assert "Зураг: 1920×2560 (камер 1920×2560, live, 0 KB)" in html_blocks(at)
+
+
+def test_iphone_heic_upload_is_sent(fake_api, phone) -> None:
+    """RISK-17: a gallery photo the browser could not decode (upper-case .HEIC, no type) is
+    sent unchanged to the API as image/heic in the "file" field."""
     seed_existing(fake_api)
     fake_api.recognize = (200, RECOGNIZED)
-    at = run_app(RECORD)
-    at = at.file_uploader(key="rec_upload").upload("IMG_0001.HEIC", b"fake-heic", "").run()
+    at = phone(run_app(RECORD), b"fake-heic", "IMG_0001.HEIC", "", source="gallery")
     assert not at.exception
     body = fake_api.uploads[0]
     assert b'name="file"; filename="IMG_0001.HEIC"' in body
     assert b"Content-Type: image/heic" in body
+    at = click(at, "Үргэлжлүүлэх")
     assert step(at) == "form"
     assert "Автоматаар уншсан" in html_blocks(at)                   # strip without the undecodable photo
 
 
-def test_recognizer_down_falls_back_to_manual(fake_api) -> None:
-    at = upload_photo(run_app(RECORD), "rec_upload")  # default fake answer: 503
+def test_recognizer_down_falls_back_to_manual(fake_api, phone) -> None:
+    at = phone(run_app(RECORD))  # default fake answer: 503
     assert not at.exception
-    assert step(at) == "manual"
-    assert any("гараар" in t for t in texts(at.warning))
+    assert step(at) == "result" and at.text_input(key="rec_manual").value == ""
+    assert "Дугаарыг уншиж чадсангүй — гараар оруулна уу" in html_blocks(at)
 
 
 # --- search + card (5.3 / DESIGN v2) ----------------------------------------------------------

@@ -1,10 +1,12 @@
-"""Record screen (task 5.2, DESIGN v5 / T9 mockup): camera -> form -> saved.
+"""Record screen (task 5.2, DESIGN v5 / T9 mockup; start + result rebuilt in 8.4): camera -> form -> saved.
 
 Steps (st.session_state["rec_step"]):
-- capture: camera (or upload) -> POST /plates/recognize. Clear read -> lookup -> form.
-  needs_manual / recognizer down -> manual. «Дугаарыг гараар оруулах» -> manual;
-  «Дугааргүй машин» -> manual in fleet-number mode (D-005).
-- manual:  type the plate (or fleet number) -> «Шалгах» -> lookup -> form.
+- capture (8.4 mockup): square live view of the rear camera + round shutter (native_camera.camera;
+  camera blocked/missing -> the phone's own camera button instead), then «Галерей» | «Гараар бичих»,
+  then «Дугааргүй машин» (fleet-number mode, D-005). A photo -> POST /plates/recognize -> result.
+- result (8.4): photo + green «Дугаарыг таньлаа…» (read) or orange «…гараар оруулна уу» (not read,
+  recognizer down) + big editable plate field (empty when not read; also reached by «Гараар бичих»,
+  «Дугааргүй машин» and «Буруу»/«Засах»). «Үргэлжлүүлэх» -> lookup -> form; «Дахин зураг авах» -> capture.
 - confirm: only for a fleet number that exists in one or more companies (D-005): «Аль компанийн
   машин бэ?» -> «Зөв, үргэлжлүүлэх». A plate goes straight to the form (T9: the form header
   shows the plate + «Бүртгэлтэй / Шинэ машин» + «Буруу»/«Засах» back to typing).
@@ -30,7 +32,7 @@ import html
 
 import streamlit as st
 
-from src.ui import api_client, common, logic
+from src.ui import api_client, common, logic, native_camera
 
 NEW_VEHICLE = -1  # option in the "which company?" radio for fleet numbers
 STEP = "rec_step"
@@ -72,7 +74,7 @@ def _form_values() -> dict:
 def _reset() -> None:
     """Forget the current truck (and its photo); start again at the camera."""
     for key in ("rec_checked", "rec_choice", "rec_dup", "rec_saved", "rec_manual", "rec_photo", "rec_photo_name",
-                "rec_box", "rec_recognized"):
+                "rec_box", "rec_recognized", "rec_read", "rec_read_plate", "rec_photo_size"):
         st.session_state.pop(key, None)
     st.session_state["rec_type"] = "plate"
     _apply_form(logic.empty_form())
@@ -133,44 +135,41 @@ def _photo_preview() -> None:
     common.photo_preview(st.session_state.get("rec_photo"), st.session_state.get("rec_photo_name"))
 
 
-# --- callbacks -------------------------------------------------------------------------
+def _take_photo(photo: native_camera.CapturedPhoto) -> None:
+    """New photo -> recognize -> result screen (8.4: the plate is checked there, no auto lookup).
 
-def on_photo(key: str) -> None:
-    """New photo -> recognize. Clear read -> lookup; needs_manual -> manual step."""
-    photo = st.session_state.get(key)
-    if photo is None:
-        return
+    Read -> the plate in the field; not read / recognizer down -> empty field. The widget key
+    rec_manual may be set here because the result screen's field is not drawn in this run.
+    """
     st.session_state["rec_photo"] = photo.getvalue()  # preview only; never stored or re-sent
     st.session_state["rec_photo_name"] = photo.name
-    plate, needs_manual, message, box = common.recognize_photo_box(photo)
+    st.session_state["rec_photo_size"] = native_camera.size_text(photo)
+    with st.spinner("Дугаар таньж байна…"):
+        plate, needs_manual, _message, box = common.recognize_photo_box(photo)
     st.session_state["rec_box"] = box
     st.session_state["rec_type"] = "plate"
-    if needs_manual:
-        st.session_state["rec_manual"] = plate
-        _say("warning", message)
-        _goto("manual")
-    else:
-        _lookup("plate", plate, from_photo=True)
-        if st.session_state.get(STEP) not in ("confirm", "form"):  # lookup failed -> let him type
-            st.session_state["rec_manual"] = plate
-            _goto("manual")
+    st.session_state["rec_read"] = "unread" if needs_manual else "read"
+    st.session_state["rec_read_plate"] = None if needs_manual else plate
+    st.session_state["rec_manual"] = "" if needs_manual else plate
+    _goto("result")
 
+
+# --- callbacks -------------------------------------------------------------------------
 
 def on_manual_open(identifier_type: str = "plate") -> None:
-    st.session_state.pop("rec_photo", None)
-    st.session_state.pop("rec_box", None)
+    """«Гараар бичих» / «Дугааргүй машин»: result screen without a photo, empty field."""
+    for key in ("rec_photo", "rec_box", "rec_read", "rec_read_plate"):
+        st.session_state.pop(key, None)
     st.session_state["rec_manual"] = ""
     st.session_state["rec_type"] = identifier_type
-    _goto("manual")
+    _goto("result")
 
 
-def on_toggle_fleet() -> None:
-    """«Дугааргүй машин» <-> «Улсын дугаартай машин» (fleet number mode, D-005)."""
-    st.session_state["rec_type"] = "plate" if st.session_state.get("rec_type") == "fleet_no" else "fleet_no"
-
-
-def on_manual_check() -> None:
-    _lookup(st.session_state.get("rec_type", "plate"), st.session_state.get("rec_manual") or "")
+def on_continue() -> None:
+    """«Үргэлжлүүлэх»: lookup -> form. «Машин танигдлаа» layout only if the read plate was kept as is."""
+    typed = (st.session_state.get("rec_manual") or "").strip()
+    from_photo = st.session_state.get("rec_read") == "read" and typed == st.session_state.get("rec_read_plate")
+    _lookup(st.session_state.get("rec_type", "plate"), typed, from_photo=from_photo)
 
 
 def on_confirm() -> None:
@@ -179,11 +178,12 @@ def on_confirm() -> None:
 
 
 def on_wrong() -> None:
-    """«Буруу» / «Засах»: back to typing, with the plate kept for editing."""
+    """«Буруу» / «Засах»: back to the result screen, plate kept for editing, no «таньлаа» banner."""
     checked = st.session_state.get("rec_checked") or {}
     st.session_state["rec_manual"] = checked.get("identifier", "")
     st.session_state["rec_type"] = checked.get("identifier_type", "plate")
-    _goto("manual")
+    st.session_state.pop("rec_read", None)
+    _goto("result")
 
 
 def _send(payload: dict, force: bool) -> None:
@@ -416,28 +416,38 @@ def form_full(card: dict | None, checked: dict) -> None:
 # --- steps ------------------------------------------------------------------------------
 
 if step == "capture":
-    with st.container(key="card_capture"):
-        st.camera_input("Машины дугаарын зураг авна уу", key="rec_cam", on_change=on_photo, args=("rec_cam",))
-        st.file_uploader("Эсвэл зураг оруулах", type=logic.UPLOAD_TYPES,
-                         key="rec_upload", on_change=on_photo, args=("rec_upload",))
-        common.html_block('<span class="muted">Зураг хадгалагдахгүй.</span>')
-    st.button("Дугаарыг гараар оруулах", on_click=on_manual_open, width="stretch", icon=":material/keyboard:")
-    with st.container(key="link_center"):
-        st.button("Дугааргүй машин", key="link_fleet_capture", on_click=on_manual_open, args=("fleet_no",),
-                  type="tertiary")
+    photo = native_camera.camera("rec_cam")
+    with st.container(key="rec_alt", horizontal=True):
+        photo = native_camera.gallery_button("rec_gallery") or photo
+        st.button("Гараар бичих", key="btn_manual", on_click=on_manual_open, width="stretch",
+                  icon=":material/keyboard:")
+    st.button("Дугааргүй машин", key="link_fleet_capture", on_click=on_manual_open, args=("fleet_no",),
+              type="tertiary")
+    common.html_block('<div class="muted" style="text-align:center">Зураг хадгалагдахгүй.</div>')
+    if photo is not None:
+        _take_photo(photo)
+        st.rerun()
 
-elif step == "manual":
+elif step == "result":
     is_fleet = st.session_state.get("rec_type") == "fleet_no"
-    _photo_preview()
-    with st.container(key="card_manual"):
+    read = st.session_state.get("rec_read")
+    common.photo_view(st.session_state.get("rec_photo"), st.session_state.get("rec_box"),
+                      st.session_state.get("rec_photo_name"))
+    if read == "read":
+        common.html_block(f'<div class="rec-banner ok">{common.icon("check")}'
+                          'Дугаарыг таньлаа — шалгаад зөв бол үргэлжлүүлнэ үү</div>')
+    elif read == "unread":
+        common.html_block('<div class="rec-banner warn">Дугаарыг уншиж чадсангүй — гараар оруулна уу</div>')
+    with st.container(key="plate_field_read" if read == "read" else "plate_field"):
         st.text_input("Парк дугаар" if is_fleet else "Улсын дугаар", key="rec_manual",
                       placeholder="HT-12" if is_fleet else "1234 УБА")
-    st.button("Шалгах", on_click=on_manual_check, type="primary", width="stretch")
-    with st.container(key="link_center", horizontal=True, horizontal_alignment="center"):
-        st.button("Улсын дугаартай машин" if is_fleet else "Дугааргүй машин", key="link_fleet_toggle",
-                  on_click=on_toggle_fleet, type="tertiary")
-        st.button("Зураг авах", key="link_capture", on_click=_goto, args=("capture",), type="tertiary",
-                  icon=":material/photo_camera:")
+        if not is_fleet and read != "read":
+            common.html_block('<div class="sub-note" style="margin-top:0">4 тоо + 3 үсэг</div>')
+    if st.session_state.get(common.DIAG) and st.session_state.get("rec_photo_size"):
+        common.html_block(f'<div class="sub-note" style="margin-top:0">Зураг: '
+                          f'{html.escape(st.session_state["rec_photo_size"])}</div>')  # 8.4 phone check
+    st.button("Үргэлжлүүлэх", key="btn_continue", on_click=on_continue, type="primary", width="stretch")
+    st.button("Дахин зураг авах", key="btn_retake", on_click=_reset, width="stretch", icon=":material/refresh:")
 
 elif step == "confirm" and checked:
     matches = checked["matches"]
@@ -478,5 +488,4 @@ elif step == "success" and st.session_state.get("rec_saved"):
 else:  # unknown/stale step (e.g. state lost) -> start over
     _reset()
     st.rerun()
-
-common.logout_button()
+# 8.4: no «Гарах» on this screen (it stays on home and the other screens).
