@@ -34,7 +34,7 @@ from src.api.clock import get_today
 from src.api.config import to_sqlalchemy_url
 from src.api.db import create_db_engine, database_is_up, get_session
 from src.api.main import create_app
-from src.api.matching import clean_company_name, company_key, fleet_no_key
+from src.api.matching import clean_company_name, company_key, fleet_no_key, phone_part_key, search_matches
 from src.api.routers.vehicles import usual_liters
 from src.api.schemas import ServiceCreate, normalize_phone
 from tests.test_schema import database_url
@@ -168,6 +168,54 @@ def test_fleet_no_key_keeps_other_characters() -> None:
     assert fleet_no_key("HT/12") != fleet_no_key("HT12")
 
 
+# ---------------- dashboard search matching (task 9.1) ----------------
+
+def matches(query: str, identifier_type: str = "plate", identifier: str = "1234 УБА",
+            plate: str | None = "1234УБА", company: str = "Говь Тээвэр ХХК",
+            phones: frozenset[str] = frozenset({"99110001", "99110002"})) -> list[str]:
+    return search_matches(query, identifier_type, identifier, plate, company, set(phones))
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        ("1234 УБА", ["plate"]),
+        ("1234", ["plate"]),                # part of the plate
+        (" уба ", ["plate"]),               # case + spaces (normalize_plate)
+        ("говь", ["company"]),              # part of the company, any case
+        ("ТЭЭВЭР  ххк", ["company"]),       # extra spaces ignored
+        ("99110002", ["phone"]),            # full phone
+        ("+976 9911-0001", ["phone"]),      # full phone with country code and dash
+        ("9911", ["phone"]),                # part of a phone (also no plate contains 9911)
+        ("0000 ЯЯЯ", []),
+        ("   ", []),                        # blank: the endpoint lists all trucks instead
+        ("-", []),                          # only separators
+    ],
+)
+def test_search_matches_plate_company_phone(query: str, expected: list[str]) -> None:
+    assert matches(query) == expected
+
+
+def test_search_matches_digits_can_be_plate_and_phone() -> None:
+    """«123» is in the plate 1234УБА AND in phone 99123456: both reasons are reported."""
+    assert matches("123", phones=frozenset({"99123456"})) == ["plate", "phone"]
+
+
+def test_search_matches_fleet_number_part() -> None:
+    assert matches("ht12", "fleet_no", "HT-12", None, "Өмнөд Уурхай ХХК") == ["fleet_no"]
+    assert matches("HT", "fleet_no", "HT-12", None, "Өмнөд Уурхай ХХК") == ["fleet_no"]
+    assert matches("HT", "plate", "1234 УБА", "1234УБА", "Говь ХХК", frozenset()) == []
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [("99", None), ("991", "991"), ("9911-0002", "99110002"), ("+97699110002", "99110002"),
+     ("976", "976"), ("УБА", None), ("12а", None)],
+)
+def test_phone_part_key(query: str, expected: str | None) -> None:
+    assert phone_part_key(query) == expected
+
+
 # ==========================================================================
 # Part 2 — endpoints on the real local Postgres
 # ==========================================================================
@@ -266,6 +314,65 @@ def test_lookup_unknown_phone_is_empty(client: TestClient) -> None:
 @pytest.mark.parametrize("params", [{"q": "   "}, {"q": ""}, {}])
 def test_lookup_blank_or_missing_q_is_422(client: TestClient, params: dict[str, str]) -> None:
     assert client.get("/vehicles/lookup", params=params).status_code == 422
+
+
+# ---------------- GET /vehicles/search (task 9.1) ----------------
+
+def search_ids(client: TestClient, **params: Any) -> list[int]:
+    response = client.get("/vehicles/search", params=params)
+    assert response.status_code == 200
+    return [v["id"] for v in response.json()["vehicles"]]
+
+
+def test_search_blank_lists_every_truck_newest_first(client: TestClient) -> None:
+    """Last services: v3 09-20, v2 09-10, v6 09-01, v5 08-25, v1 08-10, v4 05-10."""
+    result = client.get("/vehicles/search").json()
+    assert result["total"] == 6
+    assert [v["id"] for v in result["vehicles"]] == [3, 2, 6, 5, 1, 4]
+    assert all(v["matched_on"] == [] for v in result["vehicles"])
+
+
+def test_search_company_part(client: TestClient) -> None:
+    result = client.get("/vehicles/search", params={"q": "говь"}).json()
+    assert [v["id"] for v in result["vehicles"]] == [2, 1]
+    assert result["vehicles"][0]["matched_on"] == ["company"]
+
+
+def test_search_phone_finds_every_truck_it_drove(client: TestClient) -> None:
+    """99110002 drove vehicles 1 and 6 (D-004), also when typed with +976."""
+    assert search_ids(client, q="+976 9911 0002") == [6, 1]
+
+
+def test_search_plate_part_and_fleet_number(client: TestClient) -> None:
+    assert search_ids(client, q="1234") == [1]
+    assert search_ids(client, q="уба") == [1]
+    assert search_ids(client, q="ht12") == [5]
+    assert search_ids(client, q="0000 ЯЯЯ") == []
+
+
+def test_search_row_fields_without_model(client: TestClient) -> None:
+    row = client.get("/vehicles/search", params={"q": "1234 УБА"}).json()["vehicles"][0]
+    assert (row["identifier"], row["company"]["name"], row["service_count"]) == ("1234 УБА", "Говь Тээвэр ХХК", 3)
+    last = row["last_service"]
+    assert (last["service_date"], last["odometer_km"], last["oil_grade"], last["liters"]) == ("2026-08-10", 255500, "15W-40", 32.0)
+    assert (last["driver_name"], last["driver_phone"]) == ("Ганбат Т.", "99110002")
+    assert (row["segment"], row["status"], row["days_left"]) == ("loyal", None, None)  # no model in this fixture
+
+
+def test_search_limit_keeps_total(client: TestClient) -> None:
+    result = client.get("/vehicles/search", params={"limit": 2}).json()
+    assert (result["total"], len(result["vehicles"])) == (6, 2)
+
+
+@pytest.mark.parametrize("params", [{"limit": 0}, {"limit": 1001}, {"q": "x" * 101}])
+def test_search_bad_params_422(client: TestClient, params: dict[str, Any]) -> None:
+    assert client.get("/vehicles/search", params=params).status_code == 422
+
+
+def test_search_writes_nothing(client: TestClient, pg: Connection) -> None:
+    before = [count(pg, t) for t in ("companies", "vehicles", "service_records")]
+    client.get("/vehicles/search", params={"q": "говь"})
+    assert [count(pg, t) for t in ("companies", "vehicles", "service_records")] == before
 
 
 # ---------------- GET /vehicles/{id} ----------------

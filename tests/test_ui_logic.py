@@ -488,3 +488,43 @@ def test_picker_hides_the_list_row_labelled_like_the_other_option() -> None:
              {"id": 7, "name": "Other / several / unknown", "name_mn": "Бусад"},
              {"id": 8, "name": "Other / several / unknown (old DB)", "name_mn": None}]
     assert [d["id"] for d in logic.picker_destinations(dests)] == [1, 8]
+
+
+# --- «Хяналтын самбар» search (9.1) ------------------------------------------------------
+
+ROW = {"id": 1, "identifier_type": "plate", "identifier": "0001 ТЕС", "vehicle_model": None,
+       "company": {"id": 1, "name": "Туршилт ХХК"}, "service_count": 3, "last_service": SERVICE,
+       "segment": "loyal", "status": None, "days_left": None, "matched_on": ["company"]}
+
+
+def test_search_summary() -> None:
+    assert logic.search_summary("", 40, 40) == "Бүх машин · 40"
+    assert logic.search_summary(" говь ", 2, 2) == "«говь» · 2 машин"
+    assert logic.search_summary("", 250, 200) == "Бүх машин · 250 (эхний 200 харагдаж байна)"
+
+
+def test_row_status_text_prefers_prediction() -> None:
+    assert logic.row_status_text({**ROW, "status": "overdue"}) == "Хэтэрсэн"
+    assert logic.row_status_text(ROW) == "Байнгын"                 # no model -> segment word
+    assert logic.row_status_text({**ROW, "segment": None}) == "—"
+
+
+def test_search_table_rows_keeps_numbers() -> None:
+    [row] = logic.search_table_rows([ROW])
+    assert row == {"Дугаар": "0001 ТЕС", "Компани": "Туршилт ХХК", "Сүүлд солисон": "2026-09-01",
+                   "Гүйлт (км)": 205000, "Тос": "15W-40", "Литр": 30.0, "Жолооч": "Тест Д.",
+                   "Утас": "9911 0001", "Удаа": 3, "Төлөв": "Байнгын"}
+
+
+def test_search_table_rows_without_service() -> None:
+    [row] = logic.search_table_rows([{**ROW, "last_service": None, "service_count": 0}])
+    assert (row["Сүүлд солисон"], row["Гүйлт (км)"], row["Утас"]) == (None, None, None)
+
+
+def test_history_table_rows() -> None:
+    mine = {**SERVICE, "odometer_km": None, "engine_hours": 12980.5, "driver_name": None, "driver_phone": None}
+    assert logic.history_table_rows([SERVICE, mine]) == [
+        ("2026-09-01", "205 000 км", "15W-40", "30 л", "Тест Д.", "9911 0001"),
+        ("2026-09-01", "12 980.5 мц", "15W-40", "30 л", "—", "—"),
+    ]
+    assert len(logic.HISTORY_COLUMNS) == 6

@@ -1,6 +1,7 @@
 """Vehicle lookup and vehicle card (task 4.2).
 
 GET /vehicles/lookup?q=          plate, fleet number or phone -> matching vehicle cards
+GET /vehicles/search?q=&limit=   dashboard: any part of plate / fleet no / company / phone -> rows (task 9.1)
 GET /vehicles/{id}               one vehicle card
 GET /vehicles/{id}/prediction    next oil change only (task 4.3)
 
@@ -17,15 +18,16 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import func, select, text
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from src.api.clock import get_today
 from src.api.db import get_session
-from src.api.history import service_records, visits_oldest_first
-from src.api.matching import fleet_no_key
+from src.api.history import records_as_of, service_records, to_visit, visits_oldest_first
+from src.api.matching import fleet_no_key, search_matches
 from src.api.models import ServiceRecord, Vehicle
 from src.api.prediction import Predictor, segment_of
-from src.api.schemas import CompanyOut, LookupResult, PredictionOut, ServiceOut, VehicleCard, normalize_phone
+from src.api.schemas import (CompanyOut, LookupResult, PredictionOut, ServiceOut, VehicleCard, VehicleRow,
+                             VehicleSearch, normalize_phone)
 from src.common.plates import normalize_plate
 
 router = APIRouter(prefix="/vehicles", tags=["vehicles"])
@@ -176,6 +178,66 @@ def lookup(
         normalized=normalized,
         vehicles=[build_card(session, vehicle, today, predictor) for vehicle in vehicles],
     )
+
+
+def search_rows(session: Session, query: str, today: date, predictor: Predictor | None) -> list[VehicleRow]:
+    """Every truck matching ``query`` (blank = all), newest service first (task 9.1).
+
+    Matching is done in Python (src/api/matching.py, D-043: Cyrillic casefold does not depend on
+    the database locale). Read only: one query for vehicles + companies, one for all services
+    (records_as_of, the same rows GET /stats/segments reads), predictions in one Ridge call.
+    """
+    vehicles = session.scalars(select(Vehicle).options(selectinload(Vehicle.company))).all()
+    records = records_as_of(session, today)  # {vehicle_id: services oldest first}
+    rows: list[tuple[Vehicle, list[str]]] = []
+    for vehicle in vehicles:
+        own = records.get(vehicle.id, [])
+        phones = {r.driver_phone for r in own if r.driver_phone}
+        matched = search_matches(query, vehicle.identifier_type, vehicle.identifier, vehicle.plate_normalized,
+                                 vehicle.company.name, phones)
+        if matched or not query.strip():
+            rows.append((vehicle, matched))
+
+    histories = {v.id: [to_visit(r) for r in records[v.id]] for v, _ in rows if v.id in records}
+    predictions = predictor.predict_many(histories, today) if predictor is not None else {}
+    out = []
+    for vehicle, matched in rows:
+        own = records.get(vehicle.id, [])
+        prediction = predictions.get(vehicle.id)
+        out.append(VehicleRow(
+            id=vehicle.id,
+            identifier_type=vehicle.identifier_type,
+            identifier=vehicle.identifier,
+            vehicle_model=vehicle.vehicle_model,
+            company=CompanyOut.model_validate(vehicle.company),
+            service_count=len(own),
+            last_service=ServiceOut.model_validate(own[-1]) if own else None,
+            segment=segment_of(len(own), prediction.predicted_date if prediction else None, today) if own else None,
+            status=prediction.status if prediction else None,
+            days_left=prediction.days_left if prediction else None,
+            matched_on=matched,
+        ))
+    # Newest service first; trucks without a service last; id keeps the order stable.
+    out.sort(key=lambda row: (row.last_service is not None,
+                              row.last_service.service_date if row.last_service else date.min, row.id), reverse=True)
+    return out
+
+
+@router.get("/search", response_model=VehicleSearch)
+def search(
+    session: SessionDep,
+    today: TodayDep,
+    predictor: PredictorDep,
+    q: Annotated[str, Query(max_length=100, description="Plate, fleet number, company or phone — any part. "
+                                                        "Blank = every truck")] = "",
+    limit: Annotated[int, Query(ge=1, le=1000, description="Rows returned (total counts all matches)")] = 200,
+) -> VehicleSearch:
+    """Dashboard search (task 9.1): trucks whose plate, fleet number, company or any driver phone
+    CONTAINS ``q``. Read only. Unlike /lookup (one exact truck for the oil changer) this is for
+    browsing the database. Declared before /{vehicle_id} so "search" is not read as an id.
+    """
+    rows = search_rows(session, q, today, predictor)
+    return VehicleSearch(query=q, total=len(rows), vehicles=rows[:limit])
 
 
 @router.get("/{vehicle_id}", response_model=VehicleCard)

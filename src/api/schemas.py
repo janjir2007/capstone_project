@@ -263,6 +263,34 @@ class LookupResult(BaseModel):
     vehicles: list[VehicleCard] = Field(description="Empty list = unknown -> new vehicle form")
 
 
+SearchMatch = Literal["plate", "fleet_no", "company", "phone"]
+
+
+class VehicleRow(BaseModel):
+    """One truck in the dashboard search (task 9.1): a light row, not the whole card.
+    The full history comes from GET /vehicles/{id} when the manager opens the truck."""
+
+    id: int
+    identifier_type: Literal["plate", "fleet_no"]
+    identifier: str
+    vehicle_model: str | None
+    company: CompanyOut
+    service_count: int
+    last_service: ServiceOut | None = Field(description="Newest service (date, odometer, oil, liters, driver, phone)")
+    segment: Segment | None = Field(description="Same rule as the card; without the model: count-based only (no at_risk)")
+    status: Status | None = Field(description="Prediction status (D-007); null when the model is not loaded")
+    days_left: int | None = Field(description="Predicted date − today; null when the model is not loaded")
+    matched_on: list[SearchMatch] = Field(description="Why the truck matched q; [] when q is blank (all trucks)")
+
+
+class VehicleSearch(BaseModel):
+    """GET /vehicles/search."""
+
+    query: str
+    total: int = Field(description="All matching trucks; `vehicles` holds at most `limit` of them")
+    vehicles: list[VehicleRow] = Field(description="Newest service first")
+
+
 class SegmentCounts(BaseModel):
     """Number of vehicles per segment (every segment present, 0 if none)."""
 

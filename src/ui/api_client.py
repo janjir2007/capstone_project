@@ -94,6 +94,14 @@ def lookup(query: str) -> dict:
     return _request("GET", "/vehicles/lookup", params={"q": query})
 
 
+def search_vehicles(query: str = "", limit: int = 200) -> dict:
+    """GET /vehicles/search?q=&limit= -> {query, total, vehicles: [VehicleRow]} (task 9.1, read only).
+
+    Any part of a plate, fleet number, company or driver phone; blank = every truck, newest first.
+    """
+    return _request("GET", "/vehicles/search", params={"q": query, "limit": limit})
+
+
 def get_vehicle(vehicle_id: int) -> dict:
     """GET /vehicles/{id} -> VehicleCard (ApiError 404 if unknown)."""
     return _request("GET", f"/vehicles/{vehicle_id}")

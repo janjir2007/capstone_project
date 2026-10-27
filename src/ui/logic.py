@@ -366,6 +366,71 @@ def reminder_counts(reminders: list[dict]) -> dict[str, int]:
             "overdue": sum(1 for r in reminders if (r.get("days_left") or 0) < 0)}
 
 
+# --- «Хяналтын самбар» search (9.1) --------------------------------------------------------
+
+MATCH_LABELS: dict[str, str] = {
+    "plate": "улсын дугаар",
+    "fleet_no": "парк дугаар",
+    "company": "компани",
+    "phone": "утас",
+}
+
+
+def search_summary(query: str, total: int, shown: int) -> str:
+    """Line above the results: '«говь» · 2 машин' / 'Бүх машин · 40' (+ how many are shown)."""
+    query = (query or "").strip()
+    head = f"«{query}» · {total} машин" if query else f"Бүх машин · {total}"
+    return f"{head} (эхний {shown} харагдаж байна)" if shown < total else head
+
+
+def row_status_text(row: dict) -> str:
+    """Status word of a search row: prediction status, else the segment word, else '—'."""
+    if row.get("status") in PREDICTION_STATUS_LABELS:
+        return PREDICTION_STATUS_LABELS[row["status"]]
+    return segment_label(row.get("segment"))
+
+
+def search_table_rows(vehicles: list[dict]) -> list[dict[str, Any]]:
+    """GET /vehicles/search rows -> table rows with Mongolian column names (computer view).
+
+    Numbers stay numbers (sortable); missing values are None (an empty cell), not '—'.
+    """
+    rows = []
+    for v in vehicles:
+        last = v.get("last_service") or {}
+        rows.append({
+            "Дугаар": v.get("identifier"),
+            "Компани": (v.get("company") or {}).get("name"),
+            "Сүүлд солисон": last.get("service_date"),
+            "Гүйлт (км)": last.get("odometer_km"),
+            "Тос": last.get("oil_grade"),
+            "Литр": last.get("liters"),
+            "Жолооч": last.get("driver_name"),
+            "Утас": phone_text(last.get("driver_phone")) or None,
+            "Удаа": v.get("service_count"),
+            "Төлөв": row_status_text(v),
+        })
+    return rows
+
+
+HISTORY_COLUMNS = ("Огноо", "Гүйлт", "Тос", "Литр", "Жолооч", "Утас")
+
+
+def history_table_rows(history: list[dict]) -> list[tuple[str, ...]]:
+    """One row of HISTORY_COLUMNS per service (newest first, as the API sends them); '—' when missing."""
+    return [
+        (
+            s.get("service_date") or NOT_GIVEN,
+            service_meter_text(s),
+            s.get("oil_grade") or NOT_GIVEN,
+            format_number(s.get("liters"), "л"),
+            s.get("driver_name") or NOT_GIVEN,
+            phone_text(s.get("driver_phone")) or NOT_GIVEN,
+        )
+        for s in history
+    ]
+
+
 VIBER_FORWARD = "viber://forward?text="  # D-091: opens Viber's share screen, the manager picks the chat
 
 

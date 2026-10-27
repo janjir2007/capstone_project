@@ -1,6 +1,6 @@
 # API contract — data, model and reminder endpoints (tasks 4.2, 4.2b, 4.3, 4.4)
 
-- **Version:** 0.9 (task 2.9, 2026-10-17) · **Owner:** Backend Engineer
+- **Version:** 0.10 (task 9.1, 2026-10-27) · **Owner:** Backend Engineer
 - Extends PROJECT_STATE §8 "API contract" with exact fields. The live, always
   current version is the OpenAPI page of the running API: `http://localhost:8000/docs`.
 - Field names follow [`data_dictionary.md`](data_dictionary.md). Code:
@@ -92,6 +92,18 @@ separators allowed). A valid phone is searched as a phone; anything else as a pl
     the fleet-number key, lower case, no spaces or dashes, e.g. `ht12`); no match → `plate`
   - **unknown plate/phone → 200 with `vehicles: []`** (app opens the new-vehicle form)
 - **422** `q` missing or blank
+
+### `GET /vehicles/search?q=&limit=` (v0.10, task 9.1 — dashboard, read only)
+- `q` (optional, max 100 chars): a truck matches when its plate (`normalize_plate`), fleet number
+  key, company key or **any** driver phone it ever had (digits, from 3 digits; `+976` dropped from a
+  full number) **contains** `q`. Blank `q` = every truck. `limit` 1–1000, default 200.
+- **200** `{query, total, vehicles: VehicleRow[]}` — `total` counts all matches, `vehicles` holds
+  at most `limit`, newest last service first.
+- VehicleRow: `id, identifier_type, identifier, vehicle_model, company{id,name}, service_count,
+  last_service` (ServiceOut | null), `segment, status, days_left` (status/days_left null without the
+  model; segment then count-based, no `at_risk`), `matched_on` (list of `plate | fleet_no | company | phone`).
+- Full history of one truck: `GET /vehicles/{id}`.
+- **422** `limit` out of range or `q` too long
 
 ### `GET /vehicles/{id}`
 - **200** VehicleCard · **404** unknown id
@@ -221,3 +233,4 @@ model version, predicted date and send day (`reminders_sent`, migration 003). No
 | 0.7 | 2026-10-17 | Task 4.4b (D-074): `segment` added to every `GET /reminders/due` item (additive). Migration 004 (task 6.1): `name_mn` filled for the last 2 destinations |
 | 0.8 | 2026-10-17 | Task 1.6: migration 005 adds 4 cross-border destinations (no field change). `GET /destinations` keeps `mixed` last (order by `route_category = 'mixed'`, then id) |
 | 0.9 | 2026-10-17 | Task 2.9: `range_low_date`, `range_high_date` added to Prediction (card + `GET /vehicles/{id}/prediction`; additive, nullable). `serving_params.json` gains `ranges` |
+| 0.10 | 2026-10-27 | Task 9.1: `GET /vehicles/search` (dashboard search, read only; additive — no existing field changed) |

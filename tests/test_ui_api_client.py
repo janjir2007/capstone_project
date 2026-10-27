@@ -157,6 +157,17 @@ def test_mark_reminder_sent_already_sent(requests_seen) -> None:
     assert (seen[0].method, seen[0].url.path) == ("POST", "/reminders/7/sent")
 
 
+def test_search_vehicles_get_with_query_and_limit(requests_seen) -> None:
+    """9.1: dashboard search is a GET (read only), blank q allowed."""
+    seen, set_reply = requests_seen
+    set_reply(httpx.Response(200, json={"query": "", "total": 0, "vehicles": []}))
+    api_client.search_vehicles()
+    api_client.search_vehicles("говь", limit=50)
+    assert [(r.method, r.url.path) for r in seen] == [("GET", "/vehicles/search")] * 2
+    assert (seen[0].url.params["q"], seen[0].url.params["limit"]) == ("", "200")
+    assert (seen[1].url.params["q"], seen[1].url.params["limit"]) == ("говь", "50")
+
+
 def test_mark_reminder_not_latest(requests_seen) -> None:
     _, set_reply = requests_seen
     set_reply(httpx.Response(409, json={"detail": {"code": "not_latest_service", "message": "newer",

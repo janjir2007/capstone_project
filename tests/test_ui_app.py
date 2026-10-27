@@ -47,6 +47,7 @@ class FakeApi:
         self.sent: dict[int, dict] = {}             # service_id -> stored "sent" row
         self.hide_sent = True                       # False = stale list (another manager's open tab)
         self.destinations: list[dict] = DESTINATIONS  # GET /destinations
+        self.searches: list[str] = []               # q of every GET /vehicles/search (9.1)
 
     # -- data ---------------------------------------------------------------
     def add_vehicle(self, identifier: str, company: str, identifier_type: str = "plate", **service) -> dict:
@@ -133,6 +134,8 @@ class FakeApi:
             self.sent[sid] = {"id": len(self.sent) + 1, "service_id": sid, "phone": "99110002",
                               "sent_at": f"{TODAY}T11:00:00+08:00"}
             return httpx.Response(201, json={**self.sent[sid], "already_sent": False})
+        if path == "/vehicles/search":
+            return self._search(request.url.params.get("q", ""), int(request.url.params.get("limit", 200)))
         if path == "/vehicles/lookup":
             return self._lookup(request.url.params["q"])
         if path == "/plates/recognize" and request.method == "POST":
@@ -142,6 +145,20 @@ class FakeApi:
         if path == "/services" and request.method == "POST":
             return self._post(json.loads(request.content), request.url.params.get("force") == "true")
         return httpx.Response(404, json={"detail": "not found"})
+
+    def _search(self, q: str, limit: int) -> httpx.Response:
+        """GET /vehicles/search: plate or company contains q (enough for the screen tests)."""
+        self.searches.append(q)
+        key = self._key(q)
+        rows = []
+        for v in self.vehicles:
+            card = self.card(v)
+            if key and key not in self._key(v["identifier"]) and key not in self._key(v["company"]["name"]):
+                continue
+            rows.append({k: card[k] for k in ("id", "identifier_type", "identifier", "vehicle_model", "company",
+                                              "service_count", "last_service", "segment")}
+                        | {"status": None, "days_left": None, "matched_on": []})
+        return httpx.Response(200, json={"query": q, "total": len(rows), "vehicles": rows[:limit]})
 
     def _lookup(self, q: str) -> httpx.Response:
         digits = "".join(c for c in q if c.isdigit())
@@ -873,8 +890,8 @@ def test_home_dashboard_button(fake_api) -> None:
     assert at.button(key="home_dashboard").label == "Хяналтын самбар"
     at.button(key="home_dashboard").click().run()
     assert not at.exception
-    assert texts(at.subheader) == ["Сегмент"]
-    assert '<div class="tiles two">' in html_blocks(at)
+    assert texts(at.subheader) == ["Сегмент", "Машин хайх"]
+    assert '<div class="tiles two seg">' in html_blocks(at)
 
 
 def test_css_stops_iphone_tap_zoom() -> None:
@@ -1009,3 +1026,102 @@ def test_dashboard_without_model(fake_api) -> None:
     at = run_app(REMINDERS)
     assert not at.exception
     assert any("загвар ачаалагдаагүй" in t for t in texts(at.info))
+
+
+# --- «Хяналтын самбар» search + history (9.1) -------------------------------------------------
+
+def seed_two(fake: FakeApi) -> None:
+    seed_existing(fake)  # 0002 ТЕС · Говь Тест ХХК
+    fake.add_vehicle("0003 ТЕС", "Хан Тест ХХК", service_date="2026-09-05", odometer_km=150000,
+                     oil_grade="15W-40", liters=30.0, destination_id=2, driver_name="Бат Т.", driver_phone="99110003")
+
+
+def test_dashboard_lists_every_truck_then_searches(fake_api) -> None:
+    seed_two(fake_api)
+    at = run_app(DASHBOARD)
+    assert not at.exception
+    assert fake_api.searches == [""]                         # blank search = every truck
+    assert len(at.dataframe[0].value) == 2
+    assert "Бүх машин · 2" in html_blocks(at)
+    at.text_input(key="dash_q").set_value("говь")
+    at = click(on(at, DASHBOARD), "Хайх")
+    assert fake_api.searches[-1] == "говь"
+    table = at.dataframe[0].value
+    assert list(table["Дугаар"]) == ["0002 ТЕС"]
+    assert list(table.columns) == ["Дугаар", "Компани", "Сүүлд солисон", "Гүйлт (км)", "Тос", "Литр",
+                                   "Жолооч", "Утас", "Удаа", "Төлөв"]
+    assert "«говь» · 1 машин" in html_blocks(at)
+
+
+def test_dashboard_nothing_found(fake_api) -> None:
+    seed_two(fake_api)
+    at = run_app(DASHBOARD)
+    at.text_input(key="dash_q").set_value("ЯЯЯ")
+    at = click(on(at, DASHBOARD), "Хайх")
+    assert not at.dataframe and "Олдсонгүй." in html_blocks(at)
+
+
+def test_dashboard_phone_card_opens_full_history(fake_api) -> None:
+    """Phone view: tapping a truck's row shows every service: date, odometer, oil, liters, driver, phone."""
+    seed_two(fake_api)
+    fake_api._add_service(1, {"service_date": "2026-10-01", "odometer_km": 215000, "oil_grade": "15W-40",
+                              "liters": 30.0, "driver_name": "Шинэ Ж.", "driver_phone": "99110009"})
+    at = run_app(DASHBOARD)
+    at = on(at, DASHBOARD).button(key="dash_open_1").click().run()
+    page = html_blocks(at)
+    assert '<table class="hist">' in page
+    for th in ("Огноо", "Гүйлт", "Тос", "Жолооч"):  # liters sit in «Тос», the phone under the driver
+        assert f"<th>{th}</th>" in page
+    assert page.index("2026-10-01") < page.index("2026-09-01")   # newest first
+    for value in ("215 000 км", "200 000 км", "10W-40 · 32 л", "15W-40 · 30 л", "Жолооч Д.", "Шинэ Ж.",
+                  '<div class="ph">9911 0002</div>', '<div class="ph">9911 0009</div>'):
+        assert value in page
+    at = on(at, DASHBOARD).button(key="dash_close").click().run()
+    assert '<table class="hist">' not in html_blocks(at) and len(at.dataframe[0].value) == 2  # back to the list
+
+
+def test_dashboard_table_row_opens_history(fake_api) -> None:
+    """Computer view: a table click calls on_table_select (row number -> vehicle id)."""
+    seed_two(fake_api)
+    at = run_app(DASHBOARD)
+    assert at.session_state["dash_ids"] == [1, 2]
+    at.session_state["dash_vid"] = 2   # what on_table_select stores for row 1 (AppTest cannot click a grid row)
+    at = on(at, DASHBOARD).run()
+    assert "Бат Т." in html_blocks(at) and '<table class="hist">' in html_blocks(at)
+
+
+def test_dashboard_due_list_is_read_only(fake_api) -> None:
+    fake_api.reminders = [reminder(1, "0001 ТЕС", 5, "due_soon"), reminder(3, "0003 ТЕС", -20, "overdue")]
+    at = run_app(DASHBOARD)
+    page = html_blocks(at)
+    assert "Сануулах машин (2)" in page and "0001 ТЕС" in page and "0003 ТЕС" in page
+    assert not {"Илгээсэн", "Тийм"} & {b.label for b in at.button} and not at.get("link_button")
+
+
+def test_dashboard_writes_nothing(fake_api) -> None:
+    """View only (9.1): opening, searching and opening a history never POSTs."""
+    seed_two(fake_api)
+    fake_api.reminders = [reminder(1, "0001 ТЕС", 5, "due_soon")]
+    posts_before = len(fake_api.posts)
+    at = run_app(DASHBOARD)
+    at.text_input(key="dash_q").set_value("ТЕС")
+    at = click(on(at, DASHBOARD), "Хайх")
+    on(at, DASHBOARD).button(key="dash_open_2").click().run()
+    assert len(fake_api.posts) == posts_before and not fake_api.sent and not fake_api.uploads
+
+
+def test_wide_layout_only_on_dashboard(fake_api) -> None:
+    """9.1: ≥ 1024 px the dashboard uses the full width; every other screen keeps the 480 px column."""
+    from src.ui import common
+    assert ".block-container {padding: 12px 20px 40px !important; max-width: 480px;}" in common.CSS
+    at = run_app(DASHBOARD)
+    assert "@media (min-width: 1024px)" in html_blocks(at) and "max-width: 1360px" in html_blocks(at)
+    for view in (HOME, SEARCH, CARD, RECORD, REMINDERS):
+        assert "max-width: 1360px" not in html_blocks(run_app(view)), view
+
+
+def test_dashboard_table_toolbar_hidden(fake_api) -> None:
+    """9.1 (Ari): no CSV download/search toolbar on the table; export only via the Excel button."""
+    seed_two(fake_api)
+    assert ('.st-key-dash_table_wrap [data-testid="stElementToolbar"] {display: none !important;}'
+            in html_blocks(run_app(DASHBOARD)))
