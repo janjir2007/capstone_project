@@ -74,7 +74,7 @@ def _form_values() -> dict:
 def _reset() -> None:
     """Forget the current truck (and its photo); start again at the camera."""
     for key in ("rec_checked", "rec_choice", "rec_dup", "rec_saved", "rec_manual", "rec_photo", "rec_photo_name",
-                "rec_box", "rec_recognized", "rec_read", "rec_read_plate", "rec_photo_size"):
+                "rec_box", "rec_recognized", "rec_read", "rec_read_plate", "rec_photo_size", "rec_photo_error"):
         st.session_state.pop(key, None)
     st.session_state["rec_type"] = "plate"
     _apply_form(logic.empty_form())
@@ -144,6 +144,7 @@ def _take_photo(photo: native_camera.CapturedPhoto) -> None:
     st.session_state["rec_photo"] = photo.getvalue()  # preview only; never stored or re-sent
     st.session_state["rec_photo_name"] = photo.name
     st.session_state["rec_photo_size"] = native_camera.size_text(photo)
+    st.session_state.pop("rec_photo_error", None)
     with st.spinner("Дугаар таньж байна…"):
         plate, needs_manual, _message, box = common.recognize_photo_box(photo)
     st.session_state["rec_box"] = box
@@ -154,11 +155,23 @@ def _take_photo(photo: native_camera.CapturedPhoto) -> None:
     _goto("result")
 
 
+def _photo_failed(failed: native_camera.PhotoFailed) -> None:
+    """8.4b: the browser could not read the photo -> result screen, orange, empty field (type the
+    plate). The JS error text is kept for the ?diag=1 line."""
+    for key in ("rec_photo", "rec_box", "rec_read_plate", "rec_photo_size"):
+        st.session_state.pop(key, None)
+    st.session_state["rec_photo_error"] = f"{failed.error} ({failed.source or '?'})"
+    st.session_state["rec_type"] = "plate"
+    st.session_state["rec_read"] = "unread"
+    st.session_state["rec_manual"] = ""
+    _goto("result")
+
+
 # --- callbacks -------------------------------------------------------------------------
 
 def on_manual_open(identifier_type: str = "plate") -> None:
     """«Гараар бичих» / «Дугааргүй машин»: result screen without a photo, empty field."""
-    for key in ("rec_photo", "rec_box", "rec_read", "rec_read_plate"):
+    for key in ("rec_photo", "rec_box", "rec_read", "rec_read_plate", "rec_photo_error"):
         st.session_state.pop(key, None)
     st.session_state["rec_manual"] = ""
     st.session_state["rec_type"] = identifier_type
@@ -424,7 +437,10 @@ if step == "capture":
     st.button("Дугааргүй машин", key="link_fleet_capture", on_click=on_manual_open, args=("fleet_no",),
               type="tertiary")
     common.html_block('<div class="muted" style="text-align:center">Зураг хадгалагдахгүй.</div>')
-    if photo is not None:
+    if isinstance(photo, native_camera.PhotoFailed):
+        _photo_failed(photo)
+        st.rerun()
+    elif photo is not None:
         _take_photo(photo)
         st.rerun()
 
@@ -443,9 +459,11 @@ elif step == "result":
                       placeholder="HT-12" if is_fleet else "1234 УБА")
         if not is_fleet and read != "read":
             common.html_block('<div class="sub-note" style="margin-top:0">4 тоо + 3 үсэг</div>')
-    if st.session_state.get(common.DIAG) and st.session_state.get("rec_photo_size"):
-        common.html_block(f'<div class="sub-note" style="margin-top:0">Зураг: '
-                          f'{html.escape(st.session_state["rec_photo_size"])}</div>')  # 8.4 phone check
+    if st.session_state.get(common.DIAG):  # 8.4 / 8.4b phone check: size, or the browser's error
+        for label, key in (("Зураг", "rec_photo_size"), ("Алдаа", "rec_photo_error")):
+            if st.session_state.get(key):
+                common.html_block(f'<div class="sub-note" style="margin-top:0">{label}: '
+                                  f'{html.escape(st.session_state[key])}</div>')
     st.button("Үргэлжлүүлэх", key="btn_continue", on_click=on_continue, type="primary", width="stretch")
     st.button("Дахин зураг авах", key="btn_retake", on_click=_reset, width="stretch", icon=":material/refresh:")
 

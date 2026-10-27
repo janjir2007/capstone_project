@@ -295,8 +295,10 @@ def phone(monkeypatch):
     monkeypatch.setattr(native_camera, "gallery_button", mount("gallery"))
 
     def shoot(at: AppTest, data: bytes = b"fake-jpeg", name: str = "photo.jpg", type_: str = "image/jpeg",
-              source: str = "live") -> AppTest:
-        pending[source] = native_camera.CapturedPhoto(data, name, type_, 1920, 2560, None, False, source, 1920, 2560)
+              source: str = "live", error: str | None = None) -> AppTest:
+        """error="..." -> the browser could not read the photo (fail() in the component, 8.4b)."""
+        pending[source] = (native_camera.PhotoFailed(error, source) if error else
+                           native_camera.CapturedPhoto(data, name, type_, 1920, 2560, None, False, source, 1920, 2560))
         return at.run()
 
     return shoot
@@ -697,6 +699,44 @@ def test_iphone_heic_upload_is_sent(fake_api, phone) -> None:
     at = click(at, "Үргэлжлүүлэх")
     assert step(at) == "form"
     assert "Автоматаар уншсан" in html_blocks(at)                   # strip without the undecodable photo
+
+
+@pytest.mark.parametrize("kind", ["heic", "jpeg"])
+def test_real_format_gallery_photo_sent_unchanged(fake_api, phone, kind) -> None:
+    """8.4b: a genuine HEIC (browser could not decode it) and a JPEG from «Галерей» reach the API
+    byte for byte with the right content type, and the result screen opens."""
+    pillow_heif = pytest.importorskip("pillow_heif")
+    import io
+    from PIL import Image
+    pillow_heif.register_heif_opener()
+    buf = io.BytesIO()
+    Image.new("RGB", (640, 480), (90, 110, 130)).save(buf, format="HEIF" if kind == "heic" else "JPEG")
+    name, ctype = ("IMG_0001.HEIC", "") if kind == "heic" else ("photo.jpg", "image/jpeg")
+    fake_api.recognize = (200, RECOGNIZED)
+    at = phone(run_app(RECORD), buf.getvalue(), name, ctype, source="gallery")
+    assert not at.exception and step(at) == "result"
+    body = fake_api.uploads[0]
+    assert buf.getvalue() in body
+    assert (b"Content-Type: image/heic" if kind == "heic" else b"Content-Type: image/jpeg") in body
+
+
+def test_browser_read_failure_opens_result_with_diag_error(fake_api, phone) -> None:
+    """8.4b: the browser could not read the photo -> result screen (orange, empty field, type the
+    plate), nothing sent to the API; the real JS error shows only with ?diag=1."""
+    error = "NotReadableError: The requested file could not be read"
+    at = phone(run_app(RECORD), error=error, source="gallery")
+    assert step(at) == "result" and at.text_input(key="rec_manual").value == ""
+    page = html_blocks(at)
+    assert "Дугаарыг уншиж чадсангүй — гараар оруулна уу" in page and error not in page
+    assert fake_api.uploads == []
+    at = run_app()
+    at.query_params["diag"] = "1"
+    at = on(click(at.run(), "Үйлчилгээ бүртгэх"), RECORD).run()
+    at.query_params.clear()
+    at = phone(at, error=error, source="gallery")
+    assert f"Алдаа: {error} (gallery)" in html_blocks(at)
+    at = phone(click(at, "Дахин зураг авах"), tiny_jpeg())       # a good photo next: error line gone
+    assert "Алдаа:" not in html_blocks(at)
 
 
 def test_recognizer_down_falls_back_to_manual(fake_api, phone) -> None:

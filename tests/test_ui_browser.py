@@ -82,13 +82,19 @@ def ui_url():
 
 
 @pytest.fixture(scope="module")
-def phone_page():
-    channel = os.environ.get("UI_BROWSER_CHANNEL") or None
+def pw():
+    """One Playwright per module (a second sync_playwright() inside a running one fails)."""
     with playwright.sync_playwright() as p:
-        browser = p.chromium.launch(channel=channel)
-        page = browser.new_page(viewport=PHONE, device_scale_factor=2, is_mobile=True, has_touch=True)
-        yield page
-        browser.close()
+        yield p
+
+
+@pytest.fixture(scope="module")
+def phone_page(pw):
+    channel = os.environ.get("UI_BROWSER_CHANNEL") or None
+    browser = pw.chromium.launch(channel=channel)
+    page = browser.new_page(viewport=PHONE, device_scale_factor=2, is_mobile=True, has_touch=True)
+    yield page
+    browser.close()
 
 
 @pytest.fixture(scope="module")
@@ -252,3 +258,42 @@ def test_no_tap_zoom_on_new_vehicle_form(ui_url, phone_page) -> None:
     assert m["fields"] > 0 and m["taps"] > 0, m
     assert m["small"] == [] and m["zoomable"] == [], m
     assert "maximum-scale" not in m["viewport"] and "user-scalable" not in m["viewport"], m
+
+
+def _phone_photos(folder: Path) -> dict[str, Path]:
+    """A real-format iPhone-like HEIC and JPEG (4032x3024, synthetic content, RISK-06)."""
+    pillow_heif = pytest.importorskip("pillow_heif")
+    from PIL import Image, ImageDraw
+    pillow_heif.register_heif_opener()
+    img = Image.new("RGB", (4032, 3024), (90, 110, 130))
+    draw = ImageDraw.Draw(img)
+    for x in range(0, 4032, 48):  # some detail, so the files are not tiny
+        draw.line([(x, 0), (4032 - x, 3024)], fill=(x % 255, 140, 200 - x % 120), width=9)
+    paths = {"heic": folder / "IMG_0001.HEIC", "jpeg": folder / "IMG_0002.JPG"}
+    img.save(paths["heic"], quality=80)
+    img.save(paths["jpeg"], quality=90)
+    return paths
+
+
+@pytest.mark.parametrize("engine", ["webkit", "chromium"])
+@pytest.mark.parametrize("kind", ["heic", "jpeg"])
+def test_gallery_photo_reaches_result(ui_url, pw, shot_dir, engine, kind) -> None:
+    """8.4b: «Галерей» with an iPhone HEIC / JPEG -> result screen (plate read or the orange
+    not-read message), never the component's «Зураг уншигдсангүй». WebKit = Safari's engine
+    (decodes HEIC -> resized JPEG); Chromium cannot decode HEIC -> the file is sent as is.
+    Needs `playwright install webkit` once for the webkit case."""
+    photo = _phone_photos(shot_dir)[kind]
+    browser = getattr(pw, engine).launch()
+    try:
+        page = browser.new_page(viewport=PHONE)
+        errors: list[str] = []
+        page.on("console", lambda m: errors.append(m.text) if "plate_camera" in m.text else None)
+        page.goto(ui_url + "/record")
+        page.locator(".pc[data-mode=gallery] .pc-gal").wait_for(timeout=20000)
+        page.locator(".pc[data-mode=gallery] .pc-gal input").set_input_files(str(photo))
+        page.get_by_role("button", name="Үргэлжлүүлэх").wait_for(timeout=60000)
+        body = page.inner_text("body")
+    finally:
+        browser.close()
+    assert "Зураг уншигдсангүй" not in body and errors == []
+    assert "Дугаарыг таньлаа" in body or "Дугаарыг уншиж чадсангүй" in body

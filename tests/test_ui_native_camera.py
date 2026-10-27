@@ -68,3 +68,30 @@ def test_labels_are_mongolian_mockup_text() -> None:
     labels = native_camera.LABELS
     assert (labels["badge"], labels["hint"], labels["gallery"], labels["native"]) == (
         "Арын камер", "2–3 метрээс, урдаас нь авна уу", "Галерей", "Зураг авах")
+
+
+def test_picked_file_is_read_before_the_input_is_cleared() -> None:
+    """8.4b regression: on iPhone a photo picked from the library is a temporary file; 8.4
+    cleared the input BEFORE reading it -> «Зураг уншигдсангүй». The bytes must be copied first
+    and the input cleared only in `finally`. (The JS cannot run here; this pins the order.)"""
+    js = native_camera._JS
+    handler = js[js.index("input.onchange"):js.index("if (data.mode !== 'live')")]
+    read, clear = handler.index("await file.arrayBuffer()"), handler.index("input.value = ''")
+    assert read < clear and handler.count("input.value = ''") == 1
+    assert "finally" in handler[read:clear]
+
+
+def test_error_payload_gives_photo_failed() -> None:
+    failed = native_camera.parse_error({"error": "NotReadableError: x", "source": "gallery"})
+    assert failed == native_camera.PhotoFailed("NotReadableError: x", "gallery")
+    assert len(native_camera.parse_error({"error": "e" * 1000}).error) == 300
+
+
+@pytest.mark.parametrize("bad", [None, "x", {}, {"error": 5}])
+def test_malformed_error_payload_is_none(bad) -> None:
+    assert native_camera.parse_error(bad) is None
+
+
+def test_fail_reports_error_to_python() -> None:
+    """fail() must send the trigger «error» (else the oil changer stays on the start screen)."""
+    assert "setTriggerValue('error'" in native_camera._JS

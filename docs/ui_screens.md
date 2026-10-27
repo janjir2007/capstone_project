@@ -79,7 +79,7 @@ rows (plate · company · status), this session only.
    бол үргэлжлүүлнэ үү» with the plate in a big editable field, or orange «Дугаарыг уншиж
    чадсангүй — гараар оруулна уу» with an empty field (also recognizer down). «Гараар бичих» /
    «Дугааргүй машин» open it without a photo. «Үргэлжлүүлэх» → lookup → form; «Дахин зураг авах» →
-   capture. No automatic lookup any more (changes D-072). Opening any page with `?diag=1` shows the photo size there (session only).
+   capture. No automatic lookup any more (changes D-072). A photo the browser cannot read (8.4b) → the same orange result. Opening any page with `?diag=1` shows the photo size there, or the browser's error text (session only).
 3. *Confirm* (fleet number found in one or more companies only): «Аль компанийн машин бэ?».
    A plate goes straight to the form (T9).
 4. *Form*, two layouts:

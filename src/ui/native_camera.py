@@ -194,23 +194,29 @@ export default function (component) {
     setTriggerValue('photo', { b64: await toBase64(blob), ...meta });
   };
 
-  const fail = () => {
+  const fail = (e, source) => {
+    console.error('plate_camera: photo failed', e);  // visible in Safari Web Inspector / Chrome
     root.classList.remove('busy');
     status.textContent = data.labels.error;
     if (s.stream && video.paused) video.play().catch(() => {});
+    // 8.4b: tell Python too -> result screen (type the plate); the text shows with ?diag=1
+    const text = e ? `${e.name || 'Error'}: ${e.message || e}` : 'unknown';
+    try { setTriggerValue('error', { error: text.slice(0, 300), source }); } catch (_) {}
   };
 
   // native camera (fallback) + gallery: file input -> shrink -> Python
   root.querySelectorAll('.pc-in').forEach((input) => {
     input.onchange = async () => {
       const file = input.files && input.files[0];
-      input.value = '';  // the same photo can be chosen again
       if (!file) return;
       root.classList.add('busy');
       status.textContent = data.mode === 'gallery' ? data.labels.busy : '';
       centerText(data.labels.busy);
       try {
-        const out = await shrinkFile(file, data.max_side);
+        // 8.4b: copy the bytes into memory FIRST. On iPhone a picked photo is a temporary file;
+        // clearing the input before reading it (as 8.4 did) can make it unreadable -> fail().
+        const photo = new Blob([await file.arrayBuffer()], { type: file.type });
+        const out = await shrinkFile(photo, data.max_side);
         await send(out.blob, {
           name: out.resized ? 'photo.jpg' : (file.name || 'photo.jpg'),
           type: out.resized ? 'image/jpeg' : (file.type || ''),
@@ -218,7 +224,11 @@ export default function (component) {
           source_width: out.srcW || null, source_height: out.srcH || null,
           original_bytes: file.size, resized: out.resized, source: input.dataset.source,
         });
-      } catch (e) { fail(); }
+      } catch (e) {
+        fail(e, input.dataset.source);
+      } finally {
+        input.value = '';  // only now: the same photo can be chosen again
+      }
     };
   });
 
@@ -242,7 +252,7 @@ export default function (component) {
         source_width: w, source_height: h, original_bytes: null,
         resized: Math.max(w, h) > data.max_side, source: 'live',
       });
-    } catch (e) { shutter.disabled = false; fail(); }
+    } catch (e) { shutter.disabled = false; fail(e, 'live'); }
   };
 
   const start = async () => {
@@ -355,24 +365,41 @@ def parse_payload(payload: Any) -> CapturedPhoto | None:
     )
 
 
-def _mount(key: str, mode: str, max_side: int) -> CapturedPhoto | None:
+@dataclass(frozen=True)
+class PhotoFailed:
+    """The browser could not read / encode the photo (8.4b). `error` = the JS error text
+    (e.g. "NotReadableError: ..."), shown on the result screen only with ?diag=1."""
+
+    error: str
+    source: str = ""
+
+
+def parse_error(payload: Any) -> PhotoFailed | None:
+    """Trigger value «error» from the browser -> PhotoFailed; anything malformed -> None."""
+    if not isinstance(payload, dict) or not isinstance(payload.get("error"), str):
+        return None
+    return PhotoFailed(error=payload["error"][:300], source=str(payload.get("source") or ""))
+
+
+def _mount(key: str, mode: str, max_side: int) -> CapturedPhoto | PhotoFailed | None:
     result = _register()(
         key=key,
         data={"mode": mode, "labels": LABELS, "max_side": max_side},
         on_photo_change=lambda: None,  # a trigger needs a callback to be reported back
+        on_error_change=lambda: None,
         width="stretch",
     )
-    return parse_payload(getattr(result, "photo", None))
+    return parse_payload(getattr(result, "photo", None)) or parse_error(getattr(result, "error", None))
 
 
-def camera(key: str, max_side: int = MAX_SIDE) -> CapturedPhoto | None:
+def camera(key: str, max_side: int = MAX_SIDE) -> CapturedPhoto | PhotoFailed | None:
     """Square live view + shutter (fallback: native camera button).
-    Returns the photo on the run right after it is taken, else None."""
+    Returns the photo (or PhotoFailed) on the run right after it is taken, else None."""
     return _mount(key, "live", max_side)
 
 
-def gallery_button(key: str, max_side: int = MAX_SIDE) -> CapturedPhoto | None:
-    """«Галерей» button. Returns the chosen photo on the run right after, else None."""
+def gallery_button(key: str, max_side: int = MAX_SIDE) -> CapturedPhoto | PhotoFailed | None:
+    """«Галерей» button. Returns the chosen photo (or PhotoFailed) on the run right after, else None."""
     return _mount(key, "gallery", max_side)
 
 
