@@ -1,6 +1,6 @@
 # API contract — data, model and reminder endpoints (tasks 4.2, 4.2b, 4.3, 4.4)
 
-- **Version:** 0.10 (task 9.1, 2026-10-27) · **Owner:** Backend Engineer
+- **Version:** 0.11 (task 9.1 step 2, 2026-10-28) · **Owner:** Backend Engineer
 - Extends PROJECT_STATE §8 "API contract" with exact fields. The live, always
   current version is the OpenAPI page of the running API: `http://localhost:8000/docs`.
 - Field names follow [`data_dictionary.md`](data_dictionary.md). Code:
@@ -103,7 +103,16 @@ separators allowed). A valid phone is searched as a phone; anything else as a pl
   last_service` (ServiceOut | null), `segment, status, days_left` (status/days_left null without the
   model; segment then count-based, no `at_risk`), `matched_on` (list of `plate | fleet_no | company | phone`).
 - Full history of one truck: `GET /vehicles/{id}`.
-- **422** `limit` out of range or `q` too long
+- **Filters (v0.11, step 2)**, all optional: `company_id` (the truck's owner); `date_from`, `date_to`
+  (YYYY-MM-DD, both ends included), `route` (Route), `oil_grade` (case + spaces ignored). The last
+  four filter SERVICES: a truck stays when **one** of its services passes all of them. The row
+  still shows the truck's newest service.
+- `with_services=true` (default false): each VehicleRow gets `services` = its services that pass the
+  date / route / oil filters (all of them when none is used), newest first. Used by the dashboard's
+  Excel export (one row per service). Without it `services` is null.
+- `options: {companies: [{id, name}], oil_grades: [str]}` = choices for the filter lists, from the
+  whole database (they do not shrink while filtering).
+- **422** `limit` out of range, `q` too long, unknown `route`, bad date, `date_from` after `date_to`
 
 ### `GET /vehicles/{id}`
 - **200** VehicleCard · **404** unknown id
@@ -234,3 +243,4 @@ model version, predicted date and send day (`reminders_sent`, migration 003). No
 | 0.8 | 2026-10-17 | Task 1.6: migration 005 adds 4 cross-border destinations (no field change). `GET /destinations` keeps `mixed` last (order by `route_category = 'mixed'`, then id) |
 | 0.9 | 2026-10-17 | Task 2.9: `range_low_date`, `range_high_date` added to Prediction (card + `GET /vehicles/{id}/prediction`; additive, nullable). `serving_params.json` gains `ranges` |
 | 0.10 | 2026-10-27 | Task 9.1: `GET /vehicles/search` (dashboard search, read only; additive — no existing field changed) |
+| 0.11 | 2026-10-28 | Task 9.1 step 2: search filters `date_from`, `date_to`, `company_id`, `route`, `oil_grade` + `options` in the answer; `with_services=true` adds each row's matching `services` (additive) |

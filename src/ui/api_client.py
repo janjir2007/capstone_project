@@ -9,6 +9,7 @@ Tests replace the network with `httpx.MockTransport` via `set_transport()`.
 """
 
 import os
+from datetime import date
 from typing import Any
 
 import httpx
@@ -94,12 +95,21 @@ def lookup(query: str) -> dict:
     return _request("GET", "/vehicles/lookup", params={"q": query})
 
 
-def search_vehicles(query: str = "", limit: int = 200) -> dict:
-    """GET /vehicles/search?q=&limit= -> {query, total, vehicles: [VehicleRow]} (task 9.1, read only).
+def search_vehicles(query: str = "", limit: int = 200, filters: dict | None = None,
+                    with_services: bool = False) -> dict:
+    """GET /vehicles/search -> {query, total, vehicles: [VehicleRow], options} (task 9.1, read only).
 
     Any part of a plate, fleet number, company or driver phone; blank = every truck, newest first.
+    ``filters``: date_from / date_to (date or ISO text), company_id, route, oil_grade; None values
+    are not sent. ``with_services``: each row also lists its services that pass the filters (Excel).
     """
-    return _request("GET", "/vehicles/search", params={"q": query, "limit": limit})
+    params: dict = {"q": query, "limit": limit}
+    if with_services:
+        params["with_services"] = "true"
+    for name, value in (filters or {}).items():
+        if value is not None:
+            params[name] = value.isoformat() if isinstance(value, date) else value
+    return _request("GET", "/vehicles/search", params=params)
 
 
 def get_vehicle(vehicle_id: int) -> dict:

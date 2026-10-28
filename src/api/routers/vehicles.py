@@ -12,6 +12,7 @@ when the model is not loaded).
 
 from collections import Counter
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 from typing import Annotated
@@ -23,11 +24,11 @@ from sqlalchemy.orm import Session, selectinload
 from src.api.clock import get_today
 from src.api.db import get_session
 from src.api.history import records_as_of, service_records, to_visit, visits_oldest_first
-from src.api.matching import fleet_no_key, search_matches
+from src.api.matching import clean_company_name, company_key, fleet_no_key, search_matches
 from src.api.models import ServiceRecord, Vehicle
 from src.api.prediction import Predictor, segment_of
-from src.api.schemas import (CompanyOut, LookupResult, PredictionOut, ServiceOut, VehicleCard, VehicleRow,
-                             VehicleSearch, normalize_phone)
+from src.api.schemas import (CompanyOut, LookupResult, PredictionOut, Route, SearchOptions, ServiceOut, VehicleCard,
+                             VehicleRow, VehicleSearch, normalize_phone)
 from src.common.plates import normalize_plate
 
 router = APIRouter(prefix="/vehicles", tags=["vehicles"])
@@ -180,8 +181,58 @@ def lookup(
     )
 
 
-def search_rows(session: Session, query: str, today: date, predictor: Predictor | None) -> list[VehicleRow]:
-    """Every truck matching ``query`` (blank = all), newest service first (task 9.1).
+@dataclass(frozen=True)
+class SearchFilters:
+    """Dashboard filters (task 9.1 step 2). None = not used.
+
+    company_id filters the truck; the other four filter SERVICES: a truck stays when at least
+    one of its services passes all of them (e.g. "came in October with 15W-40").
+    """
+
+    date_from: date | None = None
+    date_to: date | None = None
+    company_id: int | None = None
+    route: str | None = None
+    oil_grade: str | None = None
+
+    def service_passes(self, record: ServiceRecord) -> bool:
+        """One service inside the date range (both ends included), on the route, with the oil grade.
+        Oil grade is compared like company names: case and extra spaces ignored."""
+        return ((self.date_from is None or record.service_date >= self.date_from)
+                and (self.date_to is None or record.service_date <= self.date_to)
+                and (self.route is None or record.route == self.route)
+                and (self.oil_grade is None or company_key(record.oil_grade) == company_key(self.oil_grade)))
+
+    def passing_services(self, records: Sequence[ServiceRecord]) -> list[ServiceRecord]:
+        """The services that pass the service filters (all of them when none is used)."""
+        return [r for r in records if self.service_passes(r)]
+
+    def vehicle_passes(self, vehicle: Vehicle, records: Sequence[ServiceRecord]) -> bool:
+        if self.company_id is not None and vehicle.company_id != self.company_id:
+            return False
+        uses_services = any(v is not None for v in (self.date_from, self.date_to, self.route, self.oil_grade))
+        return not uses_services or any(self.service_passes(r) for r in records)
+
+
+def search_options(vehicles: Sequence[Vehicle], records: dict[int, list[ServiceRecord]]) -> SearchOptions:
+    """Choices for the filter lists, from the WHOLE database (they do not shrink while filtering):
+    companies by name, oil grades as stored (first spelling of each case-insensitive key)."""
+    companies = {v.company.id: v.company for v in vehicles}
+    grades: dict[str, str] = {}
+    for rows in records.values():
+        for r in rows:
+            grades.setdefault(company_key(r.oil_grade), clean_company_name(r.oil_grade))
+    return SearchOptions(
+        companies=[CompanyOut.model_validate(c) for c in sorted(companies.values(), key=lambda c: company_key(c.name))],
+        oil_grades=sorted(grades.values(), key=str.casefold),
+    )
+
+
+def search_rows(session: Session, query: str, today: date, predictor: Predictor | None,
+                filters: SearchFilters = SearchFilters(),
+                with_services: bool = False) -> tuple[list[VehicleRow], SearchOptions]:
+    """Every truck matching ``query`` (blank = all) and ``filters``, newest service first (task 9.1),
+    plus the filter choices.
 
     Matching is done in Python (src/api/matching.py, D-043: Cyrillic casefold does not depend on
     the database locale). Read only: one query for vehicles + companies, one for all services
@@ -192,6 +243,8 @@ def search_rows(session: Session, query: str, today: date, predictor: Predictor 
     rows: list[tuple[Vehicle, list[str]]] = []
     for vehicle in vehicles:
         own = records.get(vehicle.id, [])
+        if not filters.vehicle_passes(vehicle, own):
+            continue
         phones = {r.driver_phone for r in own if r.driver_phone}
         matched = search_matches(query, vehicle.identifier_type, vehicle.identifier, vehicle.plate_normalized,
                                  vehicle.company.name, phones)
@@ -216,11 +269,13 @@ def search_rows(session: Session, query: str, today: date, predictor: Predictor 
             status=prediction.status if prediction else None,
             days_left=prediction.days_left if prediction else None,
             matched_on=matched,
+            services=[ServiceOut.model_validate(r) for r in reversed(filters.passing_services(own))]
+            if with_services else None,
         ))
     # Newest service first; trucks without a service last; id keeps the order stable.
     out.sort(key=lambda row: (row.last_service is not None,
                               row.last_service.service_date if row.last_service else date.min, row.id), reverse=True)
-    return out
+    return out, search_options(vehicles, records)
 
 
 @router.get("/search", response_model=VehicleSearch)
@@ -231,13 +286,26 @@ def search(
     q: Annotated[str, Query(max_length=100, description="Plate, fleet number, company or phone — any part. "
                                                         "Blank = every truck")] = "",
     limit: Annotated[int, Query(ge=1, le=1000, description="Rows returned (total counts all matches)")] = 200,
+    date_from: Annotated[date | None, Query(description="Has a service on or after this day")] = None,
+    date_to: Annotated[date | None, Query(description="Has a service on or before this day")] = None,
+    company_id: Annotated[int | None, Query(description="Owner company (id from options.companies)")] = None,
+    route: Annotated[Route | None, Query(description="Has a service on this route")] = None,
+    oil_grade: Annotated[str | None, Query(max_length=50, description="Has a service with this oil grade "
+                                                                      "(case and spaces ignored)")] = None,
+    with_services: Annotated[bool, Query(description="Add each truck's services that pass the filters "
+                                                     "(one Excel row per service)")] = False,
 ) -> VehicleSearch:
     """Dashboard search (task 9.1): trucks whose plate, fleet number, company or any driver phone
-    CONTAINS ``q``. Read only. Unlike /lookup (one exact truck for the oil changer) this is for
-    browsing the database. Declared before /{vehicle_id} so "search" is not read as an id.
+    CONTAINS ``q``, narrowed by the filters. The service filters (dates, route, oil grade) must all
+    hold for ONE service of the truck. Read only. Unlike /lookup (one exact truck for the oil
+    changer) this is for browsing the database. Declared before /{vehicle_id} so "search" is not
+    read as an id. 422 when date_from is after date_to.
     """
-    rows = search_rows(session, q, today, predictor)
-    return VehicleSearch(query=q, total=len(rows), vehicles=rows[:limit])
+    if date_from and date_to and date_from > date_to:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "date_from is after date_to")
+    filters = SearchFilters(date_from, date_to, company_id, route, (oil_grade or "").strip() or None)
+    rows, options = search_rows(session, q, today, predictor, filters, with_services)
+    return VehicleSearch(query=q, total=len(rows), vehicles=rows[:limit], options=options)
 
 
 @router.get("/{vehicle_id}", response_model=VehicleCard)

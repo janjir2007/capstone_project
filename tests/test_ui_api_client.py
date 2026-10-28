@@ -168,6 +168,16 @@ def test_search_vehicles_get_with_query_and_limit(requests_seen) -> None:
     assert (seen[1].url.params["q"], seen[1].url.params["limit"]) == ("говь", "50")
 
 
+def test_search_vehicles_sends_only_used_filters(requests_seen) -> None:
+    from datetime import date
+    seen, set_reply = requests_seen
+    set_reply(httpx.Response(200, json={"query": "", "total": 0, "vehicles": []}))
+    api_client.search_vehicles(filters={"date_from": date(2026, 10, 1), "date_to": None, "company_id": 3,
+                                        "route": "mn_china", "oil_grade": None})
+    assert dict(seen[0].url.params) == {"q": "", "limit": "200", "date_from": "2026-10-01",
+                                        "company_id": "3", "route": "mn_china"}
+
+
 def test_mark_reminder_not_latest(requests_seen) -> None:
     _, set_reply = requests_seen
     set_reply(httpx.Response(409, json={"detail": {"code": "not_latest_service", "message": "newer",

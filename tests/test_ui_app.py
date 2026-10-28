@@ -48,6 +48,7 @@ class FakeApi:
         self.hide_sent = True                       # False = stale list (another manager's open tab)
         self.destinations: list[dict] = DESTINATIONS  # GET /destinations
         self.searches: list[str] = []               # q of every GET /vehicles/search (9.1)
+        self.search_params: list[dict] = []         # all params of every GET /vehicles/search (9.1 step 2)
 
     # -- data ---------------------------------------------------------------
     def add_vehicle(self, identifier: str, company: str, identifier_type: str = "plate", **service) -> dict:
@@ -135,7 +136,9 @@ class FakeApi:
                               "sent_at": f"{TODAY}T11:00:00+08:00"}
             return httpx.Response(201, json={**self.sent[sid], "already_sent": False})
         if path == "/vehicles/search":
-            return self._search(request.url.params.get("q", ""), int(request.url.params.get("limit", 200)))
+            self.search_params.append(dict(request.url.params))
+            return self._search(request.url.params.get("q", ""), int(request.url.params.get("limit", 200)),
+                                request.url.params.get("company_id"), request.url.params.get("with_services") == "true")
         if path == "/vehicles/lookup":
             return self._lookup(request.url.params["q"])
         if path == "/plates/recognize" and request.method == "POST":
@@ -146,8 +149,9 @@ class FakeApi:
             return self._post(json.loads(request.content), request.url.params.get("force") == "true")
         return httpx.Response(404, json={"detail": "not found"})
 
-    def _search(self, q: str, limit: int) -> httpx.Response:
-        """GET /vehicles/search: plate or company contains q (enough for the screen tests)."""
+    def _search(self, q: str, limit: int, company_id: str | None = None, with_services: bool = False) -> httpx.Response:
+        """GET /vehicles/search: plate or company contains q, + company filter (enough for the screen
+        tests; the other filters are only checked as sent params). Options from every truck."""
         self.searches.append(q)
         key = self._key(q)
         rows = []
@@ -155,10 +159,15 @@ class FakeApi:
             card = self.card(v)
             if key and key not in self._key(v["identifier"]) and key not in self._key(v["company"]["name"]):
                 continue
+            if company_id is not None and v["company"]["id"] != int(company_id):
+                continue
             rows.append({k: card[k] for k in ("id", "identifier_type", "identifier", "vehicle_model", "company",
                                               "service_count", "last_service", "segment")}
-                        | {"status": None, "days_left": None, "matched_on": []})
-        return httpx.Response(200, json={"query": q, "total": len(rows), "vehicles": rows[:limit]})
+                        | {"status": None, "days_left": None, "matched_on": [],
+                           "services": card["history"] if with_services else None})
+        options = {"companies": sorted((v["company"] for v in self.vehicles), key=lambda c: c["name"]),
+                   "oil_grades": sorted({s["oil_grade"] for s in self.services})}
+        return httpx.Response(200, json={"query": q, "total": len(rows), "vehicles": rows[:limit], "options": options})
 
     def _lookup(self, q: str) -> httpx.Response:
         digits = "".join(c for c in q if c.isdigit())
@@ -1118,6 +1127,84 @@ def test_wide_layout_only_on_dashboard(fake_api) -> None:
     assert "@media (min-width: 1024px)" in html_blocks(at) and "max-width: 1360px" in html_blocks(at)
     for view in (HOME, SEARCH, CARD, RECORD, REMINDERS):
         assert "max-width: 1360px" not in html_blocks(run_app(view)), view
+
+
+def set_filters(at: AppTest, **values) -> AppTest:
+    """Fill dashboard filters (widget keys dash_f_<param>) and press «Хайх»."""
+    at = on(at, DASHBOARD)
+    for name, value in values.items():
+        widget = at.date_input(key=f"dash_f_{name}") if name.startswith("date") else at.selectbox(key=f"dash_f_{name}")
+        widget.set_value(value)
+    return click(at, "Хайх")
+
+
+def test_dashboard_filters_sent_with_search(fake_api) -> None:
+    from datetime import date
+    seed_two(fake_api)
+    at = run_app(DASHBOARD)
+    assert at.selectbox(key="dash_f_company_id").options == ["Говь Тест ХХК", "Хан Тест ХХК"]
+    assert at.selectbox(key="dash_f_oil_grade").options == ["10W-40", "15W-40"]
+    assert at.selectbox(key="dash_f_route").options[1] == "Монгол – Хятад"
+    at = set_filters(at, date_from=date(2026, 9, 1), date_to=date(2026, 9, 30), company_id=2,
+                     route="mn_china", oil_grade="15W-40")
+    assert not at.exception
+    sent = fake_api.search_params[-1]
+    assert sent == {"q": "", "limit": "1000", "with_services": "true", "date_from": "2026-09-01", "date_to": "2026-09-30",
+                    "company_id": "2", "route": "mn_china", "oil_grade": "15W-40"}
+    assert list(at.dataframe[0].value["Дугаар"]) == ["0003 ТЕС"]
+    assert at.expander[0].label == "Шүүлтүүр (5)"
+
+
+def test_dashboard_filter_dates_in_wrong_order(fake_api) -> None:
+    from datetime import date
+    seed_two(fake_api)
+    at = run_app(DASHBOARD)
+    calls = len(fake_api.search_params)
+    at = set_filters(at, date_from=date(2026, 10, 1), date_to=date(2026, 9, 1))
+    assert any("хойш байна" in w for w in texts(at.warning))
+    assert len(fake_api.search_params) == calls          # not sent (API would answer 422)
+    assert at.selectbox(key="dash_f_company_id").options  # lists kept from the last good answer
+
+
+def test_dashboard_clear_filters(fake_api) -> None:
+    seed_two(fake_api)
+    at = set_filters(run_app(DASHBOARD), company_id=1)
+    assert len(at.dataframe[0].value) == 1
+    at = on(at, DASHBOARD).button(key="dash_clear").click().run()
+    assert fake_api.search_params[-1] == {"q": "", "limit": "1000", "with_services": "true"}
+    assert len(at.dataframe[0].value) == 2 and at.expander[0].label == "Шүүлтүүр"
+
+
+def test_dashboard_excel_has_filtered_list(fake_api, monkeypatch) -> None:
+    """«Excel татах»: one row per service of the filtered trucks + a line saying which filters were used."""
+    import io
+    from openpyxl import load_workbook
+    from src.ui import export
+    made: list[bytes] = []
+    real = export.search_workbook
+
+    def spy(vehicles, today, filters_text):
+        made.append(real(vehicles, today, filters_text))
+        return made[-1]
+
+    monkeypatch.setattr(export, "search_workbook", spy)
+    seed_two(fake_api)
+    fake_api._add_service(1, {"service_date": "2026-10-01", "odometer_km": 215000, "oil_grade": "15W-40",
+                              "liters": 30.0, "driver_name": "Шинэ Ж.", "driver_phone": "99110009"})
+    at = set_filters(run_app(DASHBOARD), company_id=1)
+    assert len(at.dataframe[0].value) == 1                         # the screen: one row per truck
+    [button] = [b.proto for b in at.get("download_button")]
+    assert button.label == "Excel татах" and button.ignore_rerun   # downloading does not rerun the page
+    ws = load_workbook(io.BytesIO(made[-1])).active
+    assert ws["A2"].value == "Компани: Говь Тест ХХК"
+    rows = [[c.value for c in r][:3] for r in ws.iter_rows(min_row=5) if r[0].value]
+    assert [(r[0].date().isoformat(), r[1], r[2]) for r in rows] == [   # the file: one row per service
+        ("2026-10-01", "0002 ТЕС", "Говь Тест ХХК"), ("2026-09-01", "0002 ТЕС", "Говь Тест ХХК")]
+
+
+def test_dashboard_no_excel_button_when_nothing_found(fake_api) -> None:
+    at = run_app(DASHBOARD)  # empty database
+    assert not [b for b in at.get("download_button")]
 
 
 def test_dashboard_table_toolbar_hidden(fake_api) -> None:

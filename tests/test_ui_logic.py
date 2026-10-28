@@ -501,6 +501,7 @@ def test_search_summary() -> None:
     assert logic.search_summary("", 40, 40) == "Бүх машин · 40"
     assert logic.search_summary(" говь ", 2, 2) == "«говь» · 2 машин"
     assert logic.search_summary("", 250, 200) == "Бүх машин · 250 (эхний 200 харагдаж байна)"
+    assert logic.search_summary("", 8, 8, filtered=True) == "Шүүсэн · 8 машин"
 
 
 def test_row_status_text_prefers_prediction() -> None:
@@ -519,6 +520,22 @@ def test_search_table_rows_keeps_numbers() -> None:
 def test_search_table_rows_without_service() -> None:
     [row] = logic.search_table_rows([{**ROW, "last_service": None, "service_count": 0}])
     assert (row["Сүүлд солисон"], row["Гүйлт (км)"], row["Утас"]) == (None, None, None)
+
+
+def test_filter_errors_and_count() -> None:
+    from datetime import date as d
+    assert logic.filter_errors({"date_from": d(2026, 10, 2), "date_to": d(2026, 10, 1)}) == [logic.FILTER_ORDER_ERROR]
+    assert logic.filter_errors({"date_from": d(2026, 10, 1), "date_to": d(2026, 10, 1)}) == []
+    assert logic.filter_errors({"date_to": d(2026, 10, 1)}) == []
+    assert logic.active_filter_count({"date_from": None, "company_id": 3, "route": "mn_china", "oil_grade": ""}) == 2
+
+
+def test_filters_text() -> None:
+    from datetime import date as d
+    filters = {"date_from": d(2026, 10, 1), "date_to": None, "company_id": 3, "route": "mn_china", "oil_grade": "15W-40"}
+    assert logic.filters_text(" говь ", filters, {3: "Туршилт ХХК"}) == (
+        "Хайлт: «говь» · Огноо: 2026-10-01 – … · Компани: Туршилт ХХК · Маршрут: Монгол – Хятад · Тос: 15W-40")
+    assert logic.filters_text("", {}, {}) == "Шүүлтүүргүй — бүх машин"
 
 
 def test_history_table_rows() -> None:

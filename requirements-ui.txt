@@ -4,4 +4,5 @@
 # Install:  pip install -r requirements-ui.txt
 streamlit==1.64.0
 httpx==0.28.1  # API client (src/ui/api_client.py); same pin as requirements.txt
+openpyxl==3.1.5  # dashboard Excel export (src/ui/export.py, task 9.1); same pin as requirements.txt
 pytest==9.1.1  # tests/test_ui_*.py; same pin as requirements.txt

@@ -369,6 +369,50 @@ def test_search_bad_params_422(client: TestClient, params: dict[str, Any]) -> No
     assert client.get("/vehicles/search", params=params).status_code == 422
 
 
+@pytest.mark.parametrize(
+    ("params", "expected"),
+    [
+        ({"date_from": "2026-09-01"}, [3, 2, 6]),                       # a service on/after Sep 1
+        ({"date_to": "2026-05-31"}, [1, 4]),                            # a service on/before May 31
+        ({"date_from": "2026-05-10", "date_to": "2026-05-10"}, [4]),    # both ends included
+        ({"route": "mine_site"}, [5]),
+        ({"oil_grade": " 10w-40 "}, [2]),                               # case + spaces ignored
+        ({"company_id": 1}, [2, 1]),
+        ({"q": "говь", "date_from": "2026-09-01"}, [2]),                # filters narrow a search
+        # route and oil grade must hold for the SAME service: v2 went ub_city only with 10W-40
+        ({"route": "ub_city", "oil_grade": "15W-40"}, []),
+    ],
+)
+def test_search_filters(client: TestClient, params: dict[str, Any], expected: list[int]) -> None:
+    assert search_ids(client, **params) == expected
+
+
+def test_search_with_services_lists_only_passing_services(client: TestClient) -> None:
+    """Excel export (9.1): one row per matching service. v1 has services 03-05, 05-20, 08-10."""
+    def services(**params: Any) -> dict[int, list[str]]:
+        rows = client.get("/vehicles/search", params={"with_services": "true", **params}).json()["vehicles"]
+        return {v["id"]: [s["service_date"] for s in v["services"]] for v in rows}
+
+    assert services(date_to="2026-05-31") == {1: ["2026-05-20", "2026-03-05"], 4: ["2026-05-10"]}
+    assert services(q="1234")[1] == ["2026-08-10", "2026-05-20", "2026-03-05"]   # no service filter: all
+    assert services(company_id=1, date_from="2026-09-01") == {2: ["2026-09-10"]}
+    assert client.get("/vehicles/search", params={"q": "1234"}).json()["vehicles"][0]["services"] is None  # opt-in
+
+
+def test_search_filter_options_cover_whole_database(client: TestClient) -> None:
+    """The choices do not shrink while filtering (else a filter could not be changed back)."""
+    options = client.get("/vehicles/search", params={"q": "0000 ЯЯЯ"}).json()["options"]
+    assert [c["name"] for c in options["companies"]] == [
+        "Бат-Оргил (хувь хүн)", "Говь Тээвэр ХХК", "Хан Уул Карго ХХК", "Өмнөд Уурхай ХХК"]
+    assert options["oil_grades"] == ["10W-40", "15W-40"]
+
+
+@pytest.mark.parametrize("params", [{"route": "mars"}, {"date_from": "2026-09-02", "date_to": "2026-09-01"},
+                                    {"date_from": "yesterday"}, {"company_id": "abc"}])
+def test_search_bad_filters_422(client: TestClient, params: dict[str, Any]) -> None:
+    assert client.get("/vehicles/search", params=params).status_code == 422
+
+
 def test_search_writes_nothing(client: TestClient, pg: Connection) -> None:
     before = [count(pg, t) for t in ("companies", "vehicles", "service_records")]
     client.get("/vehicles/search", params={"q": "говь"})

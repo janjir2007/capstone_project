@@ -281,6 +281,16 @@ class VehicleRow(BaseModel):
     status: Status | None = Field(description="Prediction status (D-007); null when the model is not loaded")
     days_left: int | None = Field(description="Predicted date − today; null when the model is not loaded")
     matched_on: list[SearchMatch] = Field(description="Why the truck matched q; [] when q is blank (all trucks)")
+    services: list[ServiceOut] | None = Field(
+        default=None, description="Only with with_services=true: the truck's services that pass the date / route / "
+                                  "oil filters (all services when none is used), newest first (Excel export, 9.1)")
+
+
+class SearchOptions(BaseModel):
+    """Choices for the dashboard filter lists, from the whole database (not only the matches)."""
+
+    companies: list[CompanyOut] = Field(description="Every company with a truck, by name")
+    oil_grades: list[str] = Field(description="Every oil grade ever recorded (one spelling per case-insensitive value)")
 
 
 class VehicleSearch(BaseModel):
@@ -289,6 +299,7 @@ class VehicleSearch(BaseModel):
     query: str
     total: int = Field(description="All matching trucks; `vehicles` holds at most `limit` of them")
     vehicles: list[VehicleRow] = Field(description="Newest service first")
+    options: SearchOptions = Field(description="Filter choices (task 9.1 step 2)")
 
 
 class SegmentCounts(BaseModel):

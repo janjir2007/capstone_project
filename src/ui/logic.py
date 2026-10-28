@@ -376,10 +376,14 @@ MATCH_LABELS: dict[str, str] = {
 }
 
 
-def search_summary(query: str, total: int, shown: int) -> str:
-    """Line above the results: '«говь» · 2 машин' / 'Бүх машин · 40' (+ how many are shown)."""
+def search_summary(query: str, total: int, shown: int, filtered: bool = False) -> str:
+    """Line above the results: '«говь» · 2 машин' / 'Шүүсэн · 8 машин' / 'Бүх машин · 40'
+    (+ how many are shown)."""
     query = (query or "").strip()
-    head = f"«{query}» · {total} машин" if query else f"Бүх машин · {total}"
+    if query:
+        head = f"«{query}» · {total} машин"
+    else:
+        head = f"Шүүсэн · {total} машин" if filtered else f"Бүх машин · {total}"
     return f"{head} (эхний {shown} харагдаж байна)" if shown < total else head
 
 
@@ -410,6 +414,61 @@ def search_table_rows(vehicles: list[dict]) -> list[dict[str, Any]]:
             "Удаа": v.get("service_count"),
             "Төлөв": row_status_text(v),
         })
+    return rows
+
+
+FILTER_KEYS = ("date_from", "date_to", "company_id", "route", "oil_grade")  # GET /vehicles/search params
+FILTER_ORDER_ERROR = "«Хэднээс» огноо «хэдийг хүртэл»-ээс хойш байна."
+
+
+def filter_errors(filters: dict[str, Any]) -> list[str]:
+    """Mongolian messages for filters the API would refuse (422); [] when they can be sent."""
+    start, end = filters.get("date_from"), filters.get("date_to")
+    return [FILTER_ORDER_ERROR] if start and end and start > end else []
+
+
+def active_filter_count(filters: dict[str, Any]) -> int:
+    return sum(1 for k in FILTER_KEYS if filters.get(k) not in (None, ""))
+
+
+def filters_text(query: str, filters: dict[str, Any], company_names: dict[int, str]) -> str:
+    """Excel line 2: what the list was filtered by, e.g.
+    'Хайлт: «говь» · Огноо: 2026-10-01 – 2026-10-31 · Маршрут: Монгол – Хятад' ('Шүүлтүүргүй' if none)."""
+    parts = [f"Хайлт: «{query.strip()}»"] if query and query.strip() else []
+    start, end = filters.get("date_from"), filters.get("date_to")
+    if start or end:
+        parts.append(f"Огноо: {start or '…'} – {end or '…'}")
+    if filters.get("company_id") is not None:
+        parts.append(f"Компани: {company_names.get(filters['company_id'], filters['company_id'])}")
+    if filters.get("route"):
+        parts.append(f"Маршрут: {route_label(filters['route'])}")
+    if filters.get("oil_grade"):
+        parts.append(f"Тос: {filters['oil_grade']}")
+    return " · ".join(parts) or "Шүүлтүүргүй — бүх машин"
+
+
+EXPORT_COLUMNS = ("Огноо", "Дугаар", "Компани", "Маршрут", "Тос", "Литр", "Гүйлт (км)", "Жолооч", "Утас")
+
+
+def service_export_rows(vehicles: list[dict]) -> list[dict[str, Any]]:
+    """Excel export (9.1): ONE ROW PER SERVICE from GET /vehicles/search?with_services=true,
+    newest first (same day -> by plate). Numbers stay numbers; missing values are None."""
+    rows = []
+    for v in vehicles:
+        for s in v.get("services") or []:
+            rows.append({
+                "Огноо": s.get("service_date"),
+                "Дугаар": v.get("identifier"),
+                "Компани": (v.get("company") or {}).get("name"),
+                "Маршрут": route_label(s.get("route")) if s.get("route") else None,
+                "Тос": s.get("oil_grade"),
+                "Литр": s.get("liters"),
+                "Гүйлт (км)": s.get("odometer_km"),
+                "Жолооч": s.get("driver_name"),
+                "Утас": phone_text(s.get("driver_phone")) or None,
+            })
+    rows.sort(key=lambda r: r["Дугаар"] or "")
+    rows.sort(key=lambda r: r["Огноо"] or "", reverse=True)  # stable: same date keeps plate order
     return rows
 
 
