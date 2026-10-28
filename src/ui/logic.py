@@ -447,7 +447,8 @@ def filters_text(query: str, filters: dict[str, Any], company_names: dict[int, s
     return " · ".join(parts) or "Шүүлтүүргүй — бүх машин"
 
 
-EXPORT_COLUMNS = ("Огноо", "Дугаар", "Компани", "Маршрут", "Тос", "Литр", "Гүйлт (км)", "Жолооч", "Утас")
+EXPORT_COLUMNS = ("Огноо", "Дугаар", "Компани", "Маршрут", "Тос", "Литр", "Гүйлт (км)", "Моторын цаг",
+                  "Жолооч", "Утас")
 
 
 def service_export_rows(vehicles: list[dict]) -> list[dict[str, Any]]:
@@ -464,6 +465,7 @@ def service_export_rows(vehicles: list[dict]) -> list[dict[str, Any]]:
                 "Тос": s.get("oil_grade"),
                 "Литр": s.get("liters"),
                 "Гүйлт (км)": s.get("odometer_km"),
+                "Моторын цаг": s.get("engine_hours"),  # 9.1c: mine trucks record hours, not km (D-006)
                 "Жолооч": s.get("driver_name"),
                 "Утас": phone_text(s.get("driver_phone")) or None,
             })

@@ -22,7 +22,7 @@ SHEET = "Үйлчилгээ"
 HEADER_ROW = 4  # rows 1–2: title + filters, row 3 empty
 DATE_COLUMN = "Огноо"
 WIDTHS = {"Огноо": 12, "Дугаар": 12, "Компани": 26, "Маршрут": 18, "Тос": 10, "Литр": 7,
-          "Гүйлт (км)": 12, "Жолооч": 18, "Утас": 12}
+          "Гүйлт (км)": 12, "Моторын цаг": 12, "Жолооч": 18, "Утас": 12}
 
 
 def file_name(today: date) -> str:
@@ -67,6 +67,8 @@ def search_workbook(vehicles: list[dict], today: date, filters_text: str) -> byt
                 cell = put(ws, i, j, value)
                 if name == "Гүйлт (км)":
                     cell.number_format = "#,##0"
+                elif name == "Моторын цаг":
+                    cell.number_format = "#,##0.0"  # NUMERIC(8,1) in the database
     ws.auto_filter.ref = f"A{HEADER_ROW}:{get_column_letter(len(columns))}{HEADER_ROW + max(len(rows), 1)}"
     ws.freeze_panes = f"A{HEADER_ROW + 1}"
 
