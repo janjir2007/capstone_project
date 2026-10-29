@@ -16,6 +16,7 @@ SERVICE = {
     "vehicle_id": 1,
     "service_date": "2026-09-01",
     "odometer_km": 205000,
+    "target_km": 220000,  # 9.5a: odometer + OIL_INTERVAL_KM, computed by the API
     "engine_hours": None,
     "oil_grade": "15W-40",
     "liters": 30.0,
@@ -160,10 +161,10 @@ def test_prefill_from_card_keeps_fresh_fields_empty() -> None:
     assert form["liters"] == 30.0
     assert form["driver_phone"] == "99110001"
     assert form["company_name"] == "Туршилт ХХК"
-    # D-033: always entered fresh
+    # always entered fresh
     assert form["odometer_km"] is None
     assert form["engine_hours"] is None
-    assert form["destination_id"] is None
+    assert "destination_id" not in form  # 9.5a: no destination in the form
 
 
 def test_prefill_liters_falls_back_to_usual() -> None:
@@ -185,7 +186,6 @@ def _filled(**overrides) -> dict:
         odometer_km=120000,
         oil_grade=" 15W-40 ",
         liters=28.54,
-        destination_id=2,
         driver_name="",
         driver_phone="99110001",
     )
@@ -204,9 +204,9 @@ def test_payload_new_vehicle() -> None:
         "company_name": "Тодорхойгүй",  # T8: new plate vehicle -> default, typed value ignored
         "vehicle_model": "Howo A7",
         "odometer_km": 120000,
-        "destination_id": 2,
         "driver_phone": "99110001",
     }
+    assert not {"destination_id", "destination_raw", "route"} & set(payload)  # 9.5a: not asked any more
     assert "oil_changer" not in payload  # T6: field removed (optional in the contract)
     assert "service_date" not in payload  # API uses today (Ulaanbaatar)
 
@@ -235,15 +235,6 @@ def test_payload_existing_fleet_no_keeps_company() -> None:
     assert payload["company_name"] == "Туршилт   ХХК"
 
 
-def test_payload_other_destination_sends_raw_and_route() -> None:
-    form = _filled(destination_id=logic.OTHER_DESTINATION, destination_raw=" Сайншанд ", route="mixed")
-    payload, errors = logic.build_service_payload("plate", "0001 ТЕС", False, form)
-    assert errors == []
-    assert payload["destination_raw"] == "Сайншанд"
-    assert payload["route"] == "mixed"
-    assert "destination_id" not in payload
-
-
 def test_payload_engine_hours_only() -> None:
     form = _filled(odometer_km=None, engine_hours=1200.5)
     payload, errors = logic.build_service_payload("fleet_no", "HT-12", True, form)
@@ -254,15 +245,43 @@ def test_payload_engine_hours_only() -> None:
 
 def test_payload_errors_for_empty_form() -> None:
     _, errors = logic.build_service_payload("plate", "  ", True, logic.empty_form())
-    assert len(errors) == 5  # identifier, meter, oil, liters, destination (plate: company is automatic, T8)
+    assert len(errors) == 4  # identifier, meter, oil, liters (plate: company is automatic, T8; 9.5a: no destination)
     _, errors = logic.build_service_payload("fleet_no", "  ", True, logic.empty_form())
-    assert len(errors) == 6  # + company (fleet number)
+    assert len(errors) == 5  # + company (fleet number)
 
 
-def test_payload_other_destination_needs_name_and_route() -> None:
-    form = _filled(destination_id=logic.OTHER_DESTINATION)
-    _, errors = logic.build_service_payload("plate", "0001 ТЕС", False, form)
-    assert errors == ["Очих газрын нэрийг бичнэ үү.", "Маршрутын төрөл сонгоно уу."]
+# --- target km + odometer check (9.5a) -------------------------------------------------
+
+def test_target_text() -> None:
+    assert logic.target_text(SERVICE) == "220 000 км"
+    assert logic.target_text({**SERVICE, "odometer_km": None, "target_km": None}) == "—"  # mine truck
+    assert logic.target_text(None) == "—"
+
+
+def test_last_odometer_skips_engine_hours_only_services() -> None:
+    hours_only = {**SERVICE, "odometer_km": None, "engine_hours": 1200.0}
+    older = {**SERVICE, "odometer_km": 190000}
+    assert logic.last_odometer({"history": [hours_only, SERVICE, older]}) == 205000
+    assert logic.last_odometer({"history": [hours_only]}) is None
+    assert logic.last_odometer(None) is None
+
+
+def test_odometer_question_shows_both_numbers() -> None:
+    assert logic.odometer_question(20500, 205000) == "Гүйлт зөв үү? Өмнөх: 205 000 км · одоо: 20 500 км"
+
+
+@pytest.mark.parametrize(("new_km", "last_km", "warns"), [
+    (210000, 205000, False),  # higher: fine
+    (205000, 205000, True),   # same: must be higher
+    (20500, 205000, True),    # a digit missing
+    (None, 205000, False),    # not typed yet
+    (150000, None, False),    # nothing to compare (new truck / mine truck)
+])
+def test_odometer_warning(new_km, last_km, warns) -> None:
+    warning = logic.odometer_warning(new_km, last_km)
+    assert (warning is not None) == warns
+    if warns:
+        assert "205 000 км" in warning
 
 
 # --- error messages --------------------------------------------------------------------
@@ -442,15 +461,12 @@ def test_arrival_view() -> None:
     assert (late["label"], late["big"], late["fg"]) == ("Хоцорсон", "4 хоног", logic.STATUS_COLORS["overdue"][0])
 
 
-def test_prev_visit_and_destination_note() -> None:
+def test_prev_visit_text() -> None:
     last = {"service_date": "2026-08-19", "odometer_km": 186300,
             "destination": {"id": 2, "name": "Zamyn-Uud", "name_mn": "Замын-Үүд"}}
     assert logic.prev_visit_text(last) == "08-19 · 186 300 км · Замын-Үүд"
     assert logic.prev_visit_text(None) == "—"
-    assert logic.destination_change_note(last, 5) == "Өмнө нь Замын-Үүд байсан → шинэ чиглэлээр дахин таамаглана"
-    assert logic.destination_change_note(last, 2) is None      # same place
-    assert logic.destination_change_note(last, None) is None   # nothing chosen yet
-    assert logic.destination_change_note({"destination_raw": "x"}, 5) is None  # nothing to compare
+    assert logic.prev_visit_text({"service_date": "2026-10-29", "odometer_km": 190000}) == "10-29 · 190 000 км"  # 9.5a
 
 
 def test_reminder_counts() -> None:
@@ -482,14 +498,6 @@ def test_viber_forward_url_none_without_text(message) -> None:
     assert logic.viber_forward_url(message) is None
 
 
-def test_picker_hides_the_list_row_labelled_like_the_other_option() -> None:
-    """Task 7.2: migration 004 labels 'Other / several / unknown' «Бусад" -> one «Бусад» pill only."""
-    dests = [{"id": 1, "name": "Beijing", "name_mn": "Бээжин"},
-             {"id": 7, "name": "Other / several / unknown", "name_mn": "Бусад"},
-             {"id": 8, "name": "Other / several / unknown (old DB)", "name_mn": None}]
-    assert [d["id"] for d in logic.picker_destinations(dests)] == [1, 8]
-
-
 # --- «Хяналтын самбар» search (9.1) ------------------------------------------------------
 
 ROW = {"id": 1, "identifier_type": "plate", "identifier": "0001 ТЕС", "vehicle_model": None,
@@ -504,17 +512,11 @@ def test_search_summary() -> None:
     assert logic.search_summary("", 8, 8, filtered=True) == "Шүүсэн · 8 машин"
 
 
-def test_row_status_text_prefers_prediction() -> None:
-    assert logic.row_status_text({**ROW, "status": "overdue"}) == "Хэтэрсэн"
-    assert logic.row_status_text(ROW) == "Байнгын"                 # no model -> segment word
-    assert logic.row_status_text({**ROW, "segment": None}) == "—"
-
-
 def test_search_table_rows_keeps_numbers() -> None:
     [row] = logic.search_table_rows([ROW])
     assert row == {"Дугаар": "0001 ТЕС", "Компани": "Туршилт ХХК", "Сүүлд солисон": "2026-09-01",
-                   "Гүйлт (км)": 205000, "Тос": "15W-40", "Литр": 30.0, "Жолооч": "Тест Д.",
-                   "Утас": "9911 0001", "Удаа": 3, "Төлөв": "Байнгын"}
+                   "Гүйлт (км)": 205000, "Дараагийн солилт (км)": 220000, "Тос": "15W-40", "Литр": 30.0,
+                   "Жолооч": "Тест Д.", "Утас": "9911 0001", "Удаа": 3}  # 9.5a: target instead of «Төлөв»
 
 
 def test_search_table_rows_without_service() -> None:
@@ -539,9 +541,10 @@ def test_filters_text() -> None:
 
 
 def test_history_table_rows() -> None:
-    mine = {**SERVICE, "odometer_km": None, "engine_hours": 12980.5, "driver_name": None, "driver_phone": None}
+    mine = {**SERVICE, "odometer_km": None, "target_km": None, "engine_hours": 12980.5,
+            "driver_name": None, "driver_phone": None}
     assert logic.history_table_rows([SERVICE, mine]) == [
-        ("2026-09-01", "205 000 км", "15W-40", "30 л", "Тест Д.", "9911 0001"),
-        ("2026-09-01", "12 980.5 мц", "15W-40", "30 л", "—", "—"),
+        ("2026-09-01", "205 000 км", "220 000 км", "15W-40", "30 л", "Тест Д.", "9911 0001"),
+        ("2026-09-01", "12 980.5 мц", "—", "15W-40", "30 л", "—", "—"),  # mine truck: no target
     ]
-    assert len(logic.HISTORY_COLUMNS) == 6
+    assert len(logic.HISTORY_COLUMNS) == 7

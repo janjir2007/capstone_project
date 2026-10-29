@@ -186,14 +186,18 @@ def test_home_card_tap_opens_screen(ui_url, phone_page, card, proof, x_frac) -> 
 SPACING_JS = """() => {
   const r = e => e.getBoundingClientRect(), bc = document.querySelector('.block-container');
   const cs = getComputedStyle(bc);
+  // 9.5a: only what the browser draws (checkVisibility): the 9.1 dashboard keeps the computer table
+  // inside a display:none wrapper on a phone, and a closed expander lays out its fields unseen.
+  const shown = e => e.checkVisibility();
   const empty = [...bc.querySelectorAll('[data-testid="stElementContainer"]')]
-    .filter(e => getComputedStyle(e).display !== 'none' && r(e).height < 2).length;
+    .filter(e => shown(e) && r(e).height < 2).length;
   // visible content of each top-level block; the next block must start >= 12 px below it
   const kids = [...bc.querySelector('[data-testid="stVerticalBlock"]').children]
     .filter(e => getComputedStyle(e).display !== 'none' && r(e).height > 0);
-  const bottom = e => Math.max(r(e).bottom, ...[...e.querySelectorAll('*')].map(c => r(c).bottom));
+  const bottom = e => Math.max(r(e).bottom, ...[...e.querySelectorAll('*')].filter(shown).map(c => r(c).bottom));
   let tight = 0;
-  const label = e => e.matches(':has(> .stHeading h3)');  // a section label sits 8 px above its own card
+  // a section label (st.subheader, or common.section's .sec-row) sits 8 px above its own card
+  const label = e => e.matches(':has(> .stHeading h3)') || e.matches('[data-testid="stElementContainer"]:has(.sec-row)');
   for (let i = 1; i < kids.length; i++)
     if (!label(kids[i - 1]) && r(kids[i]).top - bottom(kids[i - 1]) < 11.5) tight++;
   return {pad: [cs.paddingTop, cs.paddingRight, cs.paddingBottom, cs.paddingLeft].join(' '), empty, tight};

@@ -6,7 +6,7 @@ docs/data_dictionary.md.
 
 Rules enforced here:
 - at least one meter: odometer_km or engine_hours (like the DB CHECK)
-- destination: exactly one of destination_id / destination_raw (D-033)
+- destination: at most one of destination_id / destination_raw (9.5a: optional, was exactly one, D-033)
 - destination_raw only -> route is required (D-039)
 - driver_phone normalized to 8 digits, no +976 (D-019)
 """
@@ -16,7 +16,9 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, computed_field, field_validator, model_validator
+
+from src.api.config import oil_interval_km
 
 Route = Literal["ub_city", "mn_china", "mn_russia", "mine_site", "mixed"]
 Segment = Literal["new", "returning", "loyal", "at_risk"]
@@ -82,7 +84,8 @@ class ServiceCreate(BaseModel):
     oil_grade: RequiredText
     liters: Decimal = Field(gt=0, max_digits=5, decimal_places=1)
 
-    # Destination + route (D-033, D-039)
+    # Destination + route (D-033, D-039). Optional since 9.5a: the form no longer asks for it;
+    # old records keep theirs and the API still accepts one (at most one of id / raw).
     destination_id: int | None = Field(default=None, description="id of a destinations row")
     destination_raw: OptionalText = Field(default=None, description="Free text when the place is not in the list")
     route: Route | None = Field(
@@ -105,8 +108,8 @@ class ServiceCreate(BaseModel):
     def _check_rules(self) -> "ServiceCreate":
         if self.odometer_km is None and self.engine_hours is None:
             raise ValueError("give odometer_km or engine_hours (at least one)")
-        if (self.destination_id is None) == (self.destination_raw is None):
-            raise ValueError("give exactly one of destination_id or destination_raw")
+        if self.destination_id is not None and self.destination_raw is not None:
+            raise ValueError("give at most one of destination_id or destination_raw")
         if self.destination_raw is not None and self.route is None:
             raise ValueError("route is required when the destination is free text (D-039)")
         return self
@@ -152,6 +155,12 @@ class ServiceOut(BaseModel):
     oil_changer: str | None
     photo_ref: str | None
     created_at: datetime
+
+    @computed_field(description="Task 9.5a: odometer of the next oil change = odometer_km + OIL_INTERVAL_KM "
+                                "(default 15000); null without odometer_km (mine trucks: engine hours only)")
+    @property
+    def target_km(self) -> int | None:
+        return None if self.odometer_km is None else self.odometer_km + oil_interval_km()
 
 
 class ServiceCreated(BaseModel):

@@ -1,8 +1,9 @@
 """Vehicle card (task 5.3, DESIGN v5 / T9 mockup), fresh from GET /vehicles/{id}.
 
-Order: big plate + grey segment chip («Байнгын · 3 удаа»), one line company · model, tinted
-status block (dot + word, «5 хоног хоцорсон», «Солих ёстой байсан: …», method note), fact rows
-(last change, oil, destination, driver), «Түүх» timeline, primary «Үйлчилгээ бүртгэх».
+Order: big plate + grey segment chip («Байнгын · 3 удаа»), one line company · model, blue target
+block («Дараагийн тос солилт · 165 000 км», task 9.5a — replaces the predicted-date block; none for
+mine trucks), fact rows (last change, oil, [destination], driver), «Түүх» timeline, primary
+«Үйлчилгээ бүртгэх».
 """
 
 import html
@@ -29,7 +30,7 @@ if card:
                      large=True)
     facts = [(card.get("company") or {}).get("name"), card.get("vehicle_model")]
     common.html_block(f'<div class="line">{html.escape(" · ".join(f for f in facts if f))}</div>')
-    common.render_prediction(card.get("prediction"))
+    common.render_target(card)
     common.render_tiles(card)
     common.render_history(card.get("history") or [])
     if st.button("Үйлчилгээ бүртгэх", type="primary", width="stretch", key="btn_record_service",

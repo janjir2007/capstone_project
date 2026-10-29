@@ -81,7 +81,7 @@ NOT_GIVEN = "—"
 # Known English API validation messages -> Mongolian (substring match).
 API_MESSAGES_MN: dict[str, str] = {
     "odometer_km or engine_hours": "Гүйлт (км) эсвэл моторын цагийн аль нэгийг оруулна уу.",
-    "exactly one of destination_id or destination_raw": "Очих газраа сонгоно уу.",
+    "at most one of destination_id or destination_raw": "Очих газрыг нэг л удаа сонгоно уу.",
     "route is required": "Жагсаалтад байхгүй газарт маршрутын төрөл сонгоно уу.",
     "phone must be 8 digits": "Утасны дугаар 8 оронтой байх ёстой.",
     "company_name is required": "Компанийн нэр (эсвэл эзэмшигч) заавал оруулна.",
@@ -139,6 +139,34 @@ def service_meter_text(service: dict) -> str:
     if service.get("engine_hours") is not None:
         parts.append(format_number(service["engine_hours"], "мц"))
     return " · ".join(parts) or NOT_GIVEN
+
+
+def target_text(service: dict | None) -> str:
+    """Task 9.5a: next oil change odometer of one service ('165 000 км'), from the API's target_km
+    (odometer + OIL_INTERVAL_KM). '—' for mine trucks (engine hours only) or no service."""
+    return format_number((service or {}).get("target_km"), "км")
+
+
+def last_odometer(card: dict | None) -> int | None:
+    """Newest odometer reading of a truck (history is newest first); skips engine-hours-only services."""
+    for service in (card or {}).get("history") or []:
+        if service.get("odometer_km") is not None:
+            return int(service["odometer_km"])
+    return None
+
+
+def odometer_warning(new_km: float | int | None, last_km: int | None) -> str | None:
+    """Task 9.5a: warning when the new odometer is NOT higher than the last one (typo, or a replaced
+    meter). Only a warning: the oil changer may still save. None when fine or nothing to compare."""
+    if new_km is None or last_km is None or new_km > last_km:
+        return None
+    return (f"Гүйлт өмнөхөөсөө ({format_number(last_km, 'км')}) их байх ёстой. "
+            "Зөв эсэхийг шалгана уу.")
+
+
+def odometer_question(new_km: float | int, last_km: int) -> str:
+    """The question above «Ингээд хадгалах»: both numbers, so a missing digit is easy to see."""
+    return f"Гүйлт зөв үү? Өмнөх: {format_number(last_km, 'км')} · одоо: {format_number(new_km, 'км')}"
 
 
 def oil_pair_text(last_service: dict | None, usual_liters: float | None) -> str:
@@ -348,17 +376,6 @@ def arrival_view(prediction: dict | None) -> dict[str, str] | None:
             "date": month_day_text(prediction.get("predicted_date"))}
 
 
-def destination_change_note(last_service: dict | None, chosen_id: int | None) -> str | None:
-    """'Өмнө нь Замын-Үүд байсан → шинэ чиглэлээр дахин таамаглана' when the chosen
-    destination differs from the last service's; None otherwise (or nothing to compare)."""
-    if not last_service or chosen_id is None:
-        return None
-    before = (last_service.get("destination") or {}).get("id")
-    if before is None or before == chosen_id:
-        return None
-    return f"Өмнө нь {service_destination_text(last_service)} байсан → шинэ чиглэлээр дахин таамаглана"
-
-
 def reminder_counts(reminders: list[dict]) -> dict[str, int]:
     """Home / «Сануулга» numbers: to send today («Илгээх» group), overdue, at risk."""
     to_send, at_risk = split_reminders(reminders)
@@ -387,17 +404,14 @@ def search_summary(query: str, total: int, shown: int, filtered: bool = False) -
     return f"{head} (эхний {shown} харагдаж байна)" if shown < total else head
 
 
-def row_status_text(row: dict) -> str:
-    """Status word of a search row: prediction status, else the segment word, else '—'."""
-    if row.get("status") in PREDICTION_STATUS_LABELS:
-        return PREDICTION_STATUS_LABELS[row["status"]]
-    return segment_label(row.get("segment"))
+TARGET_COLUMN = "Дараагийн солилт (км)"  # 9.5a: table + Excel
 
 
 def search_table_rows(vehicles: list[dict]) -> list[dict[str, Any]]:
     """GET /vehicles/search rows -> table rows with Mongolian column names (computer view).
 
     Numbers stay numbers (sortable); missing values are None (an empty cell), not '—'.
+    9.5a: «Дараагийн солилт (км)» (target km of the last service) replaces the prediction status.
     """
     rows = []
     for v in vehicles:
@@ -407,12 +421,12 @@ def search_table_rows(vehicles: list[dict]) -> list[dict[str, Any]]:
             "Компани": (v.get("company") or {}).get("name"),
             "Сүүлд солисон": last.get("service_date"),
             "Гүйлт (км)": last.get("odometer_km"),
+            TARGET_COLUMN: last.get("target_km"),
             "Тос": last.get("oil_grade"),
             "Литр": last.get("liters"),
             "Жолооч": last.get("driver_name"),
             "Утас": phone_text(last.get("driver_phone")) or None,
             "Удаа": v.get("service_count"),
-            "Төлөв": row_status_text(v),
         })
     return rows
 
@@ -448,7 +462,7 @@ def filters_text(query: str, filters: dict[str, Any], company_names: dict[int, s
 
 
 EXPORT_COLUMNS = ("Огноо", "Дугаар", "Компани", "Маршрут", "Тос", "Литр", "Гүйлт (км)", "Моторын цаг",
-                  "Жолооч", "Утас")
+                  TARGET_COLUMN, "Жолооч", "Утас")
 
 
 def service_export_rows(vehicles: list[dict]) -> list[dict[str, Any]]:
@@ -465,6 +479,7 @@ def service_export_rows(vehicles: list[dict]) -> list[dict[str, Any]]:
                 "Тос": s.get("oil_grade"),
                 "Литр": s.get("liters"),
                 "Гүйлт (км)": s.get("odometer_km"),
+                TARGET_COLUMN: s.get("target_km"),  # 9.5a: this service's odometer + OIL_INTERVAL_KM
                 "Моторын цаг": s.get("engine_hours"),  # 9.1c: mine trucks record hours, not km (D-006)
                 "Жолооч": s.get("driver_name"),
                 "Утас": phone_text(s.get("driver_phone")) or None,
@@ -474,7 +489,7 @@ def service_export_rows(vehicles: list[dict]) -> list[dict[str, Any]]:
     return rows
 
 
-HISTORY_COLUMNS = ("Огноо", "Гүйлт", "Тос", "Литр", "Жолооч", "Утас")
+HISTORY_COLUMNS = ("Огноо", "Гүйлт", "Дараагийн", "Тос", "Литр", "Жолооч", "Утас")
 
 
 def history_table_rows(history: list[dict]) -> list[tuple[str, ...]]:
@@ -483,6 +498,7 @@ def history_table_rows(history: list[dict]) -> list[tuple[str, ...]]:
         (
             s.get("service_date") or NOT_GIVEN,
             service_meter_text(s),
+            target_text(s),
             s.get("oil_grade") or NOT_GIVEN,
             format_number(s.get("liters"), "л"),
             s.get("driver_name") or NOT_GIVEN,
@@ -559,23 +575,9 @@ FORM_FIELDS = (
     "engine_hours",
     "oil_grade",
     "liters",
-    "destination_id",
-    "destination_raw",
-    "route",
     "driver_name",
     "driver_phone",
-)
-OTHER_DESTINATION = -1  # sentinel option: "not in the list" -> free text + route
-
-
-def picker_destinations(destinations: list[dict]) -> list[dict]:
-    """Destinations to offer as pills: every list row EXCEPT one labelled like the «Бусад» option.
-
-    Migration 004 gave 'Other / several / unknown' the label «Бусад», the same text as the form's
-    own «Бусад» (OTHER_DESTINATION -> place name + route, D-039), so the form showed two «Бусад»
-    pills (task 7.2). The form's option asks for more (the place), so the list row is hidden.
-    """
-    return [d for d in destinations if destination_label(d) != OTHER_CHOICE]
+)  # 9.5a: no destination / route (the DB columns and old values stay)
 
 
 def empty_form() -> dict[str, Any]:
@@ -587,8 +589,7 @@ def prefill_from_card(card: dict | None) -> dict[str, Any]:
     """Form values for an existing vehicle, from its last service.
 
     Pre-filled: oil grade, liters, driver, phone (scope §1). Liters fall back to
-    usual_liters. NOT pre-filled (always fresh, D-033): odometer, engine hours,
-    destination. Company / model are shown but ignored by the API for an
+    usual_liters. NOT pre-filled (always fresh): odometer, engine hours. Company / model are shown but ignored by the API for an
     existing plate vehicle.
     """
     form = empty_form()
@@ -650,9 +651,6 @@ def build_service_payload(
     liters = form.get("liters")
     odometer = form.get("odometer_km")
     hours = form.get("engine_hours")
-    dest_id = form.get("destination_id")
-    dest_raw = _clean(form.get("destination_raw"))
-    route = form.get("route")
 
     if not identifier:
         errors.append("Улсын дугаар эсвэл парк дугаараа оруулна уу.")
@@ -665,13 +663,6 @@ def build_service_payload(
         errors.append("Тосны төрөл оруулна уу.")
     if liters is None or liters <= 0:
         errors.append("Литр 0-ээс их байх ёстой.")
-    if dest_id is None:
-        errors.append("Дараа нь хаашаа явахыг сонгоно уу.")
-    elif dest_id == OTHER_DESTINATION:
-        if not dest_raw:
-            errors.append("Очих газрын нэрийг бичнэ үү.")
-        if not route:
-            errors.append("Маршрутын төрөл сонгоно уу.")
 
     payload: dict[str, Any] = {
         "identifier_type": identifier_type,
@@ -687,11 +678,6 @@ def build_service_payload(
         payload["odometer_km"] = int(odometer)
     if hours is not None:
         payload["engine_hours"] = round(float(hours), 1)
-    if dest_id == OTHER_DESTINATION:
-        payload["destination_raw"] = dest_raw
-        payload["route"] = route
-    elif dest_id is not None:
-        payload["destination_id"] = int(dest_id)
     for name in ("driver_name", "driver_phone"):
         if _clean(form.get(name)):
             payload[name] = _clean(form.get(name))

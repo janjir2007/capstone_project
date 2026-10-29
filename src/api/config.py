@@ -98,6 +98,26 @@ class Contact:
     is_placeholder: bool
 
 
+# Task 9.5a: target km of the next oil change = odometer at the last change + this interval.
+# 15,000 km = the recommended interval in Mongolia (D-030). Mine trucks (engine hours only) get none.
+DEFAULT_OIL_INTERVAL_KM = 15000
+
+
+def oil_interval_km(env: Mapping[str, str] | None = None) -> int:
+    """OIL_INTERVAL_KM from the environment (default 15000). Not a whole number > 0 -> ConfigError."""
+    env = os.environ if env is None else env
+    raw = env.get("OIL_INTERVAL_KM", "").strip()
+    if not raw:
+        return DEFAULT_OIL_INTERVAL_KM
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 0
+    if value <= 0:
+        raise ConfigError(f"OIL_INTERVAL_KM must be a whole number of km > 0, got {raw!r}")
+    return value
+
+
 def reminder_contact(env: Mapping[str, str] | None = None) -> Contact:
     """GEO_EXPERT_NAME / GEO_EXPERT_PHONE from the environment (needs no database settings)."""
     env = os.environ if env is None else env

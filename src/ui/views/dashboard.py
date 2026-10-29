@@ -6,7 +6,10 @@
 - Search the database: any part of a plate, fleet number, company or driver phone
   (GET /vehicles/search, blank = every truck, newest service first). Results: a table on a
   computer (click a row), tappable cards on a phone.
-- Selected truck: every service (date, odometer, oil, liters, driver, phone) from GET /vehicles/{id};
+- 9.5a: target km of the next change (odometer at the last change + OIL_INTERVAL_KM, from the API)
+  instead of the prediction status: a table column, the phone cards' second line, a history column
+  and an Excel column. Mine trucks (engine hours only) have none («—» / empty cell).
+- Selected truck: every service (date, odometer, target, oil, liters, driver, phone) from GET /vehicles/{id};
   beside the table on a computer, in place of the cards on a phone («Хаах» = back to the list).
 - Filters (step 2): date range, company, route, oil grade, sent with the search. «Excel татах»
   downloads one row per matching service (src/ui/export.py, built in memory, nothing stored).
@@ -62,7 +65,10 @@ WIDE_CSS = f"""
 .hist {{width: 100%; border-collapse: collapse; font-size: 13px;}}
 .hist th {{text-align: left; font-size: 12px; color: var(--muted); font-weight: 600; padding: 0 12px 8px 0;
   border-bottom: 1px solid var(--line); white-space: nowrap;}}
-.hist td {{padding: 10px 12px 10px 0; border-bottom: 1px solid var(--line); vertical-align: top; white-space: nowrap;}}
+.hist td {{padding: 10px 12px 10px 0; border-bottom: 1px solid var(--line); vertical-align: top;}}
+/* 9.5a: numbers, dates and the phone stay on one line; oil and driver name may wrap, so the whole
+   phone is visible in the narrow panel beside the table */
+.hist td.n, .hist .ph {{white-space: nowrap;}}
 .hist tr:last-child td {{border-bottom: none;}}
 .hist td.n, .hist .ph {{font-variant-numeric: tabular-nums;}}
 .hist .ph {{color: var(--muted); margin-top: 2px;}}
@@ -165,25 +171,27 @@ def results_table(vehicles: list[dict], search_key: str) -> None:
             logic.search_table_rows(vehicles), key=key, on_select=partial(on_table_select, key),  # no args= here
             selection_mode="single-row", hide_index=True, width="stretch", row_height=ROW_PX,
             height=min(ROW_PX * (len(vehicles) + 1) + 3, 16 * ROW_PX),  # header + rows; scrolls after 15 rows
+            placeholder=logic.NOT_GIVEN,  # 9.5a: an empty cell shows «—», not "None" (mine trucks have no km)
             column_config={
                 "Гүйлт (км)": st.column_config.NumberColumn(format="localized"),
+                logic.TARGET_COLUMN: st.column_config.NumberColumn(format="localized"),
                 "Литр": st.column_config.NumberColumn(format="%.1f"),
             },
         )
 
 
 def results_cards(vehicles: list[dict]) -> None:
-    """Phone view: one tappable row per truck (plate · company · status, then last service)."""
+    """Phone view: one tappable row per truck (plate · company, then target km · last service)."""
     with st.container(key="grp_dash_cards"):
         for v in vehicles[:PHONE_CARDS_MAX]:
             last = v.get("last_service") or {}
-            sub = " · ".join(p for p in (last.get("service_date"), logic.driver_text(
+            target = f"Дараагийн: {logic.target_text(last)}" if last.get("target_km") is not None else None
+            sub = " · ".join(p for p in (target, last.get("service_date"), logic.driver_text(
                 last.get("driver_name"), last.get("driver_phone"))) if p and p != logic.NOT_GIVEN)
             with st.container(key=f"act_dash_{v['id']}"):
                 common.html_block(
                     f'<div class="vrow"><span class="plate">{html.escape(v["identifier"])}</span>'
-                    f'<span class="co">{html.escape((v.get("company") or {}).get("name", ""))}</span>'
-                    f'{common.status_html(v.get("status"))}</div>'
+                    f'<span class="co">{html.escape((v.get("company") or {}).get("name", ""))}</span></div>'
                     f'<div class="act-s">{html.escape(sub or logic.NOT_GIVEN)}</div>'
                 )
                 st.button(f"{v['identifier']} · түүх", key=f"dash_open_{v['id']}", width="stretch",
@@ -209,15 +217,16 @@ def history_panel(vehicle_id: int) -> None:
         if not history:
             common.html_block('<span class="muted">Түүх алга.</span>')
             return
-        # 6 values in 4 cells so the panel fits beside the table: «Тос» = grade · liters,
-        # «Жолооч» = name with the phone under it.
-        head = "".join(f"<th>{c}</th>" for c in ("Огноо", "Гүйлт", "Тос", "Жолооч"))
+        # 7 values in 4 cells so the panel fits beside the table: «Гүйлт» = odometer with the target
+        # under it (9.5a), «Тос» = grade · liters, «Жолооч» = name with the phone under it.
+        head = "".join(f"<th>{c}</th>" for c in ("Огноо", "Гүйлт → дараагийн", "Тос", "Жолооч"))
         body = "".join(
             f'<tr><td data-l="Огноо" class="n">{html.escape(day)}</td>'
-            f'<td data-l="Гүйлт" class="n">{html.escape(meter)}</td>'
+            f'<td data-l="Гүйлт → дараагийн" class="n">{html.escape(meter)}'
+            f'{"" if target == logic.NOT_GIVEN else f"<div class=ph>→ {html.escape(target)}</div>"}</td>'
             f'<td data-l="Тос">{html.escape(oil)} · {html.escape(liters)}</td>'
             f'<td data-l="Жолооч">{html.escape(driver)}<div class="ph">{html.escape(phone)}</div></td></tr>'
-            for day, meter, oil, liters, driver, phone in logic.history_table_rows(history)
+            for day, meter, target, oil, liters, driver, phone in logic.history_table_rows(history)
         )
         common.html_block(f'<div class="hist-wrap"><table class="hist"><thead><tr>{head}</tr></thead>'
                           f'<tbody>{body}</tbody></table></div>')

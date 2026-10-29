@@ -18,7 +18,7 @@ other's writes and the dev database is never changed. "Today" is frozen at
 
 import uuid
 from collections.abc import Iterator
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -31,12 +31,12 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from src.api.clock import get_today
-from src.api.config import to_sqlalchemy_url
+from src.api.config import DEFAULT_OIL_INTERVAL_KM, ConfigError, oil_interval_km, to_sqlalchemy_url
 from src.api.db import create_db_engine, database_is_up, get_session
 from src.api.main import create_app
 from src.api.matching import clean_company_name, company_key, fleet_no_key, phone_part_key, search_matches
 from src.api.routers.vehicles import usual_liters
-from src.api.schemas import ServiceCreate, normalize_phone
+from src.api.schemas import ServiceCreate, ServiceOut, normalize_phone
 from tests.test_schema import database_url
 
 SQL_DIR = Path(__file__).resolve().parent.parent / "src" / "data"
@@ -102,10 +102,8 @@ def test_valid_body_accepted_and_cleaned() -> None:
     ("overrides", "message"),
     [
         ({"odometer_km": None}, "odometer_km or engine_hours"),
-        ({"destination_raw": None}, "exactly one of destination_id or destination_raw"),
-        ({"destination_id": 2}, "exactly one of destination_id or destination_raw"),
+        ({"destination_id": 2}, "at most one of destination_id or destination_raw"),
         ({"route": None}, "route is required"),                  # D-039: free text -> route required
-        ({"destination_raw": "   ", "destination_id": None}, "exactly one"),  # blank text = not given
         ({"driver_phone": "12345"}, "8 digits"),
         ({"liters": 0}, "greater than 0"),
         ({"liters": 30.25}, "decimal place"),                     # NUMERIC(5,1)
@@ -118,6 +116,46 @@ def test_valid_body_accepted_and_cleaned() -> None:
 def test_invalid_body_rejected(overrides: dict[str, Any], message: str) -> None:
     with pytest.raises(ValidationError, match=message):
         ServiceCreate.model_validate(service_body(**overrides))
+
+
+@pytest.mark.parametrize("overrides", [{"destination_raw": None, "route": None},
+                                       {"destination_raw": "   ", "route": None}])  # blank text = not given
+def test_destination_is_optional(overrides: dict[str, Any]) -> None:
+    """Task 9.5a: the form no longer asks where the truck goes next."""
+    body = ServiceCreate.model_validate(service_body(**overrides))
+    assert (body.destination_id, body.destination_raw, body.route) == (None, None, None)
+
+
+def _service_out(**fields: Any) -> ServiceOut:
+    base = {"id": 1, "vehicle_id": 1, "service_date": date(2026, 10, 1), "odometer_km": 150000,
+            "engine_hours": None, "oil_grade": "15W-40", "liters": 30.0, "route": None, "destination": None,
+            "destination_raw": None, "driver_name": None, "driver_phone": None, "oil_changer": None,
+            "photo_ref": None, "created_at": datetime(2026, 10, 1, 9, 0, tzinfo=timezone.utc)}
+    return ServiceOut.model_validate({**base, **fields})
+
+
+def test_target_km_is_odometer_plus_interval(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Task 9.5a: target = odometer at this change + OIL_INTERVAL_KM (default 15000), in the JSON too."""
+    monkeypatch.delenv("OIL_INTERVAL_KM", raising=False)
+    assert _service_out().model_dump()["target_km"] == 165000
+    monkeypatch.setenv("OIL_INTERVAL_KM", "12000")
+    assert _service_out().target_km == 162000
+
+
+def test_target_km_none_for_engine_hours_only() -> None:
+    """Mine trucks: no odometer -> no target."""
+    assert _service_out(odometer_km=None, engine_hours=12980.5).target_km is None
+
+
+@pytest.mark.parametrize("raw", ["0", "-5", "abc", "15000.5"])
+def test_oil_interval_km_rejects_bad_values(raw: str) -> None:
+    with pytest.raises(ConfigError, match="OIL_INTERVAL_KM"):
+        oil_interval_km({"OIL_INTERVAL_KM": raw})
+
+
+def test_oil_interval_km_default_and_value() -> None:
+    assert oil_interval_km({}) == DEFAULT_OIL_INTERVAL_KM == 15000
+    assert oil_interval_km({"OIL_INTERVAL_KM": " 10000 "}) == 10000
 
 
 def test_engine_hours_alone_is_enough() -> None:
@@ -432,6 +470,8 @@ def test_vehicle_card_fields(client: TestClient) -> None:
     assert card["prediction"] is None    # model not loaded in this fixture (4.3 tests: test_serving.py)
     assert [s["service_date"] for s in card["history"]] == ["2026-08-10", "2026-05-20", "2026-03-05"]
     assert card["last_service"] == card["history"][0]
+    for service in card["history"]:  # 9.5a: every service carries its target km
+        assert service["target_km"] == service["odometer_km"] + 15000
 
 
 @pytest.mark.parametrize(
@@ -448,6 +488,7 @@ def test_vehicle_card_fleet_truck_engine_hours(client: TestClient) -> None:
     assert (card["identifier_type"], card["plate_normalized"]) == ("fleet_no", None)
     assert card["last_service"]["engine_hours"] == 12980.5
     assert card["last_service"]["odometer_km"] is None
+    assert card["last_service"]["target_km"] is None  # 9.5a: no target for mine trucks
 
 
 def test_vehicle_card_unknown_id_404(client: TestClient) -> None:
@@ -525,6 +566,19 @@ def test_new_plate_without_company_is_422_and_saves_nothing(client: TestClient, 
     assert response.status_code == 422
     assert "company_name" in response.json()["detail"]
     assert (count(pg, "service_records"), count(pg, "vehicles")) == before
+
+
+def test_service_without_destination_saved(client: TestClient, pg: Connection) -> None:
+    """Task 9.5a: no destination -> saved with route/destination empty; old rows untouched."""
+    with_destination = text("SELECT count(*) FROM service_records "
+                            "WHERE destination_id IS NOT NULL OR destination_raw IS NOT NULL")
+    before = pg.execute(with_destination).scalar_one()
+    response = client.post("/services", json=service_body(destination_raw=None, route=None))
+    assert response.status_code == 201
+    service = response.json()["service"]
+    assert (service["route"], service["destination"], service["destination_raw"]) == (None, None, None)
+    assert service["target_km"] == 120000 + 15000
+    assert pg.execute(with_destination).scalar_one() == before
 
 
 def test_destination_raw_keeps_route_given(client: TestClient) -> None:

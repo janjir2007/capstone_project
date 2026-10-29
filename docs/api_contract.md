@@ -19,6 +19,7 @@
 | `id`, `vehicle_id` | int | |
 | `service_date` | date `YYYY-MM-DD` | |
 | `odometer_km` | int \| null | |
+| `target_km` | int \| null | v0.12 (task 9.5a): odometer of the next oil change = `odometer_km` + `OIL_INTERVAL_KM` (API setting, default 15000, D-030). Null without `odometer_km` (mine trucks: engine hours only). Computed, not stored |
 | `engine_hours` | number \| null | |
 | `oil_grade` | string | |
 | `liters` | number | |
@@ -156,8 +157,8 @@ Body:
 | `odometer_km` / `engine_hours` | **at least one** | ≥ 0; hours 1 decimal |
 | `oil_grade` | **yes** | not blank |
 | `liters` | **yes** | > 0, 1 decimal |
-| `destination_id` / `destination_raw` | **exactly one** | D-033 |
-| `route` | with `destination_raw`: **yes** · with `destination_id`: no | D-039: with `destination_id` the route is taken from the destination; a different route → 422 |
+| `destination_id` / `destination_raw` | no — **at most one** (v0.12, task 9.5a: was exactly one, D-033) | the app's form no longer asks; old records keep theirs. No destination → prediction falls back to `b0` (`unknown_destination`) |
+| `route` | with `destination_raw`: **yes** · otherwise no | D-039: with `destination_id` the route is taken from the destination; a different route → 422 |
 | `driver_name`, `oil_changer`, `photo_ref` | no | blank → null |
 | `driver_phone` | no | normalized to 8 digits; invalid → 422 |
 
@@ -244,3 +245,4 @@ model version, predicted date and send day (`reminders_sent`, migration 003). No
 | 0.9 | 2026-10-17 | Task 2.9: `range_low_date`, `range_high_date` added to Prediction (card + `GET /vehicles/{id}/prediction`; additive, nullable). `serving_params.json` gains `ranges` |
 | 0.10 | 2026-10-27 | Task 9.1: `GET /vehicles/search` (dashboard search, read only; additive — no existing field changed) |
 | 0.11 | 2026-10-28 | Task 9.1 step 2: search filters `date_from`, `date_to`, `company_id`, `route`, `oil_grade` + `options` in the answer; `with_services=true` adds each row's matching `services` (additive) |
+| 0.12 | 2026-10-29 | Task 9.5a: `target_km` added to ServiceOut (additive, everywhere a service appears: card `last_service` / `history`, search rows, `POST /services` answer); `POST /services` destination optional (at most one of `destination_id` / `destination_raw`). New API setting `OIL_INTERVAL_KM` (default 15000; not a whole number > 0 → the API does not start) |

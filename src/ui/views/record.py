@@ -11,14 +11,16 @@ Steps (st.session_state["rec_step"]):
   машин бэ?» -> «Зөв, үргэлжлүүлэх». A plate goes straight to the form (T9: the form header
   shows the plate + «Бүртгэлтэй / Шинэ машин» + «Буруу»/«Засах» back to typing).
 - form, two layouts (mockup):
-  * «Машин танигдлаа» — an EXISTING truck read from a photo: plate strip, truck line, arrival
-    block (how this visit compares with the last prediction), «Өмнөх удаа», then odometer +
-    destination pills (always fresh, D-033) and oil/driver rows from the last service with
-    «Тос, жолооч өөрчлөх».
+  * «Машин танигдлаа» — an EXISTING truck read from a photo: plate strip, truck line,
+    «Өмнөх удаа» + «Дараагийн солилт» (target km, 9.5a), then odometer and oil/driver rows from
+    the last service with «Тос, жолооч өөрчлөх».
   * «Үйлчилгээ бүртгэх» — everything else (typed plate, from the card/search, new truck): header
     card, [new truck: company only for fleet numbers (T8, D-042) + model], «Энэ удаа» = odometer,
-    destination pills («Бусад» -> text + route, D-039), oil grade (15W-40 · 10W-40 · 20W-50 ·
-    «Бусад»; default = last service, else 15W-40), liters stepper; «Жолооч» = name + phone.
+    oil grade (15W-40 · 10W-40 · 20W-50 · «Бусад»; default = last service, else 15W-40), liters
+    stepper; «Жолооч» = name + phone.
+  9.5a: no destination question any more (the DB columns and old values stay). Odometer not higher
+  than the last one -> orange note under the field and, on «Хадгалах», «Гүйлт зөв үү?» with
+  «Ингээд хадгалах» / «Гүйлтээ засах» (a warning, not a block: meters do get replaced).
   «Хадгалах» -> POST /services; 409 duplicate -> «Ингээд хадгалах» (force=true).
 - success: «Хадгалагдлаа» -> «Дараагийн машин» / «Машины карт үзэх».
 
@@ -73,7 +75,7 @@ def _form_values() -> dict:
 
 def _reset() -> None:
     """Forget the current truck (and its photo); start again at the camera."""
-    for key in ("rec_checked", "rec_choice", "rec_dup", "rec_saved", "rec_manual", "rec_photo", "rec_photo_name",
+    for key in ("rec_checked", "rec_choice", "rec_dup", "rec_odo", "rec_saved", "rec_manual", "rec_photo", "rec_photo_name",
                 "rec_box", "rec_recognized", "rec_read", "rec_read_plate", "rec_photo_size", "rec_photo_error"):
         st.session_state.pop(key, None)
     st.session_state["rec_type"] = "plate"
@@ -97,6 +99,7 @@ def _set_checked(identifier_type: str, identifier: str, matches: list[dict]) -> 
                                        "matches": matches}
     st.session_state["rec_choice"] = 0 if matches else NEW_VEHICLE
     st.session_state.pop("rec_dup", None)
+    st.session_state.pop("rec_odo", None)
 
 
 def _lookup(identifier_type: str, identifier: str, from_photo: bool = False) -> None:
@@ -217,7 +220,10 @@ def _send(payload: dict, force: bool) -> None:
     _goto("success")
 
 
-def on_save() -> None:
+def on_save(odometer_checked: bool = False) -> None:
+    """«Хадгалах»: check the form, then POST. odometer_checked=True = «Ингээд хадгалах» after the
+    odometer warning (the form is read again, so an edit made meanwhile is what gets saved)."""
+    st.session_state.pop("rec_odo", None)
     checked = st.session_state.get("rec_checked") or {}
     card = _selected_card()
     form = _form_values()
@@ -233,7 +239,16 @@ def on_save() -> None:
         for message in errors:
             _say("error", message)
         return
+    last_km = logic.last_odometer(card)
+    if not odometer_checked and logic.odometer_warning(form.get("odometer_km"), last_km):
+        # ask first (_save_buttons); nothing sent yet
+        st.session_state["rec_odo"] = logic.odometer_question(form["odometer_km"], last_km)
+        return
     _send(payload, force=False)
+
+
+def on_cancel_odo() -> None:
+    st.session_state.pop("rec_odo", None)
 
 
 def on_force() -> None:
@@ -277,37 +292,17 @@ checked = st.session_state.get("rec_checked")
 
 # --- form parts (shared widget keys, so both layouts save the same way) ------------------
 
-def _meter_inputs(is_fleet: bool, last: dict, label: str, show_prev: bool) -> None:
+def _meter_inputs(is_fleet: bool, card: dict | None, label: str, show_prev: bool) -> None:
+    last = (card or {}).get("last_service") or {}
     st.number_input(label, min_value=0, step=1000, key="f_odometer_km", placeholder="Одоогийн км")
     if show_prev and last.get("odometer_km") is not None:
         common.html_block(f'<div class="sub-note">Өмнөх: {logic.format_number(last["odometer_km"], "км")}</div>')
+    warning = logic.odometer_warning(st.session_state.get("f_odometer_km"), logic.last_odometer(card))
+    if warning:  # 9.5a: shown while typing; «Хадгалах» asks again before saving
+        common.html_block(f'<div class="warn-note">{html.escape(warning)}</div>')
     if is_fleet or last.get("engine_hours") is not None:
         st.number_input("Моторын цаг", min_value=0.0, step=0.1, format="%.1f", key="f_engine_hours",
                         placeholder="мото цаг")
-
-
-def _destination_inputs(label: str, last: dict) -> None:
-    """Destination pills (GET /destinations) + «Бусад» -> place + route; note when it changed."""
-    try:
-        destinations = common.cached_destinations()
-    except api_client.ApiError:
-        destinations = []
-        st.warning("Газрын жагсаалт ачаалагдсангүй — «Бусад» сонгож бичнэ үү.")
-    dest_by_id = {d["id"]: d for d in logic.picker_destinations(destinations)}
-    st.pills(
-        label,
-        options=list(dest_by_id) + [logic.OTHER_DESTINATION],
-        format_func=lambda i: logic.OTHER_CHOICE if i == logic.OTHER_DESTINATION
-        else logic.destination_label(dest_by_id[i]),
-        key="f_destination_id",
-    )
-    chosen = st.session_state.get("f_destination_id")
-    if chosen == logic.OTHER_DESTINATION:
-        st.text_input("Газрын нэр", key="f_destination_raw")
-        st.pills("Маршрут", options=list(logic.ROUTE_LABELS), format_func=logic.ROUTE_LABELS.get, key="f_route")
-    note = logic.destination_change_note(last, chosen)
-    if note:
-        common.html_block(f'<div class="warn-note">{html.escape(note)}</div>')
 
 
 def _oil_inputs() -> None:
@@ -334,7 +329,13 @@ def _driver_inputs() -> None:
 
 def _save_buttons() -> None:
     dup = st.session_state.get("rec_dup")
-    if dup:
+    odo = st.session_state.get("rec_odo")
+    if odo:
+        st.warning(odo)
+        st.button("Ингээд хадгалах", key="btn_save_odo", on_click=on_save, args=(True,), type="primary",
+                  width="stretch")
+        st.button("Гүйлтээ засах", key="btn_odo_fix", on_click=on_cancel_odo, width="stretch")
+    elif dup:
         ref = f" (№{dup['existing_id']})" if dup.get("existing_id") else ""
         st.warning(f"Энэ машинд өнөөдөр үйлчилгээ аль хэдийн бүртгэгдсэн байна{ref}. Дахин хадгалах уу?")
         st.button("Ингээд хадгалах", key="btn_save_force", on_click=on_force, type="primary", width="stretch")
@@ -359,13 +360,14 @@ def form_recognized(card: dict, checked: dict) -> None:
                 f'<div class="vh-sub" style="color:#4B5563">{common._dot(logic.SEGMENT_DOTS.get(seg))}'
                 f'{html.escape(sub)}</div></div>')
             st.button("Буруу", key="btn_wrong", on_click=on_wrong, type="tertiary")
-        common.render_arrival(card.get("prediction"))
-        common.html_block(common.kv_rows([("Өмнөх удаа", logic.prev_visit_text(last))], "sm"))
+        rows = [("Өмнөх удаа", logic.prev_visit_text(last))]
+        if last.get("target_km") is not None:  # 9.5a: target km instead of the predicted date; none for mine trucks
+            rows.append(("Дараагийн солилт", logic.target_text(last)))
+        common.html_block(common.kv_rows(rows, "sm"))
 
-    common.section("Энэ удаагийн мэдээлэл", hint="Чиглэл өөрчлөгдвөл таамаглал шинээр бодогдоно.")
+    common.section("Энэ удаагийн мэдээлэл")
     with st.container(key="card_fresh"):
-        _meter_inputs(checked["identifier_type"] == "fleet_no", last, "Одоогийн гүйлт (км)", show_prev=False)
-        _destination_inputs("Одоо хаашаа явах вэ?", last)
+        _meter_inputs(checked["identifier_type"] == "fleet_no", card, "Одоогийн гүйлт (км)", show_prev=False)
         form = _form_values()
         oil = f"{form['oil_grade'] or logic.NOT_GIVEN} · {logic.format_number(form['liters'], 'л')}"
         common.html_block(common.kv_rows([("Тос", oil),
@@ -412,8 +414,7 @@ def form_full(card: dict | None, checked: dict) -> None:
 
     st.subheader("Энэ удаа")
     with st.container(key="card_fresh"):
-        _meter_inputs(is_fleet, last, "Гүйлт (км)", show_prev=True)
-        _destination_inputs("Дараа нь хаашаа явах вэ?", last)
+        _meter_inputs(is_fleet, card, "Гүйлт (км)", show_prev=True)
         _oil_inputs()
         _liters_input(card)
 

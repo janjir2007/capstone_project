@@ -18,7 +18,7 @@ from typing import Any
 from fastapi import FastAPI
 from sqlalchemy import Engine
 
-from src.api.config import load_settings
+from src.api.config import load_settings, oil_interval_km
 from src.api.config import model_dir as model_dir_from_env
 from src.api.db import create_db_engine
 from src.api.prediction import load_predictor
@@ -49,6 +49,7 @@ def create_app(engine: Engine | None = None, model_dir: Path | None = None) -> F
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        oil_interval_km()  # 9.5a: a bad OIL_INTERVAL_KM stops the start here, not every card request
         app.state.engine = engine if engine is not None else create_db_engine(load_settings().database_url)
         folder = model_dir if model_dir is not None else model_dir_from_env()
         app.state.predictor = _load("prediction model", load_predictor, folder)

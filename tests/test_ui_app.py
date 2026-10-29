@@ -71,6 +71,8 @@ class FakeApi:
             "vehicle_id": vehicle_id,
             "service_date": body.get("service_date", TODAY),
             "odometer_km": body.get("odometer_km"),
+            # 9.5a: the API adds odometer + OIL_INTERVAL_KM (default 15000); none without odometer
+            "target_km": None if body.get("odometer_km") is None else body["odometer_km"] + 15000,
             "engine_hours": body.get("engine_hours"),
             "oil_grade": body["oil_grade"],
             "liters": body["liters"],
@@ -284,7 +286,6 @@ def to_form(at: AppTest, plate: str, kind: str = "plate") -> AppTest:
 
 def fill_new_vehicle(at: AppTest, company: str | None = None) -> AppTest:
     at.number_input(key="f_odometer_km").set_value(120000)
-    at.pills(key="f_destination_id").set_value(2)
     if company is not None:  # the field exists only in fleet-number mode (T8)
         at.text_input(key="f_company_name").set_value(company)
     at.selectbox(key="f_model_choice").set_value("Foton Auman")
@@ -411,8 +412,8 @@ def test_new_vehicle_full_flow(fake_api) -> None:
     assert body == {
         "identifier_type": "plate", "identifier": "0001 ТЕС", "oil_grade": "15W-40", "liters": 28.5,
         "company_name": "Тодорхойгүй", "vehicle_model": "Foton Auman", "odometer_km": 120000,
-        "destination_id": 2, "driver_name": "Тест Б.", "driver_phone": "99110099",
-    }
+        "driver_name": "Тест Б.", "driver_phone": "99110099",
+    }  # 9.5a: no destination / route
     assert step(at) == "success"
     assert "Хадгалагдлаа" in html_blocks(at)
     assert {"Дараагийн машин", "Машины карт үзэх"} <= {b.label for b in at.button}
@@ -429,7 +430,8 @@ def test_existing_vehicle_confirm_chip_and_prefill(fake_api) -> None:
     assert "Бүртгэлтэй · 1 удаа ирсэн" in html_blocks(at)
     state = at.session_state
     assert (state["f_oil_choice"], state["f_liters"], state["f_driver_phone"]) == ("10W-40", 32.0, "99110002")
-    assert state["f_odometer_km"] is None and state["f_destination_id"] is None  # D-033 fresh
+    assert state["f_odometer_km"] is None and "f_destination_id" not in state  # fresh; 9.5a: no destination
+    assert not at.pills  # 9.5a: no destination pills
     assert texts(at.subheader) == ["Энэ удаа", "Жолооч"]
     assert "Өмнөх үйлчилгээнээс бөглөгдсөн" in html_blocks(at)
     assert "Өмнөх: 200 000 км" in html_blocks(at)
@@ -466,8 +468,7 @@ def test_existing_vehicle_hides_company_and_model(fake_api) -> None:
     at = to_form(run_app(RECORD), "0002 ТЕС")
     labels = [w.label for w in at.text_input]
     assert "Компани / эзэмшигч" not in labels and not at.selectbox
-    at.number_input(key="f_odometer_km").set_value(215000)
-    at.pills(key="f_destination_id").set_value(1).run()
+    at.number_input(key="f_odometer_km").set_value(215000).run()
     at = click(at, "Хадгалах")
     body, _ = fake_api.posts[-1]
     assert "company_name" not in body and "vehicle_model" not in body and body["oil_grade"] == "10W-40"
@@ -476,7 +477,6 @@ def test_existing_vehicle_hides_company_and_model(fake_api) -> None:
 def test_other_oil_grade_and_other_model_saved_as_typed(fake_api) -> None:
     at = to_form(run_app(RECORD), "0001 ТЕС")
     at.number_input(key="f_odometer_km").set_value(1000)
-    at.pills(key="f_destination_id").set_value(1)
     at.number_input(key="f_liters").set_value(30.0)
     at.segmented_control(key="f_oil_choice").set_value("Бусад")
     at.selectbox(key="f_model_choice").set_value("Бусад").run()
@@ -491,8 +491,7 @@ def test_existing_fleet_truck_sends_its_company(fake_api) -> None:
     """Company is hidden for existing trucks, but a fleet number still needs it (D-042)."""
     fake_api.add_vehicle("HT-12", "Уурхай А ХХК", "fleet_no", oil_grade="15W-40", liters=40.0, engine_hours=1000.0)
     at = to_form(run_app(RECORD), "HT-12", kind="fleet_no")
-    at.number_input(key="f_engine_hours").set_value(1100.0)
-    at.pills(key="f_destination_id").set_value(1).run()
+    at.number_input(key="f_engine_hours").set_value(1100.0).run()
     at = click(at, "Хадгалах")
     body, _ = fake_api.posts[-1]
     assert body["company_name"] == "Уурхай А ХХК" and body["identifier_type"] == "fleet_no"
@@ -531,38 +530,50 @@ def test_empty_form_shows_mongolian_errors_and_sends_nothing(fake_api) -> None:
     assert fake_api.posts == []
 
 
-def test_destination_pills_with_name_mn_and_other(fake_api) -> None:
-    seed_existing(fake_api)
+def test_odometer_lower_than_last_warns_then_saves_on_confirm(fake_api) -> None:
+    """Task 9.5a: a new odometer not higher than the last one -> note under the field, and
+    «Хадгалах» asks first («Гүйлт зөв үү?»); «Ингээд хадгалах» saves it anyway."""
+    seed_existing(fake_api)  # last odometer 200 000 km
     at = to_form(run_app(RECORD), "0002 ТЕС")
-    pills = at.pills(key="f_destination_id")
-    assert pills.options == [  # D-071: name_mn when present, else name (missing / null / "")
-        "Ulaanbaatar city (local work)", "Замын-Үүд", "Altanbulag (MN–RU border)",
-        "Kyakhta (RU side of border)", "Other / several / unknown", "Бусад"]
-    at.number_input(key="f_odometer_km").set_value(215000)
-    pills.set_value(-1).run()
-    at.text_input(key="f_destination_raw").set_value("Сайншанд")
-    at.pills(key="f_route").set_value("mixed").run()
+    at.number_input(key="f_odometer_km").set_value(20000).run()  # a digit missing
+    assert "Гүйлт өмнөхөөсөө (200 000 км) их байх ёстой" in html_blocks(at)
     at = click(at, "Хадгалах")
-    body, _ = fake_api.posts[-1]
-    assert (body["destination_raw"], body["route"]) == ("Сайншанд", "mixed")
-    assert "destination_id" not in body and "company_name" not in body
+    assert "Гүйлт зөв үү? Өмнөх: 200 000 км · одоо: 20 000 км" in texts(at.warning)
+    assert fake_api.posts == []                                    # nothing sent yet
+    at = click(at, "Ингээд хадгалах")
+    assert step(at) == "success" and fake_api.posts[-1][0]["odometer_km"] == 20000
+    assert fake_api.posts[-1][1] is False                          # not a duplicate override
 
 
-def test_only_one_other_pill_after_migration_004(fake_api) -> None:
-    """Task 7.2: with name_mn «Бусад» on the 'Other' row (migration 004) the form shows ONE «Бусад»."""
-    fake_api.destinations = [{**d, "name_mn": "Бусад"} if d["id"] == 7 else d for d in DESTINATIONS]
+def test_odometer_warning_fix_and_save(fake_api) -> None:
+    """«Гүйлтээ засах» closes the question; a corrected (higher) odometer saves with no question."""
     seed_existing(fake_api)
     at = to_form(run_app(RECORD), "0002 ТЕС")
-    labels = at.pills(key="f_destination_id").options
-    assert labels.count("Бусад") == 1 and labels[-1] == "Бусад"
+    at.number_input(key="f_odometer_km").set_value(200000).run()   # equal is not higher
+    at = click(click(at, "Хадгалах"), "Гүйлтээ засах")
+    assert not texts(at.warning) and fake_api.posts == []
+    at.number_input(key="f_odometer_km").set_value(201500).run()
+    assert "их байх ёстой" not in html_blocks(at)
+    at = click(at, "Хадгалах")
+    assert step(at) == "success" and fake_api.posts[-1][0]["odometer_km"] == 201500
+
+
+def test_no_odometer_warning_for_new_or_mine_truck(fake_api) -> None:
+    """Nothing to compare: a new truck, or a mine truck with engine hours only."""
+    fake_api.add_vehicle("HT-12", "Уурхай А ХХК", "fleet_no", service_date="2026-09-01", oil_grade="15W-40",
+                         liters=40.0, engine_hours=1000.0)
+    at = to_form(run_app(RECORD), "HT-12", kind="fleet_no")
+    at.number_input(key="f_engine_hours").set_value(1100.0)
+    at.number_input(key="f_odometer_km").set_value(5).run()
+    at = click(at, "Хадгалах")
+    assert step(at) == "success"
 
 
 def test_duplicate_then_force_save(fake_api) -> None:
     vehicle = seed_existing(fake_api)
     fake_api._add_service(vehicle["id"], {"oil_grade": "10W-40", "liters": 32.0, "odometer_km": 210000})
     at = to_form(run_app(RECORD), "0002 ТЕС")
-    at.number_input(key="f_odometer_km").set_value(210050)
-    at.pills(key="f_destination_id").set_value(1).run()
+    at.number_input(key="f_odometer_km").set_value(210050).run()
     at = click(at, "Хадгалах")
     assert any("аль хэдийн бүртгэгдсэн" in t for t in texts(at.warning))
     count = len(fake_api.services)
@@ -576,8 +587,7 @@ def test_duplicate_cancel(fake_api) -> None:
     vehicle = seed_existing(fake_api)
     fake_api._add_service(vehicle["id"], {"oil_grade": "10W-40", "liters": 32.0, "odometer_km": 210000})
     at = to_form(run_app(RECORD), "0002 ТЕС")
-    at.number_input(key="f_odometer_km").set_value(210050)
-    at.pills(key="f_destination_id").set_value(1).run()
+    at.number_input(key="f_odometer_km").set_value(210050).run()
     at = click(click(at, "Хадгалах"), "Болих")
     assert "Хадгалах" in [b.label for b in at.button]
     assert len(fake_api.posts) == 1
@@ -610,7 +620,7 @@ def test_api_down_shows_message(fake_api) -> None:
 
 def test_photo_recognized_existing_truck(fake_api, phone) -> None:
     """Photo -> 8.4 result (green, plate pre-filled) -> «Үргэлжлүүлэх» -> T9 «Машин танигдлаа»:
-    truck line, arrival block, previous visit, oil/driver rows."""
+    truck line, previous visit + target km (9.5a, instead of the arrival block), oil/driver rows."""
     seed_existing(fake_api)
     fake_api.prediction = PREDICTION
     fake_api.recognize = (200, {**RECOGNIZED, "detection": {"box": [1, 1, 30, 10], "confidence": 0.9}})
@@ -625,15 +635,15 @@ def test_photo_recognized_existing_truck(fake_api, phone) -> None:
     assert step(at) == "form" and texts(at.title) == ["Машин танигдлаа"]
     page = html_blocks(at)
     assert "Шинэ · 1 удаа · Говь Тест ХХК" in page
-    assert "Цагтаа ирсэн" in page and "Таамаглаж байсан огноо: 10-р сарын 21" in page
-    assert "09-01 · 200 000 км · Замын-Үүд" in page                 # «Өмнөх удаа»
+    assert "Цагтаа ирсэн" not in page and "Таамаглаж байсан огноо" not in page  # 9.5a: no predicted date
+    assert "09-01 · 200 000 км · Замын-Үүд" in page                 # «Өмнөх удаа» (old record keeps its place)
+    assert "Дараагийн солилт" in page and "215 000 км" in page     # 9.5a: 200 000 + 15 000
     assert "10W-40 · 32 л" in page and "Жолооч Д. · 9911 0002" in page
     assert at.expander[0].label == "Тос, жолооч өөрчлөх"
-    at.pills(key="f_destination_id").set_value(5).run()
-    assert "Өмнө нь Замын-Үүд байсан → шинэ чиглэлээр дахин таамаглана" in html_blocks(at)
+    assert not at.pills                                            # 9.5a: no destination question
     at.number_input(key="f_odometer_km").set_value(215000)
     at = click(at, "Хадгалах")
-    assert step(at) == "success" and fake_api.posts[-1][0]["destination_id"] == 5
+    assert step(at) == "success" and "destination_id" not in fake_api.posts[-1][0]
     assert "company_name" not in fake_api.posts[-1][0]             # existing plate: no company (T8)
 
 
@@ -786,7 +796,9 @@ def test_single_match_opens_card(fake_api) -> None:
     assert texts(at.title) == ["Машины карт"]
     page = html_blocks(at)
     assert '<span class="plate lg">0002 ТЕС</span>' in page
-    assert "Таамаглал удахгүй нэмэгдэнэ" in page               # prediction null -> grey card
+    assert "Дараагийн тос солилт" in page and "215 000 км" in page  # 9.5a: target = 200 000 + 15 000
+    assert "Сүүлд: 200 000 км · 2026-09-01 · +15 000 км" in page
+    assert "Таамаглал" not in page                              # 9.5a: no prediction block
     assert "Шинэ · 1 удаа</span>" in page                       # grey segment chip next to the plate (T7)
     assert "Говь Тест ХХК" in page                             # one line company · model
     assert "Сүүлд солисон" in page and "10W-40 · ердийн\u00a032\u00a0л" in page  # usual liters back (T8)
@@ -794,13 +806,24 @@ def test_single_match_opens_card(fake_api) -> None:
     assert texts(at.subheader) == ["Түүх"] and '<div class="tl">' in page  # history timeline, open (T9)
 
 
-def test_card_shows_prediction(fake_api) -> None:
+def test_card_shows_target_not_predicted_date(fake_api) -> None:
+    """9.5a: even with a prediction, the card shows the target km, not the predicted date."""
     seed_existing(fake_api)
     fake_api.prediction = PREDICTION
     at = search(run_app(SEARCH), "0002 ТЕС")
-    card = next(t for t in texts(at.markdown) if 'class="pc"' in t)
-    assert "9 хоног" in card and "үлдсэн" in card and "Удахгүй" in card
-    assert "#FFF4E0" in card and "Дараагийн солилт: 10-р сарын 21" in card
+    [card] = [t for t in texts(at.markdown) if 'class="pc"' in t]
+    assert "Дараагийн тос солилт" in card and "215 000 км" in card
+    assert "9 хоног" not in card and "10-р сарын 21" not in card
+
+
+def test_card_mine_truck_has_no_target(fake_api) -> None:
+    """9.5a: engine hours only -> no target block; destination row hidden when the service has none."""
+    fake_api.add_vehicle("HT-12", "Уурхай А ХХК", "fleet_no", oil_grade="15W-40", liters=40.0, engine_hours=1000.0)
+    at = search(run_app(SEARCH), "HT-12")
+    page = html_blocks(at)
+    assert texts(at.title) == ["Машины карт"] and "1 000 мц" in page
+    assert "Дараагийн тос солилт" not in page and 'class="pc"' not in page
+    assert "Чиглэл" not in page
 
 
 def test_search_by_phone_and_recent(fake_api) -> None:
@@ -1057,8 +1080,10 @@ def test_dashboard_lists_every_truck_then_searches(fake_api) -> None:
     assert fake_api.searches[-1] == "говь"
     table = at.dataframe[0].value
     assert list(table["Дугаар"]) == ["0002 ТЕС"]
-    assert list(table.columns) == ["Дугаар", "Компани", "Сүүлд солисон", "Гүйлт (км)", "Тос", "Литр",
-                                   "Жолооч", "Утас", "Удаа", "Төлөв"]
+    assert list(table.columns) == ["Дугаар", "Компани", "Сүүлд солисон", "Гүйлт (км)", "Дараагийн солилт (км)",
+                                   "Тос", "Литр", "Жолооч", "Утас", "Удаа"]  # 9.5a: target instead of «Төлөв»
+    assert list(table["Дараагийн солилт (км)"]) == [215000]
+    assert at.dataframe[0].proto.placeholder == "—"  # 9.5a: empty cells show «—», never "None"
     assert "«говь» · 1 машин" in html_blocks(at)
 
 
@@ -1079,8 +1104,10 @@ def test_dashboard_phone_card_opens_full_history(fake_api) -> None:
     at = on(at, DASHBOARD).button(key="dash_open_1").click().run()
     page = html_blocks(at)
     assert '<table class="hist">' in page
-    for th in ("Огноо", "Гүйлт", "Тос", "Жолооч"):  # liters sit in «Тос», the phone under the driver
+    for th in ("Огноо", "Гүйлт → дараагийн", "Тос", "Жолооч"):  # liters in «Тос», phone under the driver
         assert f"<th>{th}</th>" in page
+    for target in ("230 000 км", "215 000 км"):  # 9.5a: each service's own target, under its odometer
+        assert f"<div class=ph>→ {target}</div>" in page
     assert page.index("2026-10-01") < page.index("2026-09-01")   # newest first
     for value in ("215 000 км", "200 000 км", "10W-40 · 32 л", "15W-40 · 30 л", "Жолооч Д.", "Шинэ Ж.",
                   '<div class="ph">9911 0002</div>', '<div class="ph">9911 0009</div>'):

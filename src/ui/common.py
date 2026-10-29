@@ -135,7 +135,6 @@ h2, h3 {font-size: 14px !important; font-weight: 600 !important; color: var(--mu
 [data-testid="stButtonGroup"] button {min-height: 40px; padding: 6px 18px; border: none; background: var(--fill); border-radius: 999px;}
 [data-testid="stButtonGroup"] button p {font-size: 15px; font-weight: 500;}
 [data-testid="stButtonGroup"] button[aria-checked="true"] {background: var(--pri) !important; color: #fff !important;}
-.st-key-f_destination_id button:last-child:not([aria-checked="true"]) p {color: var(--muted);}  /* «Бусад» */
 /* oil grade = segmented control: grey track, selected segment white */
 .st-key-f_oil_choice, .st-key-f_oil_choice [data-testid="stButtonGroup"], .st-key-f_oil_choice div:has(> button) {width: 100% !important; max-width: none !important;}
 .st-key-f_oil_choice div:has(> button) {display: flex; background: var(--fill); border-radius: 14px; padding: 4px; gap: 0 !important;}
@@ -483,12 +482,6 @@ def remember_viewed(card: dict) -> None:
 
 # --- API helpers ---------------------------------------------------------------------
 
-@st.cache_data(ttl=300, show_spinner=False)
-def cached_destinations() -> list[dict]:
-    """GET /destinations, cached 5 minutes (the list rarely changes)."""
-    return api_client.destinations()
-
-
 def show_api_error(exc: api_client.ApiError) -> None:
     for message in logic.error_messages(exc.status, exc.detail):
         st.error(message)
@@ -584,7 +577,7 @@ def photo_view(data: bytes | None, box: list[float] | None, name: str | None = N
 # --- vehicle card parts ------------------------------------------------------------------
 
 def render_prediction(prediction: dict | None) -> None:
-    """Status block on a soft tint: dot + status word (never color alone), «5 хоног хоцорсон»
+    """Not shown since 9.5a (card shows render_target); kept for the reminders work. Status block on a soft tint: dot + status word (never color alone), «5 хоног хоцорсон»
     34/600, «Солих ёстой байсан: 10-р сарын 7», method note; grey line when null."""
     v = logic.prediction_view(prediction)
     if v["pending"]:
@@ -600,8 +593,28 @@ def render_prediction(prediction: dict | None) -> None:
     html_block(f'<div class="pc" style="background:{v["bg"]};color:{v["fg"]}">{body}</div>')
 
 
+TARGET_COLORS = ("#1F4E9D", "#EAF0FA")  # brand blue on its tint (same pair as «Эрт ирсэн»)
+
+
+def render_target(card: dict) -> None:
+    """Task 9.5a, card: «Дараагийн тос солилт» · «165 000 км» · «Сүүлд: 150 000 км · 2026-10-01 · +15 000 км».
+    Shown instead of the predicted date. Nothing for mine trucks (engine hours only, no target_km)."""
+    last = card.get("last_service") or {}
+    if last.get("target_km") is None:
+        return
+    fg, bg = TARGET_COLORS
+    step = logic.format_number(last["target_km"] - last["odometer_km"], "км")
+    since = " · ".join([logic.format_number(last["odometer_km"], "км"), last.get("service_date") or logic.NOT_GIVEN])
+    html_block(
+        f'<div class="pc" style="background:{bg};color:{fg}">'
+        f'<div class="pc-top">{_dot(fg)}Дараагийн тос солилт</div>'
+        f'<div class="pc-big">{html.escape(logic.target_text(last))}</div>'
+        f'<div class="pc-date">Сүүлд: {html.escape(since)} · +{html.escape(step)}</div></div>'
+    )
+
+
 def render_arrival(prediction: dict | None) -> None:
-    """Recognized truck: «Цагтаа ирсэн · 2 хоног эрт ирсэн · Таамаглаж байсан огноо: …» (nothing when null)."""
+    """Not shown since 9.5a (form shows the target km). Recognized truck: «Цагтаа ирсэн · 2 хоног эрт ирсэн · Таамаглаж байсан огноо: …» (nothing when null)."""
     a = logic.arrival_view(prediction)
     if not a:
         return
@@ -614,16 +627,25 @@ def render_arrival(prediction: dict | None) -> None:
 
 
 def render_tiles(card: dict) -> None:
-    """4 fact rows (label left, value right): last change, «15W-40 · ердийн 32 л», destination, driver."""
+    """Fact rows (label left, value right): last change, «15W-40 · ердийн 32 л», [destination], driver.
+    9.5a: «Чиглэл» only when the last service has one (old records; the form no longer asks)."""
     last = card.get("last_service") or {}
+    destination = logic.service_destination_text(last) if last else logic.NOT_GIVEN
     pairs = [
         ("Сүүлд солисон", last.get("service_date") or logic.NOT_GIVEN),
         ("Тос", logic.oil_pair_text(last, card.get("usual_liters"))),
-        ("Чиглэл", logic.service_destination_text(last) if last else logic.NOT_GIVEN),
+        *([("Чиглэл", destination)] if destination != logic.NOT_GIVEN else []),
         ("Жолооч", logic.driver_text(last.get("driver_name"), last.get("driver_phone"))),
     ]
     with st.container(key="card_facts"):
         html_block(kv_rows(pairs))
+
+
+def _history_sub(service: dict) -> str:
+    """Timeline second line: oil · liters [· destination, old records only]."""
+    parts = [service.get("oil_grade") or logic.NOT_GIVEN, logic.format_number(service.get("liters"), "л"),
+             logic.service_destination_text(service)]
+    return " · ".join(p for i, p in enumerate(parts) if i < 2 or p != logic.NOT_GIVEN)
 
 
 def render_history(history: list[dict]) -> None:
@@ -636,7 +658,7 @@ def render_history(history: list[dict]) -> None:
         rows = "".join(
             f'<div><div class="h"><span class="d">{html.escape(s.get("service_date", ""))}</span>'
             f'<span class="km">{html.escape(logic.service_meter_text(s))}</span></div>'
-            f'<div class="s">{html.escape(" · ".join([s.get("oil_grade") or logic.NOT_GIVEN, logic.format_number(s.get("liters"), "л"), logic.service_destination_text(s)]))}</div></div>'
+            f'<div class="s">{html.escape(_history_sub(s))}</div></div>'
             for s in history
         )
         html_block(f'<div class="tl">{rows}</div>')
