@@ -91,7 +91,8 @@ class ServiceRecord(Base):
 
 
 class ReminderSent(Base):
-    """reminders_sent: a reminder that went out for one (vehicle, newest service) (migration 003)."""
+    """reminders_sent: a reminder that went out for one (vehicle, newest service) (migration 003).
+    Task 9.5b (migration 006): one row per (service, month stage); old prediction rows have stage None."""
 
     __tablename__ = "reminders_sent"
 
@@ -100,8 +101,18 @@ class ReminderSent(Base):
     service_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("service_records.id"))
     phone: Mapped[str | None] = mapped_column(Text)
     message_text: Mapped[str] = mapped_column(Text)
-    method: Mapped[str] = mapped_column(Text)
-    model_version: Mapped[str] = mapped_column(Text)
-    predicted_date: Mapped[date]
+    stage: Mapped[str | None] = mapped_column(Text)  # '1m' / '2m' / '3m' (9.5b); None = old prediction row
+    method: Mapped[str | None] = mapped_column(Text)
+    model_version: Mapped[str | None] = mapped_column(Text)
+    predicted_date: Mapped[date | None]
     send_on: Mapped[date]
     sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ReminderStop(Base):
+    """reminder_stops (migration 006, task 9.5b): a driver phone that asked for no more messages."""
+
+    __tablename__ = "reminder_stops"
+
+    phone: Mapped[str] = mapped_column(Text, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

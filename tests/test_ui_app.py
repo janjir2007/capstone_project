@@ -44,7 +44,8 @@ class FakeApi:
         self.recognize: tuple[int, dict] = (503, {"detail": "plate recognizer not loaded"})
         self.uploads: list[bytes] = []              # raw multipart bodies sent to /plates/recognize
         self.reminders: list[dict] | None = []      # None -> 503 (model not loaded)
-        self.sent: dict[int, dict] = {}             # service_id -> stored "sent" row
+        self.sent: dict[int, dict] = {}             # service_id -> stored "sent" row (with its stage, 9.5b)
+        self.stops: list[str] = []                  # phones that asked for no more messages (9.5b)
         self.hide_sent = True                       # False = stale list (another manager's open tab)
         self.destinations: list[dict] = DESTINATIONS  # GET /destinations
         self.searches: list[str] = []               # q of every GET /vehicles/search (9.1)
@@ -122,10 +123,23 @@ class FakeApi:
         if path == "/stats/segments":
             return httpx.Response(200, json={"as_of": TODAY, "total": 7,
                                              "counts": {"new": 2, "returning": 3, "loyal": 1, "at_risk": 1}})
+        if path == "/reminders/stops":
+            if request.method == "POST":
+                phone = json.loads(request.content)["phone"].replace(" ", "")
+                created = phone not in self.stops
+                if created:
+                    self.stops.append(phone)
+                return httpx.Response(201 if created else 200, json={"phone": phone, "created_at": f"{TODAY}T10:00:00"})
+            return httpx.Response(200, json=[{"phone": p, "created_at": f"{TODAY}T10:00:00"} for p in self.stops])
+        if path.startswith("/reminders/stops/") and request.method == "DELETE":
+            phone = path.split("/")[-1]
+            self.stops = [p for p in self.stops if p != phone]
+            return httpx.Response(204)
         if path == "/reminders/due":
             if self.reminders is None:
-                return httpx.Response(503, json={"detail": "prediction model not loaded"})
-            due = [r for r in self.reminders if not (self.hide_sent and r["service_id"] in self.sent)]
+                return httpx.Response(503, json={"detail": "service unavailable"})
+            due = [r for r in self.reminders if not (self.hide_sent and r["service_id"] in self.sent)
+                   and r.get("phone") not in self.stops]
             return httpx.Response(200, json={"as_of": TODAY, "contact_is_placeholder": True, "reminders": due})
         if path.startswith("/reminders/") and path.endswith("/sent"):
             sid = int(path.split("/")[2])
@@ -135,7 +149,7 @@ class FakeApi:
             if sid in self.sent:
                 return httpx.Response(200, json={**self.sent[sid], "already_sent": True})
             self.sent[sid] = {"id": len(self.sent) + 1, "service_id": sid, "phone": "99110002",
-                              "sent_at": f"{TODAY}T11:00:00+08:00"}
+                              "stage": request.url.params.get("stage"), "sent_at": f"{TODAY}T11:00:00+08:00"}
             return httpx.Response(201, json={**self.sent[sid], "already_sent": False})
         if path == "/vehicles/search":
             self.search_params.append(dict(request.url.params))
@@ -892,16 +906,20 @@ def test_save_then_find_by_plate_and_phone(fake_api) -> None:
 
 # --- manager dashboard (5.4) ---------------------------------------------------------------
 
-def reminder(service_id: int, plate: str, days_left: int, status: str) -> dict:
+STAGE_DAYS = {"1m": 35, "2m": 63, "3m": 95}  # days since the latest service in the fake items
+
+
+def reminder(service_id: int, plate: str, stage: str = "1m", phone: str | None = "99110002") -> dict:
+    """A GET /reminders/due item (contract v0.13, 9.5b month stages)."""
     return {
         "service_id": service_id, "vehicle_id": service_id, "identifier_type": "plate",
         "identifier": plate, "plate_normalized": plate.replace(" ", ""), "company": "Туршилт ХХК",
-        "phone": "99110002", "driver_name": "Тест Д.", "last_change_date": "2026-08-10",
-        "oil_grade": "15W-40", "liters": 32.0, "method": "b0", "buffer_days": 12,
-        "predicted_date": "2026-10-07", "send_on": "2026-09-25", "days_left": days_left, "status": status,
-        # like the API (contract v0.7): at_risk = predicted date + 7 days grace has passed
-        "segment": "at_risk" if days_left < -7 else "loyal",
-        "message_mn": f"Сайн байна уу! {plate} дугаартай машины тос солих хугацаа болсон байна.",
+        "phone": phone, "driver_name": "Тест Д.", "last_change_date": "2026-08-10",
+        "oil_grade": "15W-40", "liters": 32.0, "odometer_km": 255500, "target_km": 270500,
+        "stage": stage, "days_since": STAGE_DAYS[stage], "send_on": "2026-09-25",
+        # like the API: at_risk = 90+ days since the latest service
+        "segment": "at_risk" if stage == "3m" else "loyal",
+        "message_mn": f"Сайн байна уу! {plate} машины тос солиулснаас хойш {stage[0]} сар боллоо.",
     }
 
 
@@ -938,14 +956,14 @@ def test_css_stops_iphone_tap_zoom() -> None:
 
 def test_home_reminder_summary(fake_api) -> None:
     """T9: greeting line, 3 numbers and the red badge from GET /reminders/due (+ total from /stats/segments)."""
-    fake_api.reminders = [reminder(1, "0001 ТЕС", 5, "due_soon"), reminder(3, "0003 ТЕС", -20, "overdue")]
+    fake_api.reminders = [reminder(1, "0001 ТЕС", "1m"), reminder(3, "0003 ТЕС", "3m")]
     at = run_app()
     page = html_blocks(at)
-    assert "Өнөөдөр 1 машин сануулга хүлээж байна." in page
-    assert 'Сануулах</div><div class="v">1</div>' in page
-    assert 'Хэтэрсэн</div><div class="v" style="color:#B42318">1</div>' in page
+    assert "Өнөөдөр 2 машин сануулга хүлээж байна." in page  # 9.5b: every stage is a message to send
+    assert 'Сануулах</div><div class="v">2</div>' in page
+    assert 'Эрсдэлтэй</div><div class="v" style="color:#B42318">1</div>' in page  # 9.5b: 3m = 90+ days
     assert 'Машин</div><div class="v">7</div>' in page
-    assert '<span class="badge">1</span>' in page
+    assert '<span class="badge">2</span>' in page
 
 
 def test_home_without_predictions_still_works(fake_api) -> None:
@@ -957,19 +975,20 @@ def test_home_without_predictions_still_works(fake_api) -> None:
 
 
 def test_dashboard_tiles_and_two_groups(fake_api) -> None:
-    fake_api.reminders = [reminder(1, "0001 ТЕС", 5, "due_soon"), reminder(2, "0002 ТЕС", -3, "overdue"),
-                          reminder(3, "0003 ТЕС", -20, "overdue")]
+    fake_api.reminders = [reminder(1, "0001 ТЕС", "1m"), reminder(2, "0002 ТЕС", "2m"),
+                          reminder(3, "0003 ТЕС", "3m")]
     at = run_app(REMINDERS)
     assert not at.exception
     page = html_blocks(at)
-    for label, count in (("Өнөөдөр", 2), ("Эрсдэлтэй", 1)):
+    for label, count in (("1 сар", 1), ("2 сар", 1)):  # 9.5b: messages per month stage
         assert f'<div class="v">{count}</div><div class="k">{label}</div>' in page
-    assert '<div class="v" style="color:#B42318">2</div><div class="k">Хэтэрсэн</div>' in page
+    assert '<div class="v" style="color:#B42318">1</div><div class="k">3 сар</div>' in page
     assert texts(at.subheader) == ["Өнөөдрийн дараалал (2)", "Эрсдэлтэй (1)"]
+    assert ">2 сар</span>" in page and "63\u00a0хоногийн\u00a0өмнө" in page  # stage pill + days since
     assert "0003 ТЕС" in page and "Тест Д." in page and "9911\u00a00002" in page
     assert links(at)["Залгах"].url == "tel:99110002"
     assert [c.value for c in at.code][0].startswith("Сайн байна уу! 0001 ТЕС")  # copyable text
-    assert "GEO_EXPERT_PHONE" in page and not at.warning  # placeholder contact = one small line (T7)
+    assert "CONTACT_PHONE" in page and not at.warning  # placeholder contact = one small line (T7)
 
 
 def links(at: AppTest) -> dict[str, Any]:
@@ -980,13 +999,13 @@ def links(at: AppTest) -> dict[str, Any]:
 def test_viber_button_opens_prefilled_message(fake_api) -> None:
     """5.5 (D-091): one Viber link per reminder, text = the exact message_mn, and the tap is a
     widget (has an id) so the app reruns and can ask «Илгээсэн үү?». Copy box stays (fallback)."""
-    fake_api.reminders = [reminder(1, "0001 ТЕС", 5, "due_soon"), reminder(3, "0003 ТЕС", -20, "overdue")]
+    fake_api.reminders = [reminder(1, "0001 ТЕС", "1m"), reminder(3, "0003 ТЕС", "3m")]
     at = run_app(REMINDERS)
     vibers = [b.proto for b in at.get("link_button") if b.proto.label == "Viber-ээр илгээх"]
     assert len(vibers) == 2
     url = vibers[0].url
     assert url.startswith("viber://forward?text=") and " " not in url and "ТЕС" not in url
-    assert unquote(url.removeprefix("viber://forward?text=")) == reminder(1, "0001 ТЕС", 5, "due_soon")["message_mn"]
+    assert unquote(url.removeprefix("viber://forward?text=")) == reminder(1, "0001 ТЕС", "1m")["message_mn"]
     assert vibers[0].id.endswith("viber_1") and not links(at)["Залгах"].id  # tap reruns; tel: does not
     assert [c.value for c in at.code][0].startswith("Сайн байна уу! 0001 ТЕС")
     assert "Илгээсэн үү?" not in html_blocks(at)  # asked only after the tap
@@ -1000,38 +1019,39 @@ def tapped_viber(service_id: int) -> AppTest:
 
 
 def test_viber_tap_asks_then_yes_marks_sent(fake_api) -> None:
-    fake_api.reminders = [reminder(1, "0001 ТЕС", 5, "due_soon"), reminder(2, "0002 ТЕС", -3, "overdue")]
+    fake_api.reminders = [reminder(1, "0001 ТЕС", "1m"), reminder(2, "0002 ТЕС", "2m")]
     at = tapped_viber(1)
     assert "Илгээсэн үү?" in html_blocks(at)
     assert [b.label for b in at.button].count("Илгээсэн") == 1  # row 2 keeps the plain button
     at = click(at, "Тийм")
     assert any("Илгээсэн гэж тэмдэглэлээ" in t for t in texts(at.success))
     assert list(fake_api.sent) == [1]                             # POST /reminders/1/sent
+    assert fake_api.sent[1]["stage"] == "1m"                       # 9.5b: the row's stage is sent
     assert "Илгээсэн үү?" not in html_blocks(at)
 
 
 def test_viber_tap_no_hides_question(fake_api) -> None:
-    fake_api.reminders = [reminder(1, "0001 ТЕС", 5, "due_soon")]
+    fake_api.reminders = [reminder(1, "0001 ТЕС", "1m")]
     at = click(tapped_viber(1), "Үгүй")
     assert "Илгээсэн үү?" not in html_blocks(at) and "Илгээсэн" in [b.label for b in at.button]
     assert not fake_api.sent
 
 
 def test_no_viber_button_without_message(fake_api) -> None:
-    fake_api.reminders = [{**reminder(1, "0001 ТЕС", 5, "due_soon"), "message_mn": ""}]
+    fake_api.reminders = [{**reminder(1, "0001 ТЕС", "1m"), "message_mn": ""}]
     at = run_app(REMINDERS)
     assert "Viber-ээр илгээх" not in links(at) and "Илгээсэн" in [b.label for b in at.button]
 
 
 def test_mark_sent_removes_row(fake_api) -> None:
-    fake_api.reminders = [reminder(1, "0001 ТЕС", 5, "due_soon")]
+    fake_api.reminders = [reminder(1, "0001 ТЕС", "1m")]
     at = click(run_app(REMINDERS), "Илгээсэн")
     assert any("Илгээсэн гэж тэмдэглэлээ" in t for t in texts(at.success))
     assert texts(at.subheader)[0] == "Өнөөдрийн дараалал (0)"  # gone from the due list
 
 
 def test_mark_sent_twice_shows_already_sent(fake_api) -> None:
-    fake_api.reminders = [reminder(1, "0001 ТЕС", 5, "due_soon")]
+    fake_api.reminders = [reminder(1, "0001 ТЕС", "1m")]
     fake_api.hide_sent = False  # the row stays, as in a second manager's stale tab
     at = click(click(run_app(REMINDERS), "Илгээсэн"), "Илгээсэн")
     assert any("Өмнө нь илгээсэн" in t for t in texts(at.info))
@@ -1039,7 +1059,7 @@ def test_mark_sent_twice_shows_already_sent(fake_api) -> None:
 
 
 def test_mark_sent_not_latest_service(fake_api) -> None:
-    fake_api.reminders = [reminder(999, "0009 ТЕС", 5, "due_soon")]
+    fake_api.reminders = [reminder(999, "0009 ТЕС", "1m")]
     at = click(run_app(REMINDERS), "Илгээсэн")
     assert any("шинэ үйлчилгээтэй" in t for t in texts(at.warning))
 
@@ -1053,11 +1073,45 @@ def test_overview_segment_tiles(fake_api) -> None:
     assert "Нийт 7 машин" in page
 
 
-def test_dashboard_without_model(fake_api) -> None:
+def test_reminders_api_error_shown(fake_api) -> None:
+    """9.5b: reminders no longer depend on the model; an API error is shown as an error."""
     fake_api.reminders = None
     at = run_app(REMINDERS)
-    assert not at.exception
-    assert any("загвар ачаалагдаагүй" in t for t in texts(at.info))
+    assert not at.exception and texts(at.error)
+
+
+def test_mark_sent_sends_the_rows_stage(fake_api) -> None:
+    fake_api.reminders = [reminder(3, "0003 ТЕС", "3m")]
+    click(run_app(REMINDERS), "Илгээсэн")
+    assert fake_api.sent[3]["stage"] == "3m"
+
+
+def test_stop_phone_asks_then_stops(fake_api) -> None:
+    """9.5b: «Дахиж илгээхгүй» -> question -> «Тийм» = POST /reminders/stops; the row leaves the
+    list and the phone shows under «Мессеж хүсээгүй утас» with «Буцаах» (DELETE)."""
+    fake_api.reminders = [reminder(1, "0001 ТЕС", "1m"), reminder(2, "0002 ТЕС", "2m", phone="99110003")]
+    at = click(run_app(REMINDERS), "Дахиж илгээхгүй")
+    assert "9911 0002 утсанд дахиж илгээхгүй юу?" in html_blocks(at) and fake_api.stops == []
+    at = at.button(key="stop_yes_1").click().run()
+    assert fake_api.stops == ["99110002"]
+    assert any("дахиж мессеж илгээхгүй" in t for t in texts(at.success))
+    assert texts(at.subheader)[0] == "Өнөөдрийн дараалал (1)"     # only 0002 ТЕС left
+    assert at.expander[0].label == "Мессеж хүсээгүй утас (1)"
+    at = at.button(key="unstop_99110002").click().run()
+    assert fake_api.stops == [] and texts(at.subheader)[0] == "Өнөөдрийн дараалал (2)"
+
+
+def test_stop_phone_no_keeps_it(fake_api) -> None:
+    fake_api.reminders = [reminder(1, "0001 ТЕС", "1m")]
+    at = click(run_app(REMINDERS), "Дахиж илгээхгүй")
+    at = at.button(key="stop_no_1").click().run()
+    assert fake_api.stops == [] and "Дахиж илгээхгүй" in [b.label for b in at.button]
+
+
+def test_no_stop_button_without_phone(fake_api) -> None:
+    fake_api.reminders = [reminder(1, "0001 ТЕС", "1m", phone=None)]
+    at = run_app(REMINDERS)
+    assert "Дахиж илгээхгүй" not in [b.label for b in at.button] and "утасгүй" in html_blocks(at)
 
 
 # --- «Хяналтын самбар» search + history (9.1) -------------------------------------------------
@@ -1127,7 +1181,7 @@ def test_dashboard_table_row_opens_history(fake_api) -> None:
 
 
 def test_dashboard_due_list_is_read_only(fake_api) -> None:
-    fake_api.reminders = [reminder(1, "0001 ТЕС", 5, "due_soon"), reminder(3, "0003 ТЕС", -20, "overdue")]
+    fake_api.reminders = [reminder(1, "0001 ТЕС", "1m"), reminder(3, "0003 ТЕС", "3m")]
     at = run_app(DASHBOARD)
     page = html_blocks(at)
     assert "Сануулах машин (2)" in page and "0001 ТЕС" in page and "0003 ТЕС" in page
@@ -1137,7 +1191,7 @@ def test_dashboard_due_list_is_read_only(fake_api) -> None:
 def test_dashboard_writes_nothing(fake_api) -> None:
     """View only (9.1): opening, searching and opening a history never POSTs."""
     seed_two(fake_api)
-    fake_api.reminders = [reminder(1, "0001 ТЕС", 5, "due_soon")]
+    fake_api.reminders = [reminder(1, "0001 ТЕС", "1m")]
     posts_before = len(fake_api.posts)
     at = run_app(DASHBOARD)
     at.text_input(key="dash_q").set_value("ТЕС")

@@ -18,7 +18,7 @@ from decimal import Decimal
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from src.api.clock import get_today
@@ -26,7 +26,8 @@ from src.api.db import get_session
 from src.api.history import records_as_of, service_records, to_visit, visits_oldest_first
 from src.api.matching import clean_company_name, company_key, fleet_no_key, search_matches
 from src.api.models import ServiceRecord, Vehicle
-from src.api.prediction import Predictor, segment_of
+from src.api.prediction import Predictor
+from src.api.reminders import segment_of
 from src.api.schemas import (CompanyOut, LookupResult, PredictionOut, Route, SearchOptions, ServiceOut, VehicleCard,
                              VehicleRow, VehicleSearch, normalize_phone)
 from src.common.plates import normalize_plate
@@ -58,14 +59,6 @@ def usual_liters(liters_newest_first: Sequence[Decimal]) -> Decimal | None:
     return next(value for value in liters_newest_first if counts[value] == best)
 
 
-def vehicle_segment(session: Session, vehicle_id: int, as_of: date) -> str | None:
-    """Segment from the database function vehicle_segments (data_dictionary §3)."""
-    return session.execute(
-        text("SELECT segment FROM vehicle_segments(:as_of) WHERE vehicle_id = :vehicle_id"),
-        {"as_of": as_of, "vehicle_id": vehicle_id},
-    ).scalar_one_or_none()
-
-
 def predict(predictor: Predictor | None, vehicle_id: int, records: Sequence[ServiceRecord],
             today: date) -> PredictionOut | None:
     """Prediction for the card; None without model or without services."""
@@ -81,10 +74,8 @@ def build_card(session: Session, vehicle: Vehicle, today: date, predictor: Predi
     history = [ServiceOut.model_validate(record) for record in records]
     liters = usual_liters([record.liters for record in records])
     prediction = predict(predictor, vehicle.id, records, today)
-    # Same rule as GET /stats/segments: with a prediction, at_risk comes from it (D-007, task 4.4);
-    # without the model, the database function (count-based) answers.
-    segment = (segment_of(len(records), prediction.predicted_date, today) if prediction is not None
-               else vehicle_segment(session, vehicle.id, today))
+    # 9.5b: one rule everywhere (src/api/reminders.py): at_risk = 90+ days since the latest service.
+    segment = segment_of(len(records), records[0].service_date, today) if records else None
     return VehicleCard(
         id=vehicle.id,
         identifier_type=vehicle.identifier_type,
@@ -93,7 +84,7 @@ def build_card(session: Session, vehicle: Vehicle, today: date, predictor: Predi
         vehicle_model=vehicle.vehicle_model,
         company=CompanyOut.model_validate(vehicle.company),
         service_count=len(history),
-        segment=segment if records else None,
+        segment=segment,
         usual_liters=None if liters is None else float(liters),
         last_service=history[0] if history else None,
         history=history,
@@ -265,7 +256,7 @@ def search_rows(session: Session, query: str, today: date, predictor: Predictor 
             company=CompanyOut.model_validate(vehicle.company),
             service_count=len(own),
             last_service=ServiceOut.model_validate(own[-1]) if own else None,
-            segment=segment_of(len(own), prediction.predicted_date if prediction else None, today) if own else None,
+            segment=segment_of(len(own), own[-1].service_date, today) if own else None,
             status=prediction.status if prediction else None,
             days_left=prediction.days_left if prediction else None,
             matched_on=matched,

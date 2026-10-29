@@ -296,9 +296,24 @@ def recognize_error_message(status: int) -> str:
 SEGMENT_ORDER = ("new", "returning", "loyal", "at_risk")
 
 
+# Task 9.5b month stages: label + (text color, tint), the same AA pairs as the status pills.
+STAGE_LABELS: dict[str, str] = {"1m": "1 сар", "2m": "2 сар", "3m": "3 сар"}
+STAGE_COLORS: dict[str, tuple[str, str]] = {"1m": STATUS_COLORS["ok"], "2m": STATUS_COLORS["due_soon"],
+                                            "3m": STATUS_COLORS["overdue"]}
+
+
+def stage_label(stage: str | None) -> str:
+    return STAGE_LABELS.get(stage or "", NOT_GIVEN)
+
+
+def days_since_text(days: int | None) -> str:
+    """'65 хоногийн өмнө' (since the latest oil change); '—' when missing."""
+    return NOT_GIVEN if days is None else f"{days} хоногийн өмнө"
+
+
 def is_at_risk(reminder: dict) -> bool:
-    """True if this due reminder belongs to «Эрсдэлтэй». The API decides (contract v0.7 `segment`,
-    D-074): the D-007 grace rule lives only in the backend."""
+    """True if this due reminder belongs to «Эрсдэлтэй». The API decides (`segment`, D-074;
+    9.5b: 90+ days since the latest service)."""
     return reminder.get("segment") == "at_risk"
 
 
@@ -377,10 +392,10 @@ def arrival_view(prediction: dict | None) -> dict[str, str] | None:
 
 
 def reminder_counts(reminders: list[dict]) -> dict[str, int]:
-    """Home / «Сануулга» numbers: to send today («Илгээх» group), overdue, at risk."""
-    to_send, at_risk = split_reminders(reminders)
-    return {"to_send": len(to_send), "at_risk": len(at_risk),
-            "overdue": sum(1 for r in reminders if (r.get("days_left") or 0) < 0)}
+    """Home / «Сануулга» numbers (9.5b): every message to send today, at risk, and per stage."""
+    counts = {"to_send": len(reminders), "at_risk": len(split_reminders(reminders)[1])}
+    counts.update({s: sum(1 for r in reminders if r.get("stage") == s) for s in STAGE_LABELS})
+    return counts
 
 
 # --- «Хяналтын самбар» search (9.1) --------------------------------------------------------

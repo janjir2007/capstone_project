@@ -237,10 +237,7 @@ def due_list() -> None:
     try:
         due = api_client.reminders_due()
     except api_client.ApiError as exc:
-        if exc.status == 503:
-            st.info("Таамаглалын загвар ачаалагдаагүй — сануулгын жагсаалт гарахгүй.")
-        else:
-            common.show_api_error(exc)
+        common.show_api_error(exc)
         return
     reminders = due.get("reminders") or []
     common.section(f"Сануулах машин ({len(reminders)})", right=due.get("as_of", ""))
@@ -249,12 +246,11 @@ def due_list() -> None:
             common.html_block('<span class="muted">Өнөөдөр сануулах машин алга.</span>')
             return
         rows = []
-        for i, r in enumerate(reminders):
-            fg, bg = logic.STATUS_COLORS.get(r.get("status"), logic.PENDING_COLORS)
-            label = logic.SEGMENT_LABELS["at_risk"] if logic.is_at_risk(r) else \
-                logic.PREDICTION_STATUS_LABELS.get(r.get("status"), r.get("status") or "")
+        for i, r in enumerate(reminders):  # 9.5b: month stage pill, days since the latest change
+            fg, bg = logic.STAGE_COLORS.get(r.get("stage"), logic.PENDING_COLORS)
+            label = logic.stage_label(r.get("stage"))
             meta = " · ".join(t.replace(" ", " ") for t in
-                              (logic.days_left_text(r.get("days_left")), logic.phone_text(r.get("phone")) or "утасгүй"))
+                              (logic.days_since_text(r.get("days_since")), logic.phone_text(r.get("phone")) or "утасгүй"))
             rows.append(
                 f'<div class="rem{"" if i == 0 else " sep"}"><span class="plate">{html.escape(r["identifier"])}</span>'
                 f'<div class="who"><div class="n">{html.escape(r.get("company") or r.get("driver_name") or "—")}</div>'

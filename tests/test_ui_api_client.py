@@ -152,9 +152,21 @@ def test_segment_stats_and_reminders_due_paths(requests_seen) -> None:
 def test_mark_reminder_sent_already_sent(requests_seen) -> None:
     seen, set_reply = requests_seen
     set_reply(httpx.Response(200, json={"id": 1, "service_id": 7, "already_sent": True}))
-    row = api_client.mark_reminder_sent(7)
+    row = api_client.mark_reminder_sent(7, "2m")
     assert row["already_sent"] is True
-    assert (seen[0].method, seen[0].url.path) == ("POST", "/reminders/7/sent")
+    assert (seen[0].method, seen[0].url.path, seen[0].url.params["stage"]) == ("POST", "/reminders/7/sent", "2m")
+
+
+def test_stop_phone_calls(requests_seen) -> None:
+    """9.5b: stop = POST with the phone in the body; undo = DELETE (204, no body -> None)."""
+    seen, set_reply = requests_seen
+    set_reply(httpx.Response(201, json={"phone": "99110002", "created_at": "2026-10-29T10:00:00+08:00"}))
+    assert api_client.stop_phone("9911 0002")["phone"] == "99110002"
+    assert (seen[-1].method, seen[-1].url.path, seen[-1].content) == ("POST", "/reminders/stops",
+                                                                       b'{"phone":"9911 0002"}')
+    set_reply(httpx.Response(204))
+    assert api_client.unstop_phone("99110002") is None
+    assert (seen[-1].method, seen[-1].url.path) == ("DELETE", "/reminders/stops/99110002")
 
 
 def test_search_vehicles_get_with_query_and_limit(requests_seen) -> None:
@@ -183,4 +195,4 @@ def test_mark_reminder_not_latest(requests_seen) -> None:
     set_reply(httpx.Response(409, json={"detail": {"code": "not_latest_service", "message": "newer",
                                                    "latest_service_id": 9}}))
     with pytest.raises(api_client.NotLatestService):
-        api_client.mark_reminder_sent(7)
+        api_client.mark_reminder_sent(7, "1m")

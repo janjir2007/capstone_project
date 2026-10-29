@@ -11,7 +11,7 @@ from src.ui import api_client, common, logic
 
 
 def reminder_counts() -> dict[str, int] | None:
-    """Counts from GET /reminders/due; None when the API has no predictions (503) or is down."""
+    """Counts from GET /reminders/due (9.5b month stages); None when the API is down."""
     try:
         due = api_client.reminders_due()
     except api_client.ApiError:
@@ -43,12 +43,12 @@ def _num(value: int | None) -> str:
     return logic.NOT_GIVEN if value is None else str(value)
 
 
-overdue = None if counts is None else counts["overdue"]
-red = ' style="color:#B42318"' if overdue else ""
+at_risk = None if counts is None else counts["at_risk"]  # 9.5b: 90+ days (was «Хэтэрсэн», predicted date)
+red = ' style="color:#B42318"' if at_risk else ""
 common.html_block(
     '<div class="stats">'
     f'<div><div class="k">Сануулах</div><div class="v">{_num(None if counts is None else counts["to_send"])}</div></div>'
-    f'<div><div class="k">Хэтэрсэн</div><div class="v"{red}>{_num(overdue)}</div></div>'
+    f'<div><div class="k">Эрсдэлтэй</div><div class="v"{red}>{_num(at_risk)}</div></div>'
     f'<div><div class="k">Машин</div><div class="v">{_num(total)}</div></div></div>'
 )
 

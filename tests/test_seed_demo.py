@@ -44,7 +44,8 @@ ROOT = Path(__file__).resolve().parent.parent
 SQL_DIR = ROOT / "src" / "data"
 SQL_FILES = ["schema.sql", "migrations/001_destinations.up.sql", "migrations/002_destinations_name_mn.up.sql",
              "migrations/003_reminders_sent.up.sql", "migrations/004_destinations_name_mn_rest.up.sql",
-             "migrations/005_destinations_cross_border.up.sql"]
+             "migrations/005_destinations_cross_border.up.sql",
+             "migrations/006_reminder_stages.up.sql"]
 TODAY = date(2026, 10, 12)
 CONTACT = Contact(name="Geo-Expert", phone="99000001", is_placeholder=False)
 
@@ -77,21 +78,11 @@ def test_plan_is_about_40_trucks_with_1_to_5_services() -> None:
 
 
 @pytest.mark.parametrize("today", [TODAY, date(2026, 10, 20), date(2027, 1, 15), date(2027, 7, 1)])
-def test_every_segment_status_and_5_to_10_due(clean: pd.DataFrame, predictor: P.Predictor,  # noqa: F811
+def test_every_segment_status_and_stage(clean: pd.DataFrame, predictor: P.Predictor,  # noqa: F811
                                               today: date) -> None:
     """The brief's 'done when', on several seed days (summer, autumn, winter)."""
     trucks = D.build_demo(clean, predictor, today)
     assert D.problems(D.summary(trucks, predictor, today)) == []
-
-
-SERVED_2_9_BUFFERS = {"ridge": 16, "b0": 13, "b1": 4}  # models/ since task 2.9 (docs/ml_results.md)
-FIXTURE_BUFFERS = {"ridge": 7, "b0": 12, "b1": 1}  # tests/test_serving.py fake model
-
-
-@pytest.mark.parametrize("buffers", [SERVED_2_9_BUFFERS, FIXTURE_BUFFERS])
-def test_plan_gives_5_to_10_due_with_these_buffers(buffers: dict[str, int]) -> None:
-    """Task 7.2: the 2.9 buffers put 13 trucks on the list with the old plan; the plan must fit both."""
-    assert 5 <= D.planned_due(buffers) <= 10
 
 
 def test_slot_method_follows_prediction_rules() -> None:
@@ -114,10 +105,11 @@ def test_real_served_model_builds_a_seedable_demo(clean: pd.DataFrame) -> None:
 
 def test_problems_reports_what_is_missing() -> None:
     from collections import Counter
-    s = {"segments": Counter(new=3, loyal=1), "statuses": Counter(ok=4), "methods": Counter(), "due": 2}
+    s = {"segments": Counter(new=3, loyal=1), "statuses": Counter(ok=4), "methods": Counter(), "due": 2,
+         "stages": Counter({"1m": 2})}
     assert D.problems(s) == ["segment returning is empty", "segment at_risk is empty",
                              "status due_soon is empty", "status overdue is empty",
-                             "due list has 2 trucks, wanted 5–10"]
+                             "no 2m reminder on the due list", "no 3m reminder on the due list"]
 
 
 def test_identities_are_fake_and_in_real_format(trucks: list[D.DemoTruck]) -> None:
@@ -245,13 +237,14 @@ def test_segments_all_four(client: TestClient) -> None:
     assert all(body["counts"][s] > 0 for s in ("new", "returning", "loyal", "at_risk")), body
 
 
-def test_due_list_5_to_10_and_matches_the_build(client: TestClient, trucks: list[D.DemoTruck],
-                                               predictor: P.Predictor) -> None:  # noqa: F811
+def test_due_list_matches_the_build(client: TestClient, trucks: list[D.DemoTruck],
+                                    predictor: P.Predictor) -> None:  # noqa: F811
+    """9.5b: the API's month stages are exactly what the demo plan says, every stage shows."""
     due = client.get("/reminders/due").json()["reminders"]
-    assert 5 <= len(due) <= 10
-    expected = {t.plate_normalized for t in trucks if D.is_due(t, predictor, TODAY)}
-    assert {r["plate_normalized"] for r in due} == expected
-    assert D.PLATE_OVERDUE in expected and D.PLATE_AT_RISK not in expected  # sent reminders are left out
+    expected = {t.plate_normalized: D.due_stage_of(t, TODAY) for t in trucks if D.is_due(t, predictor, TODAY)}
+    assert {r["plate_normalized"]: r["stage"] for r in due} == expected
+    assert {"1m", "2m", "3m"} <= set(expected.values())
+    assert D.PLATE_AT_RISK not in expected  # its 3m reminder is stored as sent
 
 
 @pytest.mark.parametrize("q", ["1001 УБА", "1001уба", "1002 УБЕ", "1003 УНА", "1004 УБВ"])
@@ -285,9 +278,9 @@ def test_sent_reminders_stored_like_the_api_would(seeded: Connection, trucks: li
     with Session(bind=seeded) as session:
         rows = session.scalars(select(ReminderSent)).all()
         assert len(rows) == sum(t.reminder_sent for t in trucks) == 2
-        for row in rows:
-            assert row.send_on <= row.predicted_date and row.sent_at.date() == row.send_on
-            assert "Geo-Expert: 99000001" in row.message_text
+        for row in rows:  # 9.5b: the 3m stage, as POST /reminders/{id}/sent?stage=3m stores it
+            assert (row.stage, row.method, row.predicted_date) == ("3m", None, None)
+            assert row.sent_at.date() == row.send_on and row.message_text.endswith(" 99000001")
 
 
 def test_seed_refuses_a_database_that_is_not_empty(seeded: Connection, trucks: list[D.DemoTruck],

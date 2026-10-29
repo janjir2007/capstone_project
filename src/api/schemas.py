@@ -250,7 +250,8 @@ class VehicleCard(BaseModel):
     vehicle_model: str | None
     company: CompanyOut
     service_count: int
-    segment: Segment | None = Field(description="Today's segment (vehicle_segments); None only without services")
+    segment: Segment | None = Field(description="Today's segment (9.5b: at_risk = 90+ days since the latest "
+                                                "service); None only without services")
     usual_liters: float | None = Field(description="Most frequent liters over all services; tie -> most recent")
     last_service: ServiceOut | None = Field(description="Pre-fills the recording form")
     history: list[ServiceOut] = Field(description="All services, newest first")
@@ -286,7 +287,7 @@ class VehicleRow(BaseModel):
     company: CompanyOut
     service_count: int
     last_service: ServiceOut | None = Field(description="Newest service (date, odometer, oil, liters, driver, phone)")
-    segment: Segment | None = Field(description="Same rule as the card; without the model: count-based only (no at_risk)")
+    segment: Segment | None = Field(description="Same rule as the card (9.5b: at_risk = 90+ days since the latest service)")
     status: Status | None = Field(description="Prediction status (D-007); null when the model is not loaded")
     days_left: int | None = Field(description="Predicted date − today; null when the model is not loaded")
     matched_on: list[SearchMatch] = Field(description="Why the truck matched q; [] when q is blank (all trucks)")
@@ -332,36 +333,39 @@ class SegmentStats(BaseModel):
 # Reminders (task 4.4)
 # --------------------------------------------------------------------------
 
-class DueReminder(BaseModel):
-    """One vehicle to remind today: GET /reminders/due."""
+ReminderStage = Literal["1m", "2m", "3m"]
 
-    service_id: int = Field(description="Newest service = the reminder's id: POST /reminders/{service_id}/sent")
+
+class DueReminder(BaseModel):
+    """One truck to remind today: GET /reminders/due (task 9.5b: month stages, not the prediction)."""
+
+    service_id: int = Field(description="Latest service = the reminder's id: POST /reminders/{service_id}/sent")
     vehicle_id: int
     identifier_type: Literal["plate", "fleet_no"]
     identifier: str = Field(description="Plate or fleet number as confirmed, e.g. 1234 УБА")
     plate_normalized: str | None
     company: str
-    phone: str | None = Field(description="driver_phone of the newest service (D-004); null = no phone recorded")
+    phone: str | None = Field(description="driver_phone of the latest service (D-004); null = no phone recorded")
     driver_name: str | None
     last_change_date: date
     oil_grade: str
     liters: float
-    method: PredictionMethod
-    buffer_days: int = Field(description="Days before predicted_date the reminder is sent (tuned per method on validation)")
-    predicted_date: date
-    send_on: date = Field(description="predicted_date − buffer_days")
-    days_left: int = Field(description="predicted_date − as_of")
-    status: Status
-    segment: Segment = Field(description="Segment on as_of (D-007, same rule as the card and GET /stats/segments); "
-                                         "at_risk = predicted date + 7 days grace has passed (v0.7, D-074)")
-    message_mn: str = Field(description="Mongolian reminder text (copy into the SMS / messenger)")
+    odometer_km: int = Field(description="Odometer at the latest service (trucks without one get no reminders)")
+    target_km: int = Field(description="odometer_km + OIL_INTERVAL_KM (task 9.5a)")
+    stage: ReminderStage = Field(description="Highest month stage reached and not sent yet: 1m = 30, 2m = 60, "
+                                             "3m = 90 days after the latest service")
+    days_since: int = Field(description="Days from the latest service to as_of")
+    send_on: date = Field(description="Day the stage started: last_change_date + 30 / 60 / 90")
+    segment: Segment = Field(description="Segment on as_of; at_risk = 90+ days since the latest service (9.5b)")
+    message_mn: str = Field(description="Mongolian text of this stage (copy into Viber)")
 
 
 class DueReminders(BaseModel):
     """GET /reminders/due."""
 
     as_of: date
-    contact_is_placeholder: bool = Field(description="true = GEO_EXPERT_PHONE is not set, the message has a fake number")
+    contact_is_placeholder: bool = Field(description="true = CONTACT_PHONE (or GEO_EXPERT_PHONE) is not set, "
+                                                     "the message has a fake number")
     reminders: list[DueReminder] = Field(description="send_on <= as_of and not sent yet; oldest send_on first")
 
 
@@ -373,11 +377,34 @@ class ReminderSentOut(BaseModel):
     id: int
     service_id: int
     vehicle_id: int
+    stage: ReminderStage | None = Field(description="9.5b month stage; null only on rows from before 9.5b")
     phone: str | None
     message_text: str
-    method: PredictionMethod
-    model_version: str
-    predicted_date: date
+    method: PredictionMethod | None = Field(default=None, description="Rows from before 9.5b only")
+    model_version: str | None = None
+    predicted_date: date | None = None
     send_on: date
     sent_at: datetime
     already_sent: bool = Field(default=False, description="true = it was marked before; nothing changed")
+
+
+class StopIn(BaseModel):
+    """POST /reminders/stops: a driver asked for no more messages."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    phone: RequiredText
+
+    @field_validator("phone")
+    @classmethod
+    def _phone_is_mongolian(cls, value: str) -> str:
+        return normalize_phone(value)
+
+
+class StopOut(BaseModel):
+    """A phone that gets no reminders (task 9.5b)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    phone: str
+    created_at: datetime

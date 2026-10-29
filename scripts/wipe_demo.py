@@ -3,7 +3,8 @@
 Run it ONLY through ``scripts/wipe_demo.sh``: that script takes a backup first and passes its
 file name here (``--after-backup``); without it this refuses to start.
 
-What is emptied: companies, vehicles, service_records, reminders_sent, plus every table that
+What is emptied: companies, vehicles, service_records, reminders_sent, reminder_stops (driver
+phones that asked for no messages, migration 006, task 9.5b; skipped on an older database), plus every table that
 references them through a foreign key, found from the database itself (today: predictions and
 reminders), so a table added later cannot be forgotten or block the wipe.
 What is kept: destinations (route lookup, D-064) and schema_migrations (migrate.py's record).
@@ -26,7 +27,7 @@ import psycopg
 
 from src.api.config import ConfigError, load_settings
 
-CORE_TABLES = ("companies", "vehicles", "service_records", "reminders_sent")
+CORE_TABLES = ("companies", "vehicles", "service_records", "reminders_sent", "reminder_stops")
 KEEP_TABLES = ("destinations", "schema_migrations")
 
 # Foreign keys inside the current schema: (referencing table, referenced table).
@@ -48,7 +49,7 @@ class WipeError(RuntimeError):
 def tables_to_empty(conn: psycopg.Connection, core: tuple[str, ...] = CORE_TABLES) -> list[str]:
     """The core tables plus everything that references them (directly or through another table)."""
     edges = conn.execute(FK_SQL).fetchall()
-    found = set(core)
+    found = {t for t in core if _exists(conn, t)}  # reminder_stops exists only from migration 006 on
     grew = True
     while grew:  # keep adding referencing tables until nothing new appears
         new = {src for src, dst in edges if dst in found} - found

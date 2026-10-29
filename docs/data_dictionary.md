@@ -303,6 +303,7 @@ A second run changes nothing. `--dry-run` lists what would run. A database migra
 | 001 | `001_destinations.up.sql` / `.down.sql` | `destinations` table + seed; destination columns on `service_records` |
 | 002 | `002_destinations_name_mn.up.sql` / `.down.sql` | `destinations.name_mn` + the 5 Mongolian labels (task 1.1c, D-040); stops if a label's destination is missing. Tested by `tests/test_migration_002_name_mn.py` |
 | 003 | `003_reminders_sent.up.sql` / `.down.sql` | `reminders_sent` table (task 4.4). Tested by `tests/test_reminders.py` (up → down → up, constraints) |
+| 006 | `006_reminder_stages.up.sql` / `.down.sql` | Task 9.5b: `reminders_sent.stage` ('1m'/'2m'/'3m'), UNIQUE (`service_id`, `stage`) replaces UNIQUE (`service_id`); `method`, `model_version`, `predicted_date` nullable (old rows keep them; CHECK: a row has a stage or a method); new table `reminder_stops(phone PK, created_at)`. Down deletes month rows. Tested by `tests/test_reminders.py` |
 | 004 | `004_destinations_name_mn_rest.up.sql` / `.down.sql` | `name_mn` for UB city + Other (task 6.1); stops if one is missing. Tested by `tests/test_migrate.py` |
 | 005 | `005_destinations_cross_border.up.sql` / `.down.sql` | 4 cross-border destinations (task 1.6, D-081). Tested by `tests/test_migration_005.py` |
 

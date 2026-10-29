@@ -1,4 +1,5 @@
-"""Tests for task 4.4: reminders, segments with at_risk, migration 003, fleet numbers, HEIC.
+"""Tests for tasks 4.4 + 9.5b: month-stage reminders, stop phones, segments (90-day at_risk),
+migrations 003 + 006, fleet numbers, HEIC.
 
 Fake data only: sample_data.sql (100% synthetic) + trucks created here, the
 fake Ridge folder from tests/test_serving.py. Postgres tests skip without a
@@ -10,15 +11,14 @@ from __future__ import annotations
 import io
 import uuid
 from collections.abc import Iterator
-from datetime import date
-from decimal import Decimal
+from datetime import date, timedelta
 from pathlib import Path
 
 import psycopg
 import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
-from sqlalchemy import Connection, create_engine
+from sqlalchemy import Connection, create_engine, text
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
@@ -27,7 +27,7 @@ from src.api.clock import get_today
 from src.api.config import PLACEHOLDER_PHONE, Contact, reminder_contact
 from src.api.db import get_session
 from src.api.main import create_app
-from src.api.reminders import format_liters, message_mn
+from src.api.reminders import due_stage, format_km, message_mn, segment_of, stage_day, stage_reached
 from src.api.routers.reminders import get_contact
 from src.cv import plate_reader as R
 from tests.test_api_data import pg  # noqa: F401  (Postgres: schema + 001 + 003 + sample data)
@@ -41,34 +41,75 @@ CONTACT = Contact(name="Geo-Expert", phone="99000001", is_placeholder=False)
 
 
 # ==========================================================================
-# Message + contact
+# Message + contact (9.5b: Ari's month texts)
 # ==========================================================================
 
-def test_message_has_plate_last_change_oil_and_contact() -> None:
-    text = message_mn("1234 УБА", date(2026, 8, 10), "15W-40", Decimal("32.0"), overdue=False, contact=CONTACT)
-    assert text == ("Сайн байна уу! 1234 УБА дугаартай машины тос солих хугацаа ойртлоо. "
-                    "Сүүлд сольсон: 2026.08.10 (15W-40, 32 л). Geo-Expert: 99000001")
+def test_month_messages_exact_text() -> None:
+    args = ("1234 УБА", date(2026, 8, 10), "15W-40", 270_500, CONTACT)
+    assert message_mn("1m", *args) == (
+        "Сайн байна уу! Гео-Эксперт ХХК-ийн тосыг сонгосонд баярлалаа. 1234 УБА машины тос солиулснаас хойш "
+        "1 сар боллоо (2026.08.10, 15W-40). Дараагийн солилт: 270 500 км-т. Гүйлтээ шалгаарай. Сайн яваарай! "
+        "99000001")
+    assert message_mn("2m", *args) == (
+        "Сайн байна уу! 1234 УБА машины тос солиулснаас хойш 2 сар боллоо. Дараагийн солилт: 270 500 км-т. "
+        "Гүйлтээ шалгахаа мартуузай. 99000001")
+    assert message_mn("3m", *args) == (
+        "Сайн байна уу! 1234 УБА машин 270 500 км-т хүрсэн бол тосоо солих цаг боллоо. "
+        "Бид таны байгаа газар очиж сольж өгнө. 99000001")
 
 
-def test_overdue_message_says_time_has_come() -> None:
-    text = message_mn("HT-12", date(2026, 1, 5), "15W-40", 40.5, overdue=True, contact=CONTACT)
-    assert "хугацаа болсон байна." in text and "2026.01.05" in text and "40.5 л" in text
+@pytest.mark.parametrize(("km", "shown"), [(270_500, "270 500"), (15_000, "15 000"), (1_234_567, "1 234 567"),
+                                           (900, "900")])
+def test_format_km(km: int, shown: str) -> None:
+    assert format_km(km) == shown
 
 
-@pytest.mark.parametrize(("liters", "shown"), [(Decimal("32.0"), "32"), (Decimal("32.5"), "32.5"), (38, "38"),
-                                               (Decimal("100.0"), "100")])
-def test_format_liters(liters: Decimal | int, shown: str) -> None:
-    assert format_liters(liters) == shown
-
-
-def test_contact_from_env_and_placeholder_flag() -> None:
+def test_contact_phone_wins_then_old_setting_then_placeholder() -> None:
     assert reminder_contact({}) == Contact("Geo-Expert", PLACEHOLDER_PHONE, is_placeholder=True)
     assert reminder_contact({"GEO_EXPERT_PHONE": " 88112233 ", "GEO_EXPERT_NAME": "Гео Эксперт"}) == \
         Contact("Гео Эксперт", "88112233", is_placeholder=False)
+    assert reminder_contact({"CONTACT_PHONE": "99887766", "GEO_EXPERT_PHONE": "88112233"}).phone == "99887766"
+    assert reminder_contact({"CONTACT_PHONE": "  ", "GEO_EXPERT_PHONE": "88112233"}).phone == "88112233"
 
 
 # ==========================================================================
-# Buffers, batch prediction, segments
+# Stage + segment rules (pure)
+# ==========================================================================
+
+LAST = date(2026, 8, 1)
+
+
+@pytest.mark.parametrize(("days", "stage"), [(0, None), (29, None), (30, "1m"), (59, "1m"), (60, "2m"),
+                                             (65, "2m"), (89, "2m"), (90, "3m"), (400, "3m")])
+def test_stage_reached(days: int, stage: str | None) -> None:
+    assert stage_reached(LAST, LAST + timedelta(days=days)) == stage
+
+
+def test_day_65_only_2m_and_each_stage_once() -> None:
+    day65 = LAST + timedelta(days=65)
+    assert due_stage(LAST, day65, set()) == "2m"            # 1m was missed: skipped, never offered
+    assert due_stage(LAST, day65, {"1m"}) == "2m"
+    assert due_stage(LAST, day65, {"2m"}) is None           # sent once -> not again
+    assert due_stage(LAST, LAST + timedelta(days=95), {"1m", "2m"}) == "3m"
+    assert due_stage(LAST, LAST + timedelta(days=200), {"3m"}) is None  # nothing after 3m
+    assert due_stage(LAST, LAST + timedelta(days=10), set()) is None
+
+
+def test_stage_day() -> None:
+    assert [stage_day(LAST, s) for s in ("1m", "2m", "3m")] == [date(2026, 8, 31), date(2026, 9, 30),
+                                                                 date(2026, 10, 30)]
+
+
+@pytest.mark.parametrize(("count", "days", "segment"), [
+    (1, 10, "new"), (2, 89, "returning"), (3, 89, "loyal"), (7, 30, "loyal"),
+    (1, 90, "at_risk"), (9, 120, "at_risk"),   # 90+ days without a new service: at_risk wins
+])
+def test_segment_rule_90_days(count: int, days: int, segment: str) -> None:
+    assert segment_of(count, LAST, LAST + timedelta(days=days)) == segment
+
+
+# ==========================================================================
+# Prediction (ML code kept; reminders no longer use it)
 # ==========================================================================
 
 def test_buffers_come_from_the_model_folder(predictor: P.Predictor) -> None:  # noqa: F811
@@ -87,17 +128,6 @@ def test_batch_equals_one_by_one(predictor: P.Predictor) -> None:  # noqa: F811
     batch = predictor.predict_many(histories, TODAY)
     assert {v: p.method for v, p in batch.items()} == {1: "ridge", 2: "b1", 3: "b0", 4: "ridge"}
     assert batch == {vid: predictor.predict(vid, visits, TODAY) for vid, visits in histories.items()}
-
-
-@pytest.mark.parametrize(("count", "predicted", "segment"), [
-    (1, date(2026, 10, 5), "new"),         # 10-05 + 7 = 10-12, not < 10-12
-    (1, date(2026, 10, 4), "at_risk"),     # 10-04 + 7 = 10-11 < 10-12
-    (2, None, "returning"),
-    (3, date(2026, 12, 1), "loyal"),
-    (9, date(2026, 1, 1), "at_risk"),      # at_risk wins over loyal
-])
-def test_segment_rule_d007(count: int, predicted: date | None, segment: str) -> None:
-    assert P.segment_of(count, predicted, TODAY) == segment
 
 
 # ==========================================================================
@@ -152,7 +182,52 @@ def test_migration_003_constraints(raw_pg: psycopg.Connection) -> None:
 
 
 # ==========================================================================
-# Endpoints on Postgres (sample data + fake model)
+# Migration 006 (throwaway schema, rolled back)
+# ==========================================================================
+
+M006_UP = (SQL_DIR / "migrations/006_reminder_stages.up.sql").read_text(encoding="utf-8")
+M006_DOWN = (SQL_DIR / "migrations/006_reminder_stages.down.sql").read_text(encoding="utf-8")
+OLD_ROW = ("INSERT INTO reminders_sent (vehicle_id, service_id, phone, message_text, method, model_version, "
+           "predicted_date, send_on) VALUES (1, 3, '99110002', 'old', 'b0', 'ridge-test', '2026-10-07', '2026-09-25')")
+STAGE_ROW = ("INSERT INTO reminders_sent (vehicle_id, service_id, stage, phone, message_text, send_on) "
+             "VALUES (%s, %s, %s, %s, 'x', '2026-10-09')")
+
+
+def test_migration_006_up_down_up_keeps_old_rows(raw_pg: psycopg.Connection) -> None:
+    raw_pg.execute((SQL_DIR / "migrations/003_reminders_sent.up.sql").read_text(encoding="utf-8"))
+    raw_pg.execute(OLD_ROW)                                   # a row from before 9.5b
+    raw_pg.execute(M006_UP)
+    assert "reminder_stops" in _tables(raw_pg)
+    assert raw_pg.execute("SELECT stage, method FROM reminders_sent").fetchall() == [(None, "b0")]
+    raw_pg.execute(STAGE_ROW, (1, 3, "2m", "99110002"))
+    raw_pg.execute(M006_DOWN)                                 # month rows go, the old row stays
+    assert "reminder_stops" not in _tables(raw_pg)
+    assert raw_pg.execute("SELECT method FROM reminders_sent").fetchall() == [("b0",)]
+    raw_pg.execute(M006_UP)
+    assert "reminder_stops" in _tables(raw_pg)
+
+
+def test_migration_006_constraints(raw_pg: psycopg.Connection) -> None:
+    raw_pg.execute((SQL_DIR / "migrations/003_reminders_sent.up.sql").read_text(encoding="utf-8"))
+    raw_pg.execute(M006_UP)
+    raw_pg.execute(STAGE_ROW, (1, 3, "1m", "99110002"))
+    raw_pg.execute(STAGE_ROW, (1, 3, "2m", "99110002"))      # another stage of the same service: fine
+    raw_pg.execute("INSERT INTO reminder_stops (phone) VALUES ('99110002')")
+    for sql, args, error in [
+        (STAGE_ROW, (1, 3, "1m", None), psycopg.errors.UniqueViolation),          # each stage once
+        (STAGE_ROW, (1, 3, "4m", None), psycopg.errors.CheckViolation),           # unknown stage
+        (STAGE_ROW, (1, 3, None, None), psycopg.errors.CheckViolation),           # neither stage nor method
+        ("INSERT INTO reminder_stops (phone) VALUES (%s)", ("99110002",), psycopg.errors.UniqueViolation),
+        ("INSERT INTO reminder_stops (phone) VALUES (%s)", ("123",), psycopg.errors.CheckViolation),
+    ]:
+        raw_pg.execute("SAVEPOINT s")
+        with pytest.raises(error):
+            raw_pg.execute(sql, args)
+        raw_pg.execute("ROLLBACK TO SAVEPOINT s")
+
+
+# ==========================================================================
+# Endpoints on Postgres (sample data; today = 2026-10-12)
 # ==========================================================================
 
 @pytest.fixture
@@ -172,12 +247,11 @@ def client(pg: Connection, model_dir: Path) -> Iterator[TestClient]:  # noqa: F8
     savepoint.rollback()
 
 
-def new_service(client: TestClient, plate: str, day: str, destination: str, km: int = 100_000,
-                phone: str | None = "99110009") -> dict:
-    dest_id = next(d["id"] for d in client.get("/destinations").json() if d["name"] == destination)
-    r = client.post("/services", json={"identifier": plate, "company_name": "Test 4.4", "service_date": day,
+def new_service(client: TestClient, plate: str, day: str, km: int = 100_000, phone: str | None = "99110009") -> dict:
+    """POST /services without a destination (9.5a form)."""
+    r = client.post("/services", json={"identifier": plate, "company_name": "Test 9.5b", "service_date": day,
                                        "odometer_km": km, "oil_grade": "10W-40", "liters": 36.5,
-                                       "destination_id": dest_id, "driver_phone": phone})
+                                       "driver_phone": phone})
     assert r.status_code == 201, r.text
     return r.json()
 
@@ -188,89 +262,126 @@ def due(client: TestClient, **params: str) -> dict:
     return r.json()
 
 
-def test_due_list_has_the_right_trucks(client: TestClient) -> None:
-    # Sample trucks (no destination -> b0 = 58 days, buffer 12): newest service + 58 − 12 <= 2026-10-12 ?
-    #   v1 08-10 -> send 09-25 yes · v2 09-10 -> 10-26 no · v3 09-20 -> 11-05 no
-    #   v4 05-10 -> 06-25 yes · v5 08-25 -> 10-10 yes · v6 09-01 -> 10-17 no
-    # New trucks, first visit -> b1 (buffer 1):
-    #   Beijing 09-01: 17,500 / 501.9 = 34.9 -> 35 d -> 10-06, send 10-05 yes
-    #   Kyakhta 10-01: 17,500 / 216.7 = 80.7 -> 81 d -> 12-21, send 12-20 no
-    a = new_service(client, "0000 ТЕС", "2026-09-01", "Beijing")["vehicle_id"]
-    new_service(client, "0001 ТЕС", "2026-10-01", "Kyakhta (RU side of border)")
+def stages(client: TestClient, **params: str) -> dict[int, str]:
+    return {r["vehicle_id"]: r["stage"] for r in due(client, **params)["reminders"]}
+
+
+def sent(client: TestClient, service_id: int, stage: str):
+    return client.post(f"/reminders/{service_id}/sent", params={"stage": stage})
+
+
+def test_due_list_month_stages(client: TestClient) -> None:
+    """Sample data on 10-12: v1 08-10 (63 d) -> 2m (1m skipped) · v2 09-10 (32 d) -> 1m ·
+    v3 09-20 (22 d) -> nothing · v4 05-10 (155 d) -> 3m, at risk · v5 mine truck (engine hours) ->
+    no reminder · v6 09-01 (41 d) -> 1m."""
     result = due(client)
     assert result["as_of"] == TODAY.isoformat() and result["contact_is_placeholder"] is False
-    assert {r["vehicle_id"] for r in result["reminders"]} == {1, 4, 5, a}
+    assert {r["vehicle_id"]: r["stage"] for r in result["reminders"]} == {1: "2m", 2: "1m", 4: "3m", 6: "1m"}
     sends = [r["send_on"] for r in result["reminders"]]
-    assert sends == sorted(sends)  # oldest reminder day first
-    item = next(r for r in result["reminders"] if r["vehicle_id"] == a)
-    assert (item["method"], item["buffer_days"], item["predicted_date"], item["send_on"]) == \
-        ("b1", 1, "2026-10-06", "2026-10-05")
-    assert (item["identifier"], item["phone"], item["last_change_date"], item["oil_grade"], item["liters"]) == \
-        ("0000 ТЕС", "99110009", "2026-09-01", "10W-40", 36.5)
-    assert (item["status"], item["days_left"]) == ("overdue", -6)
-    assert item["message_mn"] == ("Сайн байна уу! 0000 ТЕС дугаартай машины тос солих хугацаа болсон байна. "
-                                  "Сүүлд сольсон: 2026.09.01 (10W-40, 36.5 л). Geo-Expert: 99000001")
+    assert sends == sorted(sends)  # oldest stage day first
+    v1 = next(r for r in result["reminders"] if r["vehicle_id"] == 1)
+    assert (v1["service_id"], v1["days_since"], v1["send_on"], v1["odometer_km"], v1["target_km"], v1["segment"]) == \
+        (3, 63, "2026-10-09", 255_500, 270_500, "loyal")
+    assert (v1["identifier"], v1["phone"], v1["last_change_date"], v1["oil_grade"]) == \
+        ("1234 УБА", "99110002", "2026-08-10", "15W-40")
+    assert v1["message_mn"] == message_mn("2m", "1234 УБА", date(2026, 8, 10), "15W-40", 270_500, CONTACT)
+    v4 = next(r for r in result["reminders"] if r["vehicle_id"] == 4)
+    assert (v4["stage"], v4["segment"]) == ("3m", "at_risk")
 
 
-def test_due_items_carry_the_segment(client: TestClient) -> None:
-    """4.4b (contract v0.7, D-074): each due item has the D-007 segment, the same as the vehicle card."""
-    a = new_service(client, "0000 ТЕС", "2026-09-01", "Beijing")["vehicle_id"]
-    items = {r["vehicle_id"]: r for r in due(client)["reminders"]}
-    # a: 1 service, predicted 10-06 + 7 = 10-13, not < 10-12 -> new (overdue, but not at risk yet)
-    # v4: predicted 07-07 + 7 = 07-14 < 10-12 -> at_risk
-    assert (items[a]["segment"], items[a]["status"]) == ("new", "overdue")
-    assert items[4]["segment"] == "at_risk"
-    for vid, item in items.items():
-        assert item["segment"] == client.get(f"/vehicles/{vid}").json()["segment"]
+def test_day_65_shows_only_2m(client: TestClient) -> None:
+    vid = new_service(client, "0000 ТЕС", "2026-08-08")["vehicle_id"]  # 65 days before 10-12
+    assert stages(client)[vid] == "2m"
+    assert stages(client, as_of="2026-09-15")[vid] == "1m"            # 38 days: 1m
 
 
-def test_due_list_as_of_uses_only_services_until_then(client: TestClient) -> None:
-    # as_of 2026-06-30: v1's newest service by then = 05-20 -> 07-17, send 07-05 -> not due yet;
-    # v4 (05-10 -> send 06-25) is due. Later services do not exist yet on that day.
-    ids = {r["vehicle_id"] for r in due(client, as_of="2026-06-30")["reminders"]}
-    assert 4 in ids and 1 not in ids
+def test_each_stage_once_then_the_next(client: TestClient) -> None:
+    created = new_service(client, "0001 ТЕС", "2026-09-10")             # 32 days -> 1m
+    vid, sid = created["vehicle_id"], created["service"]["id"]
+    assert sent(client, sid, "1m").status_code == 201
+    assert vid not in stages(client)                                   # 1m sent, 2m not yet
+    assert stages(client, as_of="2026-11-10")[vid] == "2m"              # day 61
+    assert stages(client, as_of="2026-12-10")[vid] == "3m"              # day 91
 
 
-def test_mark_sent_is_idempotent_and_removes_from_due(client: TestClient) -> None:
-    item = next(r for r in due(client)["reminders"] if r["vehicle_id"] == 1)
-    first = client.post(f"/reminders/{item['service_id']}/sent")
+def test_double_sent_makes_one_row(client: TestClient, pg: Connection) -> None:
+    first = sent(client, 3, "2m")
     assert first.status_code == 201
     body = first.json()
-    assert (body["service_id"], body["vehicle_id"], body["already_sent"]) == (item["service_id"], 1, False)
-    assert body["message_text"] == item["message_mn"] and body["send_on"] == item["send_on"]
-    again = client.post(f"/reminders/{item['service_id']}/sent")
+    assert (body["service_id"], body["vehicle_id"], body["stage"], body["already_sent"]) == (3, 1, "2m", False)
+    assert body["send_on"] == "2026-10-09" and body["method"] is None and body["phone"] == "99110002"
+    again = sent(client, 3, "2m")
     assert again.status_code == 200 and again.json() == body | {"already_sent": True}
-    assert 1 not in {r["vehicle_id"] for r in due(client)["reminders"]}
+    rows = pg.execute(text("SELECT count(*) FROM reminders_sent WHERE service_id = 3 AND stage = '2m'")).scalar_one()
+    assert rows == 1
+    assert 1 not in stages(client)
 
 
-def test_new_service_starts_a_new_cycle_and_old_id_is_409(client: TestClient) -> None:
-    a = new_service(client, "0002 ТЕС", "2026-08-01", "Beijing")
-    old_service = next(r["service_id"] for r in due(client)["reminders"] if r["vehicle_id"] == a["vehicle_id"])
-    assert client.post(f"/reminders/{old_service}/sent").status_code == 201
-    b = new_service(client, "0002 ТЕС", "2026-08-20", "Beijing", km=110_000)  # came back: ridge now
-    r = client.post(f"/reminders/{old_service}/sent")
-    assert r.status_code == 200  # already stored: still idempotent
-    other = new_service(client, "0003 ТЕС", "2026-08-01", "Beijing")
-    first_service = other["service"]["id"]
-    new_service(client, "0003 ТЕС", "2026-09-01", "Beijing", km=115_000)
-    stale = client.post(f"/reminders/{first_service}/sent")
+def test_truck_returns_resets_stages(client: TestClient) -> None:
+    old = new_service(client, "0002 ТЕС", "2026-07-01", km=100_000)    # 103 days -> 3m
+    vid, old_id = old["vehicle_id"], old["service"]["id"]
+    assert stages(client)[vid] == "3m" and sent(client, old_id, "3m").status_code == 201
+    assert vid not in stages(client)
+    back = new_service(client, "0002 ТЕС", "2026-09-01", km=118_000)  # came back: new service, 41 days
+    item = next(r for r in due(client)["reminders"] if r["vehicle_id"] == vid)
+    assert (item["stage"], item["service_id"], item["target_km"]) == ("1m", back["service"]["id"], 133_000)
+    assert item["segment"] == "returning"                             # no longer at risk
+    assert sent(client, old_id, "3m").status_code == 200              # stored before: still idempotent
+    stale = sent(client, old_id, "2m")
     assert stale.status_code == 409 and stale.json()["detail"]["code"] == "not_latest_service"
-    assert b["service"]["id"] != old_service
 
 
-def test_mark_unknown_service_is_404(client: TestClient) -> None:
-    assert client.post("/reminders/999999/sent").status_code == 404
+@pytest.mark.parametrize(("service_id", "stage", "code"), [
+    (6, "1m", 422),       # v3, 22 days: 1m has not started
+    (3, "3m", 422),       # v1, 63 days: 3m has not started
+    (9, "1m", 422),       # v5 mine truck (engine hours only): no reminders
+    (999_999, "1m", 404),
+])
+def test_mark_sent_refusals(client: TestClient, service_id: int, stage: str, code: int) -> None:
+    assert sent(client, service_id, stage).status_code == code
 
 
-def test_segments_count_at_risk_from_predictions(client: TestClient) -> None:
-    # Sample trucks are all b0 (58 days). On 2027-01-01 every one is past predicted + 7 -> at_risk.
+def test_mark_sent_needs_a_valid_stage(client: TestClient) -> None:
+    assert client.post("/reminders/3/sent").status_code == 422
+    assert sent(client, 3, "6m").status_code == 422
+
+
+def test_stop_phone_removes_its_reminders_and_can_be_undone(client: TestClient) -> None:
+    r = client.post("/reminders/stops", json={"phone": "+976 9911-0002"})
+    assert r.status_code == 201 and r.json()["phone"] == "99110002"
+    assert client.post("/reminders/stops", json={"phone": "99110002"}).status_code == 200  # idempotent
+    assert [s["phone"] for s in client.get("/reminders/stops").json()] == ["99110002"]
+    assert 1 not in stages(client) and 6 in stages(client)  # v1's latest driver stopped; v6 has another phone
+    assert sent(client, 3, "2m").status_code == 422
+    assert client.delete("/reminders/stops/99110002").status_code == 204
+    assert stages(client)[1] == "2m" and client.get("/reminders/stops").json() == []
+    assert client.delete("/reminders/stops/99110002").status_code == 204                  # already gone
+    assert client.post("/reminders/stops", json={"phone": "123"}).status_code == 422
+
+
+def test_reminders_work_without_model_files(pg: Connection, tmp_path: Path) -> None:  # noqa: F811
+    """9.5b: month stages need no ML model (was 503 before)."""
+    savepoint = pg.begin_nested()
+
+    def test_session() -> Iterator[Session]:
+        with Session(bind=pg, join_transaction_mode="create_savepoint") as session:
+            yield session
+
+    app = create_app(engine=create_engine("sqlite://", poolclass=StaticPool), model_dir=tmp_path)
+    app.dependency_overrides[get_session] = test_session
+    app.dependency_overrides[get_today] = lambda: TODAY
+    with TestClient(app) as no_model:
+        assert no_model.get("/reminders/due").status_code == 200
+        assert no_model.get("/stats/segments").json()["counts"]["at_risk"] == 1
+    savepoint.rollback()
+
+
+def test_segments_at_risk_after_90_days(client: TestClient) -> None:
     later = client.get("/stats/segments", params={"as_of": "2027-01-01"}).json()
-    assert later["counts"]["at_risk"] == later["total"] == 6
-    # Today: v4 (05-10 -> 07-07, +7 = 07-14 < 10-12) is at risk; v1 (-> 10-07, +7 = 10-14) is not yet.
+    assert later["counts"]["at_risk"] == later["total"] == 6   # every sample truck 90+ days out by then
     now = client.get("/stats/segments").json()
-    assert now["counts"]["at_risk"] == 1
-    card = client.get("/vehicles/4").json()
-    assert card["segment"] == "at_risk" and card["prediction"]["predicted_date"] == "2026-07-07"
+    assert now["counts"]["at_risk"] == 1                       # v4 (05-10, 155 days); v1 is 63 days
+    assert client.get("/vehicles/4").json()["segment"] == "at_risk"
 
 
 def test_segments_and_cards_agree(client: TestClient) -> None:
@@ -286,13 +397,6 @@ def test_post_service_finds_fleet_truck_without_dash(client: TestClient) -> None
                                        "destination_raw": "Оюу толгой", "route": "mine_site"})
     assert r.status_code == 201, r.text
     assert (r.json()["vehicle_id"], r.json()["vehicle_created"]) == (5, False)
-
-
-def test_reminders_503_without_model(pg: Connection, tmp_path: Path) -> None:  # noqa: F811
-    app = create_app(engine=create_engine("sqlite://", poolclass=StaticPool), model_dir=tmp_path)
-    with TestClient(app) as client:
-        assert client.get("/reminders/due").status_code == 503
-        assert client.post("/reminders/1/sent").status_code == 503
 
 
 # ==========================================================================

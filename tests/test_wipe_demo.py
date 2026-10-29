@@ -18,8 +18,9 @@ from tests.test_schema import database_url
 SQL_DIR = Path(__file__).resolve().parent.parent / "src" / "data"
 SQL_FILES = ["schema.sql", "migrations/001_destinations.up.sql", "migrations/002_destinations_name_mn.up.sql",
              "migrations/003_reminders_sent.up.sql", "migrations/004_destinations_name_mn_rest.up.sql",
-             "migrations/005_destinations_cross_border.up.sql", "sample_data.sql"]
-EMPTIED = ["companies", "predictions", "reminders", "reminders_sent", "service_records", "vehicles"]
+             "migrations/005_destinations_cross_border.up.sql",
+             "migrations/006_reminder_stages.up.sql", "sample_data.sql"]
+EMPTIED = ["companies", "predictions", "reminder_stops", "reminders", "reminders_sent", "service_records", "vehicles"]
 
 
 @pytest.fixture
@@ -55,7 +56,8 @@ def echo_phrase(prompt: str) -> str:
 
 
 def test_tables_found_from_foreign_keys(conn) -> None:
-    """The 4 core tables + predictions and reminders (they reference vehicles); never the kept ones."""
+    """The 5 core tables (9.5b: + reminder_stops, driver phones) + predictions and reminders (they
+    reference vehicles); never the kept ones."""
     assert W.tables_to_empty(conn) == EMPTIED
 
 

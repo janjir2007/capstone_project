@@ -119,8 +119,13 @@ def oil_interval_km(env: Mapping[str, str] | None = None) -> int:
 
 
 def reminder_contact(env: Mapping[str, str] | None = None) -> Contact:
-    """GEO_EXPERT_NAME / GEO_EXPERT_PHONE from the environment (needs no database settings)."""
+    """Contact at the end of every reminder (needs no database settings).
+
+    Task 9.5b: CONTACT_PHONE = the oil changer's number. The older GEO_EXPERT_PHONE is still read
+    when CONTACT_PHONE is not set, so a server .env from before 9.5b keeps its real number.
+    """
     env = os.environ if env is None else env
-    phone = env.get("GEO_EXPERT_PHONE", "").strip() or PLACEHOLDER_PHONE
+    phone = (env.get("CONTACT_PHONE", "").strip() or env.get("GEO_EXPERT_PHONE", "").strip()
+             or PLACEHOLDER_PHONE)
     name = env.get("GEO_EXPERT_NAME", "").strip() or "Geo-Expert"
     return Contact(name=name, phone=phone, is_placeholder=phone == PLACEHOLDER_PHONE)

@@ -64,6 +64,8 @@ services:
       GEO_EXPERT_NAME: ${GEO_EXPERT_NAME:-Geo-Expert}
       # 99000000 = placeholder; the API then reports contact_is_placeholder: true (D-068).
       GEO_EXPERT_PHONE: ${GEO_EXPERT_PHONE:-99000000}
+      # Task 9.5b: the oil changer's number at the end of every reminder (wins over GEO_EXPERT_PHONE).
+      CONTACT_PHONE: ${CONTACT_PHONE:-}
       # Task 9.5a: target km of the next oil change = odometer at the last change + this.
       OIL_INTERVAL_KM: ${OIL_INTERVAL_KM:-15000}
     volumes:

@@ -74,7 +74,7 @@ def _request(method: str, path: str, **kwargs: Any) -> Any:
         raise ApiError(0, str(exc)) from exc
 
     if response.is_success:
-        return response.json()
+        return None if response.status_code == 204 else response.json()  # 204: DELETE, no body
 
     try:
         detail = response.json().get("detail")
@@ -146,13 +146,28 @@ def segment_stats(as_of: str | None = None) -> dict:
 
 
 def reminders_due(as_of: str | None = None) -> dict:
-    """GET /reminders/due -> {as_of, contact_is_placeholder, reminders: [DueReminder]} (503 = no model)."""
+    """GET /reminders/due -> {as_of, contact_is_placeholder, reminders: [DueReminder]} (9.5b: month stages)."""
     return _request("GET", "/reminders/due", params={"as_of": as_of} if as_of else None)
 
 
-def mark_reminder_sent(service_id: int) -> dict:
-    """POST /reminders/{service_id}/sent -> stored row with already_sent (201 new / 200 before).
+def mark_reminder_sent(service_id: int, stage: str) -> dict:
+    """POST /reminders/{service_id}/sent?stage=1m|2m|3m -> stored row with already_sent (201 new / 200 before).
 
     Raises NotLatestService (409) when the truck has a newer service. No SMS is sent.
     """
-    return _request("POST", f"/reminders/{service_id}/sent")
+    return _request("POST", f"/reminders/{service_id}/sent", params={"stage": stage})
+
+
+def reminder_stops() -> list[dict]:
+    """GET /reminders/stops -> [{phone, created_at}]: phones that get no reminders (9.5b)."""
+    return _request("GET", "/reminders/stops")
+
+
+def stop_phone(phone: str) -> dict:
+    """POST /reminders/stops: the driver asked for no more messages (idempotent)."""
+    return _request("POST", "/reminders/stops", json={"phone": phone})
+
+
+def unstop_phone(phone: str) -> None:
+    """DELETE /reminders/stops/{phone}: send reminders to this phone again."""
+    _request("DELETE", f"/reminders/stops/{phone}")
