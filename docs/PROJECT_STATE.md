@@ -1,14 +1,193 @@
-# PROJECT_STATE — Capstone "Oil Change Predictor" (Geo-Expert LLC)
+# PROJECT_STATE — "Oil Change Predictor" (Geo-Expert LLC)
 
-- **Version:** 2.15
-- **Last updated:** 2026-10-16
-- **Deadline (defense day):** 2026-10-20 (20 days from 2026-09-30)
-- **Current phase:** All work on the Mac, branch main (D-080). 3.6 + 3.6b CNN work done — v1 stays served (D-086, D-088); CV work stopped. Now: 6.1 deploy prep → 1.6 new routes → FREEZE Sat Oct 17 → 6.3 deploy Sun Oct 18 → rehearse Mon
-- **Overall health:** 🟢/🟠 — system works end-to-end locally (UI + API + DB + Ridge + plate reading, 14/14 demo checks). Remaining risk: cloud deploy on Sun Oct 18 leaves 1 day buffer (RISK-21); hosting still undecided; slides/ROI. 4 days left.
+- **Version:** 2.19
+- **Last updated:** 2026-10-30
+- **Phase:** POST-CAPSTONE — capstone defended Oct 20, 2026. The system is being turned into Geo-Expert's real working tool (Phase 8 fixes, Phase 9 dashboard + new reminder logic).
+- **Live:** https://168.144.143.203.sslip.io (demo data only; domain app.geoexpert.mn parked, see D-103)
+- **Health:** 🟢 working and deployed in batches. 🟡 Not ready for real customers yet (see §5 "Before real use").
+
+> Structure: §0–§9 = CURRENT truth. The ARCHIVE at the end is v2.18 unchanged (capstone scope, task list, decisions D-001–D-097, contracts, slide map) — read it for history; where it disagrees with §0–§9, §0–§9 win.
 
 ---
 
-## 1. Agreed scope (frozen — changes need Ari's approval)
+## 0. Where we are (short)
+
+1. Capstone defended Oct 20. Geo-Expert will really use the system, so work continues.
+2. Done since the defense: zoom fix, CI green again + secrets scan, daily tested backups, new camera screen, responsive dashboard with search/filters/Excel, simpler form, target km, month-based Viber reminders (last two: accepted, deploy pending).
+3. Prediction changed: the ML route model is no longer shown. Drivers don't stick to one route, so the app shows **target km = last odometer + 15,000** and sends reminders at **1/2/3 months**. ML code + data collection stay; a model without route is trained later on real data.
+4. Waiting on others: Artlab (accounting API test account + docs), DNS record for the domain.
+5. Before real customers: personal logins (8.5), demo wipe, personal-data check, off-server backup.
+
+### How we work (unchanged rules + new ones)
+- PM chat plans, writes short task briefs (goal, deliverable, done-when, do-not), reviews handoffs. Ari pastes briefs into Claude Code (one NEW session per task) and handoffs back.
+- **ONE Claude Code session at a time in the repo folder** (D-100).
+- **A task is done only when CI is green on the pushed commit — handoff must include the run link** (D-099). `gh` CLI is installed/logged in so Claude Code can check CI itself.
+- Deploys may be **batched** (D-101); after a batch, test each change separately on the phone.
+- Ari's preferences: short prompts; state file named with version (PROJECT_STATE_vX.Y.md); PM does not build/edit files on agreement alone — waits for an explicit "do it".
+- Update state: `cp ~/Downloads/PROJECT_STATE_v2.19.md docs/PROJECT_STATE.md && git add docs/PROJECT_STATE.md && git commit -m "docs: PROJECT_STATE v2.19" && git push` (repo: ~/Downloads/Capstone/oil-change-predictor).
+
+---
+
+## 1. Current scope (post-capstone, v2)
+
+Internal website for Geo-Expert (phone browser + computer), login, HTTPS. Users: Ari (manager), the accountant, the oil changer.
+
+**Record (oil changer, phone):** photo → plate read → **worker confirms plate** → form. Form = plate, odometer (or engine hours), oil grade, liters, driver name, phone. **No destination field** (D-111). Date automatic. New odometer must be higher than last (warning + confirm). Photo kept 12 months once 9.2 is built (D-109).
+
+**Truck card / dashboard:** last service, history, **next change at target km** (last odometer + OIL_INTERVAL_KM = 15,000). Mine trucks (engine hours only): no target. No predicted date shown (D-112).
+
+**Reminders («Сануулга»):** stages 1m/2m/3m at 30/60/90 days after the latest service; prepared Mongolian message with target km + oil changer's phone; one-tap Viber button (manual send) → «Илгээсэн»; stop list per phone; 90+ days without return = «Эрсдэлтэй» (D-113).
+
+**Dashboard («Хяналтын самбар»):** works on computer (full width) and phone; search by plate/phone/company/fleet no.; filters (dates, company, route, oil grade); truck history; Excel export (one row per service); segment tiles; read-only due list; view only (D-108). Planned additions: photos in history (9.2), stats per day/month + company history (9.3), photo gallery by month (9.4), payments from Artlab (9.6).
+
+**Roles (8.5, planned):** manager = everything; accountant = dashboard + Excel; oil changer = record, search, reminders. API enforces roles, not only the UI (D-110).
+
+**Segments:** New (1 visit), Returning (2), Loyal (3+), At risk (90+ days, no return).
+
+---
+
+## 2. Task list — Phase 8 (fixes) + Phase 9 (dashboard & logic)
+
+| ID | Task | Status |
+|---|---|---|
+| 8.0a | New UI_PASSWORD (examiners had old one) | ✅ DONE |
+| 8.0b | Reset Label Studio token (seen in screenshot Oct 16) | ⏳ Ari |
+| 8.1 | iPhone tap-zoom fix + «Хяналтын самбар» button on home | ✅ DONE, deployed (35fe060) |
+| 8.1b | CI green again (2 models/-dependent skips allowed; was red since 7.2) + gitleaks full-history scan (82 commits, no leaks) + slide/latency files committed | ✅ DONE (aafbcf7, f4dd0c3) |
+| 8.2 | Daily backups (systemd timer 03:00 UB, 14 days, /root/backups) + restore test + safe wipe_demo script | ✅ DONE (e55d2a3), installed on server, restore test OK (8 tables) |
+| 8.2c | Off-server backup copy (proposal: Backblaze B2, encrypted, upload-only key) — incl. photos once 9.2 exists | ⏳ Ari yes/no |
+| 8.3 | Own domain app.geoexpert.mn (DOMAIN/OLD_DOMAIN in .env, 302 redirect, runbook §11) | ✅ code (ac205f2); ⏸ server switch PARKED — DNS A record missing |
+| 8.4 | Record page camera: live square view + round shutter, native-camera fallback, gallery, Mongolian, ≤2560 px resize | ✅ DONE, deployed (e1f6c36) |
+| 8.4b | iPhone gallery "Зураг уншсангүй" fix (read file before input reset) + `?diag=1` shows «Алдаа» line | ✅ DONE, deployed (59d8f82). Real cause on Ari's phone = iOS Lockdown Mode (D-107) |
+| 8.4c | Measure: 27 field photos, original vs 2560 px resize → plates read | TODO (optional, before real use) |
+| 8.5 | Personal logins + roles + remember-me 30 days (STEP 1 plan → PM review) | ❓ brief given — status unknown, check first |
+| 9.1 | Responsive dashboard + search + filters + Excel (service rows, formula-safe) | ✅ DONE, deployed (779c354, dffab12) |
+| 9.1c | Engine hours column in Excel | ✅ DONE, deployed (b1578c9) |
+| 9.2 | Keep photos 12 months + small photo per service in dashboard history | Brief ready (see §9) — not started |
+| 9.3 | Dashboard: stats per day/month (count, liters), history per company | Brief not written |
+| 9.4 | Photo gallery by month (manager + accountant) | After 9.2 |
+| 9.5a | Simpler record form (no destination) + target km everywhere | ✅ ACCEPTED; 3 fixes requested before commit («—» not "None"; phone not clipped in history panel; fix browser test test_spacing_exact_values[/dashboard]) → confirm commit + CI |
+| 9.5b | Month-based Viber reminders (migration 006, stages, stop list, CONTACT_PHONE) | ✅ ACCEPTED; commit + CI link pending |
+| 9.5-deploy | Deploy 9.5a + 9.5b together: backup → set CONTACT_PHONE → pull → build → migrate (006) → up → phone test (form, card, reminders, stop/undo) | TODO after both CI green |
+| 9.6 | Payments section + Artlab sync robot (on Artlab TEST account first) | Waiting for Artlab |
+| 9.7 | gitleaks check in CI (every push) | TODO — before any Artlab credentials exist |
+| 9.8 | Demo wipe (scripts/wipe_demo.sh, typed confirmation) | When real use starts |
+| 9.9 | README polish for portfolio (problem, key numbers, screenshot, stack, honest note) | Later |
+
+---
+
+## 3. New decisions (D-098 →)
+
+| ID | Date | Decision | Status |
+|---|---|---|---|
+| D-098 | 10-21 | Project continues after the capstone: Geo-Expert uses the system for real. Droplet kept | APPROVED by Ari |
+| D-099 | 10-22 | A handoff is DONE only with CI green on the pushed commit (run link in handoff). CI had been red unnoticed from task 7.2 to 8.1 | APPROVED (PM) |
+| D-100 | 10-22 | Only one Claude Code session at a time in the repo folder (parallel sessions mixed commits) | APPROVED |
+| D-101 | 10-27 | Batch deploys allowed; each task still committed with CI green; after a batch, test each change separately | APPROVED by Ari |
+| D-102 | 10-22 | Repo stays PUBLIC (portfolio). Secrets only in server .env; gitleaks history scan clean; Artlab credentials never in git. Link the repo in the portfolio, not the live app | APPROVED by Ari |
+| D-103 | 10-22 | Domain = app.geoexpert.mn via DOMAIN in .env; old sslip.io address 302-redirects (switch to 301 after 2 weeks stable). PARKED: DNS A record (app → 168.144.143.203) not added; geoexpert.mn name servers = ns1–4.dns.mn (probably Datacom — unverified). geoexpert.mn website is WordPress elsewhere — never put the app under a path | APPROVED; ⏸ waiting DNS |
+| D-104 | 10-22 | Backups: daily pg_dump at 03:00 UB (systemd timer, Persistent), kept 14 days, each checked; restore test proved on server. Off-server copy pending (rec. Backblaze B2, encrypted, upload-only key). Keep .env values in a password manager (not in any backup) | APPROVED; off-server ⏳ |
+| D-105 | 10-22 | iPhone zoom fix = 16 px inputs + touch-action: manipulation; never maximum-scale / user-scalable=no | APPROVED |
+| D-106 | 10-22 | Record camera: in-page live view (rear) + round shutter, automatic fallback to native camera button, gallery; browser resizes to ≤2560 px JPEG, EXIF/GPS stripped. Worker confirms the plate before lookup (replaces D-072 auto-lookup). Search page camera unchanged (Later) | APPROVED by Ari |
+| D-107 | 10-28 | iOS Lockdown Mode blocks the in-browser photo processing and Streamlit's icon font. Ari excludes the site in Safari (aA → Website Settings). Workers' phones expected without Lockdown. Later: if browser processing fails, upload the original file instead | NOTED |
+| D-108 | 10-28 | Dashboard (9.1): ≥1024 px full width, phone one column, other pages stay 480 px; search contains-match in Python (D-043), phone from 3 digits; filters; Excel = one row per matching service, all text written as text (no formulas), engine-hours column; CSV toolbar hidden (one export path); view only | APPROVED |
+| D-109 | 10-28 | Photos are KEPT 12 months (reverses "photos not stored", D-065): saved services only, resized JPEG without EXIF, Docker volume, shown only via login-protected endpoint, daily deletion after 12 months; record text «Зураг 12 сар хадгалагдана». Not built yet (9.2) | APPROVED by Ari |
+| D-110 | 10-29 | Roles: manager all; accountant dashboard + Excel; oil_changer record, search, reminders. API checks roles. 30-day remember-me (token hashed in DB), 5 wrong → 15 min lock, saved_by on service, CLI user_add/user_disable, shared UI_PASSWORD removed, no admin UI | APPROVED (plan review pending) |
+| D-111 | 10-29 | Destination removed from the record form (Ari's brother: drivers don't keep one route). Overrides D-033 and the D-042 one-of rule. DB columns + old data kept | APPROVED by Ari |
+| D-112 | 10-29 | No predicted date shown. Next change = last odometer + OIL_INTERVAL_KM (15,000, same for every oil; setting). Mine trucks: no target, no reminders for now. ML model + prediction code kept unused; a model WITHOUT route is trained later on real data and compared with the simple rule — winner decided by data | APPROVED by Ari |
+| D-113 | 10-29 | Reminders: stages 1m/2m/3m at 30/60/90 days after latest service; only highest stage reached; each once (UNIQUE service_id, stage); «Илгээсэн» sends its stage; new service resets; at risk = 90+ days everywhere (replaces D-007/D-074 rule); stop list per phone with undo; CONTACT_PHONE = oil changer's number (setting); messages = Ari's 3 texts (thank-you → 2-month check → change at target km, "we come to you"); nothing sent automatically. Replaces ML reminder timing (D-036, D-066 send-date rule) | APPROVED by Ari |
+| D-114 | 10-27 | Artlab plan: our code only reads (fixed allow-list of read requests, others refused + tested). Artlab provides sales + customer settlement data; API access is full rights only. Develop on Artlab TEST account first. Asked Artlab: IP restriction to our server, separate API user, activity log, docs, plate/phone fields, lump-sum payment allocation. Real connection needs OK from whoever is responsible for accounting. Individuals' register numbers not requested | APPROVED |
+| D-115 | 10-29 | Automatic Viber sending rejected for now: chatbot costs EUR 100/month + per message and can only message subscribers. One-tap button stays. SMS gateway = alternative later | APPROVED by Ari |
+| D-116 | 10-29 | Auto-km for new routes (Nominatim + OSRM) → Later; less important after D-111 | APPROVED |
+
+---
+
+## 4. Artlab integration (9.6) — agreed design
+
+- **Flow:** oil changer works as today (our app + Artlab receipt with plate + phone). A sync robot on our server logs in to Artlab every 30 min (credentials only in .env), copies recent receipts + all still-unpaid ones into our DB.
+- **Matching:** normalized plate (normalize_plate) + receipt date within ±1 day of the service; phone = fallback. Never "latest receipt".
+- **Statuses per service:** Төлсөн (paid) · Төлбөр хүлээгдэж буй (unpaid, amount left + days waiting) · Баримтгүй (no receipt by end of next day) · Шалгах (2+ matches, a person decides).
+- **Tables (sketch):** artlab_receipts (artlab_id, receipt_date, plate_raw, plate_normalized, phone, amount, paid_amount, synced_at) + service_payments (service_id PK, artlab_id, status CHECK 4 values, checked_at). Unpaid re-checked every run → credit payments switch to paid by themselves.
+- **Risk:** if Artlab books lump-sum payments only against the company balance, show paid/owes per company instead of per service.
+- **Status:** Artlab CTO replied (sales + settlement data possible; no read-only access; test account offered). Ari replied with safeguard questions. Waiting.
+
+---
+
+## 5. Before real use (checklist)
+
+1. 8.5 logins + roles done and deployed.
+2. Personal-data check: driver names, phones, photos on a server in Singapore (open question).
+3. Off-server backup (8.2c), including photos once 9.2 exists.
+4. CONTACT_PHONE set on the server.
+5. Demo wipe (9.8) — Ari's 2 test trucks go too (re-enter if real).
+6. Drivers can opt out (stop list exists in 9.5b).
+
+---
+
+## 6. Server & deploy facts
+
+- DigitalOcean Singapore, 1 vCPU / 2 GB, Ubuntu 24.04. `ssh root@168.144.143.203`, repo `~/oil-change-predictor`, `alias dc='docker compose -f docker-compose.prod.yml'`.
+- Prompts: `root@ubuntu…#` = server, `➜` = Mac.
+- Standard deploy: `git status --short` (must be empty) → `git pull && dc build && dc run --rm api python -m scripts.migrate && dc up -d` → `dc ps` (api/db/ui healthy, caddy Up) → `git log --oneline -1`.
+- DB change? Run `systemctl start ocp-backup.service` first.
+- Backups: /root/backups, `journalctl -u ocp-backup`, `scripts/restore_test.sh`.
+- .env keys (values never in git): UI_PASSWORD (changed), DOMAIN, OLD_DOMAIN, GEO_EXPERT_PHONE, CONTACT_PHONE (to set), OIL_INTERVAL_KM (default 15000), later Artlab credentials.
+- Data now: demo seed + 2 trucks/1 company added by Ari (42 trucks, 107 services, 7 companies).
+- Server DNS had a one-time resolver timeout (Oct 22); fine since.
+
+---
+
+## 7. Open questions
+
+1. Backblaze B2 for off-server backups — yes/no?
+2. Who manages geoexpert.mn DNS (accountant's invoice / website builder)? Add A record `app` → 168.144.143.203.
+3. Personal-data law for driver data + photos abroad.
+4. 8.5 — running, finished, or not started?
+5. Artlab: test account, API docs, answers on IP restriction / separate user / activity log / plate+phone fields / lump-sum payments.
+6. Mine trucks: engine-hours interval (skipped for now).
+7. Optional: different orange text when the photo itself failed («Зураг уншигдсангүй — дахин авах эсвэл гараар оруулна уу»).
+8. Ari proofreads Mongolian wording of 9.5a/9.5b screens.
+9. 8.0b Label Studio token reset.
+
+---
+
+## 8. Open risks
+
+| ID | Risk | Mitigation |
+|---|---|---|
+| RISK-06 | Personal data leak (phones, photos, Excel export) | Roles (8.5) before real users; export only manager + accountant; photos via login-only endpoint; gitleaks in CI; public repo holds no data |
+| RISK-09 | Ultralytics YOLO AGPL-3.0 | Repo public helps; decide license before commercial scaling |
+| RISK-22 | Artlab credentials = full write access to accounting | Read-only allow-list in our code + tests; IP restriction; separate API user; test account first; approval before production |
+| RISK-23 | Backups only on the droplet | 8.2c off-server copy |
+| RISK-24 | Lower plate reading after 2560 px resize on whole-truck photos | 8.4c measurement |
+| RISK-25 | Simple target-km rule may be less accurate than ML for some trucks | Compare on real data after 2–3 months (D-112) |
+| RISK-26 | Reminders list long on real data (every truck 30+ days) | Expected by design; watch workload |
+
+---
+
+## 9. Ready briefs + Later list
+
+**9.2 brief (ready):**
+```
+TASK ID: 9.2 — Keep each saved service photo 12 months (D-109).
+- On save: keep resized JPEG (≤2560 px, EXIF stripped), linked to the service (migration).
+- Docker volume on server; shown only via login-protected endpoint, never a public URL.
+- Daily job deletes photos older than 12 months (timer like backups).
+- Record text «Зураг хадгалагдахгүй» → «Зураг 12 сар хадгалагдана».
+- Dashboard truck history: small photo per service (tap → full size); «Зураггүй» when none.
+- Report disk use per 100 photos; propose photo backup (do not build).
+DONE WHEN: tests pass, CI green (gh run link); runbook section in deploy.md.
+DO NOT: keep photos of retakes/unsaved attempts; commit photos.
+```
+
+**Later list (merged):** admin edit page (view/edit/delete records); search-page camera like record page; auto-km for new routes (D-116); automatic Viber/SMS sending (D-115); new ML model without route on real data + comparison; promote/retrain plate reader with kept photos (field-test set, segmentation fix for 4/27 plates); fallback upload of original photo when browser processing fails (D-107); read-only demo mode for sharing; README polish; Next.js frontend; data drift monitoring + continuous training; offline mode for mine sites; LLM assistant for drivers; oil lab reports.
+
+---
+---
+
+# ARCHIVE — v2.18 (capstone, unchanged; headings demoted)
+
+### 1. Agreed scope (frozen — changes need Ari's approval)
 
 **Form (D-061):** internal company website for Geo-Expert only (opened in the phone browser) — NOT a native mobile app. Login required, HTTPS (needed for browser camera). Instructor gets a demo login.
 
@@ -35,7 +214,7 @@
 
 ---
 
-## 2. Requirement checklist (from AI Academy Asia slides)
+### 2. Requirement checklist (from AI Academy Asia slides)
 
 Status: ✅ covered by plan · 🟡 covered but at risk · 🔴 gap — action needed
 
@@ -59,7 +238,7 @@ Status: ✅ covered by plan · 🟡 covered but at risk · 🔴 gap — action n
 
 ---
 
-## 3. Phase plan (v2.4 — re-planned 2026-10-16, D-081/D-082)
+### 3. Phase plan (v2.4 — re-planned 2026-10-16, D-081/D-082)
 
 All tasks run on the Mac, branch main (D-080). One Claude Code session per task.
 
@@ -76,7 +255,7 @@ All tasks run on the Mac, branch main (D-080). One Claude Code session per task.
 
 **Commit rule (RISK-14):** every task ends with tests run + commit + push before the handoff. Uncommitted work = not done.
 
-## 4. Task list
+### 4. Task list
 
 | ID | Task | Owner | Status |
 |---|---|---|---|
@@ -123,7 +302,7 @@ All tasks run on the Mac, branch main (D-080). One Claude Code session per task.
 | UI-RETIRE | Merge any remaining `ui` commits into main, delete `ui` (local + origin), rewrite docs/IMAC_BRIEFING.md as backup guide, update CLAUDE.md | Mac | TODO (origin/ui still exists, seen Oct 16) |
 | 5.9 | Merge ui → main + local demo prep | Integrator (Mac) | ✅ DONE Oct 13 — merge 32814da, CI green; demo path 14/14 at 390 px; docs/demo_runbook.md; plate reading end-to-end = 4.3 results (27/27 detected, 9 auto-read, 0 wrong) |
 | 5.9b | HOTFIX home navigation (Сануулга card not clickable after T7) | Mac | ✅ DONE Oct 13 — st.button + st.switch_page; «Сүүлд үзсэн» dead spot fixed; 0 console errors; 654 tests |
-| 5.3d | Camera hint «Дугаарыг 2–3 метрээс, урдаас нь авна уу» (+ plate frame if easy) | Mac (iMac-OK) | TODO — small; cut #0 if behind |
+| 5.3d | Camera hint «Дугаарыг 2–3 метрээс, урдаас нь авна уу» (+ plate frame if easy) | Mac (iMac-OK) | ❓ status unknown — no handoff received; run before freeze or cut. Ari also instructs workers to photograph closer |
 | 0.7 | Repo cleanup (branch chore/cleanup): placeholders removed, README rewritten (run, demo, honest results), pretrained .pt → models/pretrained/, parent CLAUDE.md → ~/Downloads/Capstone/old/ | Mac | ✅ MERGED Oct 16 (PR #1, main = 8d9af2b, includes 3.6a) |
 | 7.0 | Progress-check demo (local) | Ari | ✅ DONE Oct 13 — went well |
 | 3.5 | Plate fallback for small plates / harsh light: detect at 1280 on no_plate; wider crop + upscale + CLAHE on empty/low_confidence; tune on val, report test, wrong auto-fills must stay 0; time-box 3 h. Note: 4/27 test plates fail segmentation ("empty") — the main target | CV Eng | TODO — cut #0 if behind |
@@ -131,22 +310,29 @@ All tasks run on the Mac, branch main (D-080). One Claude Code session per task.
 | 3.6 | Retrain char CNN on old + new labels (YOLO unchanged, D-081) | CV Eng | ✅ DONE Oct 16 — v1 KEPT (D-086). 42 photos after dedupe (D-084), chars 784 → 994; old test (27): exact 19 → 20, auto-filled 9 → 14, wrong 0 → 0; McNemar exact p = 1.0; v2 saved as char_cnn_v2.onnx; 675 tests pass. Field tests: none exist |
 | 3.6b | Char CNN: field augmentation + val-only tuning (epochs, strength, per-model threshold); test once; target D-087 | CV Eng | ✅ DONE Oct 16 — target NOT met: val winner = v2 recipe (no aug, 60 ep, thr 0.60, weights = v2); test v1 9 / v2 14 / v3 14 of 27 correct auto-fills, 0 wrong (need 18) → v1 stays. Augmentation: more exact reads on val but confident errors → needs thr 0.70–0.95 → fewer safe auto-fills. Ceiling 23/27 (4 plates fail segmentation). Recognizer reads threshold from char_cnn_version.json (D-089). 693 tests pass |
 | 3.6c | Fix ocr_extend.py section marker "## Task 3.6" (prefix of "## Task 3.6b" → re-running compare deletes the 3.6b section) | CV Eng | LATER — 5 min, before anyone re-runs `ocr_extend compare` |
-| 1.6 | New MN–China / MN–Russia destinations: OSRM API script (also R1), migration 005, generator config → regenerate, retrain, evaluate, SHAP, export; ml_results before/after | Data + ML Eng | TODO — waits on Ari route list (name | city | country | border crossing). Hard stop Sat Oct 17 |
+| 5.6 | Phone readability fix + redeploy | Frontend | ✅ DONE Oct 19 — Montserrat (T7) replaced by system font (San Francisco), body 400 / headings 600, greys darkened to WCAG AA on 8 screens incl. Lockdown simulation; Ari confirmed readable on iPhone. Commits 6fd1e34, 8cf5576. Open: icons show stray letters with Lockdown ON (workaround: Lockdown off for this site); 'Take Photo' from upload button not yet confirmed on device |
+| 3.6d | Serve char CNN v2 as a product decision (override) | CV Eng | ✅ DONE Oct 19 — served char_cnn.onnx = v2 (ebd12a4c), threshold 0.60 (val-chosen in 3.6b); v1 kept as char_cnn_v1.* + rollback command in handoff. Test (27): exact 19 → 20, char acc .810 → .815, correct auto-fills 9 → 14, wrong 0 → 0, manual 18 → 13; McNemar p = 1.0. Gain is mostly higher confidence, not better reading → worker still confirms every plate. Deployed (api restarted only). D-097 |
+| 5.7 | Phone photo path | Frontend | ✅ Upload from iPhone works (used for demo); live camera blocked on Ari's iPhone (browser/Lockdown settings) — not fixed. 5.7b EXIF-orientation check: status unknown |
+| 7.3 | Defense | Ari | ✅ DONE Oct 20 — went well |
+| 1.6 | New MN–China / MN–Russia destinations (OSRM API, migration 005, regenerate, retrain, evaluate, SHAP, export) | Data + ML Eng | ✅ DONE Oct 17 — part 1 accepted: 4 routes (Ганцмод from Tavan Tolgoi 247 km, Сэхээ 928, Улаан-Үд 578, Кош-Агач 1,786; OSRM, crossing as waypoint, cache, no network in tests), migration 005, 11 destinations, N8 two-reading carve-out. Part 2: Ridge 12.2 → 12.3 MAE, B0 12.3 → 13.3 (gap grows from baseline weakness, not model gain). Part 2 handoff + commit status to confirm. D-092 |
+| 2.9 | Noise floor + vehicle-grouped CV tuning + 80% prediction range; test once | ML Eng | ✅ DONE Oct 17 — oracle test 11.34 · Ridge 12.30 · B0 13.28 · B1 17.19; Ridge closes ~half the reachable gap (vs B0 +0.98 d, CI +0.38..+1.55). Tuned best CV gain +0.06 < 0.3 → NOT kept (D-093). Range: train OOF residual p10–p90, coverage 83.2% on test, width ~40 d; API v0.9 range_low/high_date. serving_params re-exported (9 routes, B0 53 d). 781 tests. D-094 |
+| 5.5 | One-tap «Viber-ээр илгээх» (viber://forward, pre-filled Mongolian text) + «Илгээсэн үү?» → POST /sent | Frontend | ✅ ACCEPTED Oct 16 (D-091) — 740 tests; real-phone check pending (Android empty-tab risk) |
 | 7.2a | Live-demo photo test: print the demo plate "1001 УБА" on paper, check the detector + CNN read it (detector was trained on real truck plates — may fail); fallback = demo photo file or manual entry | Ari + PM | TODO — by Oct 16 |
 | 4.5 | Demo seed (RISK-06) | Data Eng | ✅ ACCEPTED Oct 12 — 40 trucks / 105 services placed with the served model; as of seed day: new 8 / returning 11 / loyal 17 / at risk 4, due list 7, methods ridge 29 / b1 9 / b0 2; refuses non-empty DB; demo path in docs/demo_data.md; 532 tests pass |
 | 5.0 | UI design mockup (Design canvas, phone flow: login, home, record, search, card) — Ari + PM iterate, then addendum to iMac | PM + Ari | ▶ IN REVIEW (v2: modern look, simplified card) |
-| 6.1 | Deploy prep (host-agnostic): migration 004 (labels) + apply-missing-migrations script (D-041, D-069) + docker-compose.prod.yml (db + api + ui + Caddy HTTPS, models mount, export_serving step) + runbook docs/deploy.md | Backend Eng | TODO — NEXT (brief re-issued Oct 14); must be done before Sun deploy |
+| 6.1 | Deploy prep (host-agnostic): migration 004 (labels) + apply-missing-migrations script (D-041, D-069) + docker-compose.prod.yml (db + api + ui + Caddy HTTPS, models mount, export_serving step) + runbook docs/deploy.md | Backend Eng | ✅ ACCEPTED Oct 16 (with 6.2 + 4.4b) — prod compose (db/api/ui/Caddy 2.11.7, only Caddy exposed), scripts/migrate.py (idempotent), migration 004, docs/deploy.md, CI with Postgres + UI tests + image builds; local https://localhost OK; RAM ≈ 430 MiB; 731 tests. D-090 |
 | 6.2 | CI: Postgres service so DB tests run + requirements-ui.txt so UI screen tests run; build API image; known flake: exit 134 after all tests pass (native teardown) → handle | Backend Eng | ▶ BRIEF RE-ISSUED Oct 12 (with 6.1 + 4.4b) |
 | 4.4b | Add `segment` to GET /reminders/due items (contract v0.7) so the UI drops its copy of the D-007 rule | Backend Eng | ▶ in 6.1 brief (status unknown) |
-| 6.3 | Deploy: login + HTTPS + domain (D-061); host option A (free tiers split) or B (one VPS, docker compose) — Ari to choose; schema_migrations table & apply script (D-041) | Backend Eng | TODO — Sun Oct 18 (D-081); waits on hosting answer |
-| 6.4 | Load test (P50/P95/P99) | Backend Eng | TODO |
+| 6.3 | Deploy: login + HTTPS + domain (D-061) | DevOps | ✅ DONE Oct 19 — DigitalOcean Singapore 1 vCPU / 2 GB, Ubuntu 24.04, ufw 22/80/443, key-only SSH, swap, Docker 29.9.1; repo via read-only deploy key; models rsynced (byte-identical); .env root-only (secrets typed by Ari); migrate 001–005 (2nd run no-op); seed as-of 2026-10-20: 40 trucks / 105 services, new 8 / returning 11 / loyal 17 / at risk 4, 8 due; Let's Encrypt via sslip.io. Runbook fixes: openrsync path bug, real clone steps, 8 due. Phone test OK (mobile data). Test truck 1001УАМ (manual entry, not auto-fill) deleted |
+| 6.4 | P99 latency | DevOps | ✅ DONE Oct 19 — server (private net, 200 calls): plate read P50 430 / P99 1,105 ms (model work P99 464 ms; synthetic photo, CNN step not included), prediction P99 111 ms; /health over HTTPS from UB home Wi-Fi P99 463 ms (ping ~111 ms → mostly network). ~8× slower than Mac (1 shared vCPU). Not measured: concurrent users. docs/latency_6_4.json, deploy.md §10 |
 | 7.1 | 13-slide deck | PM + Ari | ▶ v1 exists (PDF, 13 slides, follows course structure); corrections sent (slides 1,2,3,4,5,7,8,9,13); slide 12 costs: MVP ≈ $15 (DO 2 GB $12 + backup $2.40), Mid ≈ $45 + SMS, Enterprise $300+ [ESTIMATE]; ROI waits on Ari price + margin |
+| 7.1b | Teacher request: 3 professional-but-understandable architecture diagrams — DB architecture (slide 3), ML + CV training architecture (slide 5), system architecture + MLOps (slide 8); same colours, ≤8 boxes, real tool names + Mongolian labels | PM + Ari | TODO — after freeze, Sun/Mon |
 | 6.5 | TCO 3 tiers + ROI | PM + Ari | TODO |
 | 7.2 | Demo script + backup video + rehearsals | Ari | TODO |
 
 ---
 
-## 5. Decisions log
+### 5. Decisions log
 
 | ID | Date | Decision | Reason | Status |
 |---|---|---|---|---|
@@ -240,11 +426,19 @@ All tasks run on the Mac, branch main (D-080). One Claude Code session per task.
 | D-087 | 2026-10-16 | CV product target (set BEFORE 3.6b): ≥ 18/27 (2/3) old test plates auto-filled correctly with 0 wrong auto-fills; model promoted only if met, else v1 stays served | Ari: CV must be useful in practice | APPROVED by Ari |
 | D-088 | 2026-10-16 | 3.6b result: augmentation did not help (confident errors); val-chosen model = v2 recipe; test 14/27, 0 wrong → D-087 not met → v1 stays served, v2/v3 saved. Next CV levers = character segmentation (4/27 plates never split into 7 chars, ceiling 23/27) + more labeled photos + field-test set. CV work stops until after 6.1 | 3.6b handoff | APPROVED (PM) |
 | D-089 | 2026-10-16 | Changes D-065: auto-fill threshold stored per served model in models/plate_ocr/char_cnn_version.json {threshold, served_sha256_8}; recognizer refuses to load on hash mismatch (503 + log); default 0.6 if absent (today = 0.6, v1). Threshold is chosen on validation only, never on test | 3.6b handoff | APPROVED (PM) |
+| D-090 | 2026-10-16 | Deploy design: migrate + seed run inside the API image (DB port never exposed); export_serving runs on the Mac, then model files (incl. char_cnn_version.json, serving_params.json) are rsynced to the server; Caddy forwards only /health to the API, everything else to the UI; CI allows only 3 skips (opt-in browser test + 2 real-ONNX tests), any DB/UI skip fails CI | 6.1 handoff | APPROVED (PM) |
+| D-091 | 2026-10-16 | One-tap Viber button (5.5) brought back from Later (overrides that part of D-082). No Viber API, tokens or automatic sending (D-010) | Ari | APPROVED by Ari |
+| D-092 | 2026-10-17 | 1.6 routes confirmed by Ari: Ганцмод (Tavan Tolgoi → Gashuunsukhait → Ganqimaodu), Сэхээ (UB → Shiveekhuren → Ceke), Улаан-Үд (UB → Altanbulag → Ulan-Ude), Кош-Агач (UB → Tsagaannuur → Kosh-Agach). Distances from OSRM API (counts as R1 external API). AI-made route research was checked and corrected before use (D-032) | Ari + 1.6 part 1 | APPROVED by Ari |
+| D-093 | 2026-10-17 | 2.9 keep rule, fixed BEFORE results: a new served ML model only if vehicle-grouped CV MAE beats current Ridge by ≥ 0.3 days; test run once at the end | PM, same principle as D-085 | APPROVED (PM) |
+| D-094 | 2026-10-17 | 2.9 result: no model change (CV gain +0.06 d). Approved exception to D-081: 80% prediction range added (no feature/model change). Noise floor is for THIS generator only; real floor unknown. Deploy must run export_serving so ranges + 9 routes are served. Known limitation: cleaner cannot tell which reading is wrong when a truck has only 2 readings (1.6 N8 carve-out) → Later: flag for manual review | 2.9 handoff | APPROVED (PM) |
+| D-095 | 2026-10-17 | Hosting: DigitalOcean Singapore 2 GB droplet, everything (Caddy, UI, API, Postgres) on one server via docker compose; address <ip>.sslip.io (free, Let's Encrypt). $20 billing alert. AWS Lightsail/EC2 and Vercel considered: Vercel cannot run Streamlit/Docker; AWS = mid tier on TCO slide | Ari: "do it your way" | APPROVED by Ari |
+| D-096 | 2026-10-19 | UI font = phone system font (replaces Montserrat from T7) for readability and identical rendering with iOS Lockdown Mode | 5.6 | APPROVED by Ari (phone check) |
+| D-097 | 2026-10-19 | Serve char CNN v2 at threshold 0.60 as an EXPLICIT OVERRIDE of D-085/D-087 (rules NOT met): v2 ≥ v1 on every test metric with 0 wrong auto-fills; gain not statistically proven. Presented honestly as a product decision; worker confirms every plate. v1 kept for rollback. Supersedes the "v1 stays served" part of D-086/D-088 | Ari | APPROVED by Ari |
 ---
 
-## 6. Open questions
+### 6. Open questions
 
-1. Hosting (6.3, Sun Oct 18): DigitalOcean Singapore 2 GB (PM recommendation) vs teacher-provided server/credits — STILL OPEN, needed by Sat Oct 17
+1. ~~Hosting~~ DONE (D-095)
 1b. Route list for 1.6: one line per destination — Mongolian name | city | country | border crossing — needed Fri Oct 16
 2. Domain: does Geo-Expert have one for service.<domain>? Else <ip>.sslip.io
 3. ROI inputs from Ari: typical price of one truck oil change (₮) + rough margin % (slide 12)
@@ -258,7 +452,7 @@ All tasks run on the Mac, branch main (D-080). One Claude Code session per task.
 9. Personal-data law: storing driver data on a foreign server — check before REAL use (not blocking defense)
 10. Does oil grade change the interval? (stays out, D-034)
 
-## 7. Risks
+### 7. Risks
 
 | ID | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|---|
@@ -277,7 +471,7 @@ All tasks run on the Mac, branch main (D-080). One Claude Code session per task.
 | RISK-16 | ~~UI not started~~ CLOSED — UI built, merged, demo Oct 13 OK | — | — | — |
 | RISK-17 | iPhone HEIC photos rejected (422) → recording fails on phone | Med | High | 4.4 adds pillow-heif; test camera upload on a real phone in 5.x |
 | RISK-18 | Repo PROJECT_STATE behind (v2.12 seen in 3.6 session) → sessions miss recent decisions | HIT | Med | Ari commits PROJECT_STATE v2.14 now, before the next session |
-| RISK-21 | Cloud deploy on Sun Oct 18 leaves 1 day before defense; first deploys often break (HTTPS, camera, RAM) | High | High | 6.1 prep finished and tested locally through Caddy before Sunday; local backup video Sat Oct 17; hosting decided by Sat |
+| RISK-21 | ~~Cloud deploy late~~ CLOSED Oct 19 — deployed and phone-tested | — | — | 6.1 prep finished and tested locally through Caddy before Sunday; local backup video Sat Oct 17; hosting decided by Sat |
 | RISK-19 | Finished Mac work not on origin/main | CLOSED Oct 12 | — | Only 1.1c+4.5 was missing → 17278bb pushed, CI green |
 | RISK-20 | Cloud deploy not started, 6 days left; depends on hosting answer | High | High | 6.1 prep is host-agnostic → run now; decide host by Oct 14; deploy Oct 15 |
 | RISK-14 | Uncommitted work lost or untested (2.4 found untracked; 1.2a draft lost before) | Med | High | Commit rule D-055: tests + commit + push before every handoff |
@@ -286,7 +480,7 @@ All tasks run on the Mac, branch main (D-080). One Claude Code session per task.
 
 ---
 
-## 8. Contracts (shared by all roles)
+### 8. Contracts (shared by all roles)
 
 **Repo structure**
 ```
@@ -321,7 +515,7 @@ oil-change-predictor/
 
 ---
 
-## 9. Slide map (13 slides → producing phase)
+### 9. Slide map (13 slides → producing phase)
 
 | # | Slide | Material from |
 |---|---|---|
@@ -341,12 +535,14 @@ oil-change-predictor/
 
 ---
 
-## 10. Later list (not in scope unless Ari approves)
+### 10. Later list (not in scope unless Ari approves)
 - Next.js production frontend (post-capstone, D-022)
 - Real SMS / Viber gateway integration (automatic Viber Business sending, D-082)
 - One-tap «Viber-ээр илгээх» button via viber://forward (D-082)
 - Admin data page: view / edit / delete companies, vehicles, services (D-082)
 - Promote char_cnn v2 after a field-test set exists (D-086, D-088); keep collecting + labeling photos
+- Cleaner: flag 2-reading ambiguous odometer errors for manual review instead of guessing (D-094)
+- ML: real service records, new features (driver, season × route, load), per-truck correction
 - Character segmentation fix (4/27 test plates fail) — task 3.5, Sat only if 6.1 done
 - Look at 4 test plates failing character segmentation
 - Automated data drift monitoring + continuous training
@@ -354,3 +550,15 @@ oil-change-predictor/
 - Multi-branch / multi-user roles beyond one oil changer + admin
 - Offline mode for mine sites without signal
 - LLM chat assistant for drivers
+
+---
+
+### 11. Post-defense housekeeping (superseded by §2 of v2.19) (Oct 21+)
+1. Change `UI_PASSWORD` on the server (`nano .env` → `docker compose -f docker-compose.prod.yml up -d ui`); examiners had the old one.
+2. Decide the droplet: keep (~$12/month, billed hourly) for Geo-Expert pilot, or Destroy to stop billing (powered-off still bills).
+3. Reset Label Studio access token (was visible in a screenshot, Oct 16).
+4. Commit leftovers: 7.1c slide facts files if still uncommitted; deploy.md "(v1)" → "(v2)".
+5. Fix 3.6c (OCR doc section-marker bug) before anyone re-runs ocr_extend/ocr_tune.
+6. Field-test set: collect + label real failed phone photos → re-evaluate v2 vs v1 honestly.
+7. Post-capstone roadmap (Later list): real Geo-Expert service records → retrain ML; admin data page (edit/delete); read-only demo mode for public sharing; real domain (app.<company>.mn); automatic Viber Business sending; character-segmentation fix / whole-plate reader; cleaner flags ambiguous 2-reading errors; live camera on iPhone.
+
