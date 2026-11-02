@@ -30,7 +30,7 @@ USER appuser
 WORKDIR /app/src/ui
 
 # API base URL: override at run time. "api" = the API service name in a compose network.
-# UI_PASSWORD is NOT set here (a secret): pass it at run time (-e / compose env / .env).
+# No secret in this image or its env: since task 8.5r the API owns UI_PASSWORD + AUTH_SECRET.
 ENV API_URL=http://api:8000
 
 EXPOSE 8501

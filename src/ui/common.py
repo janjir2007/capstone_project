@@ -40,6 +40,7 @@ SEARCH_PENDING = "search_pending"  # query to search on arrival
 RECENT = "recent_vehicles"         # "Сүүлд үзсэн": [{id, identifier, company, status}], this session only
 RECENT_MAX = 5
 DIAG = "diag"                      # True -> record result shows the photo size (8.4, ?diag=1)
+LOGIN_ON = "login_on"              # True -> the API has a password: home shows «Гарах» (8.5r)
 
 # DESIGN v5 (T9, mockup). Type: home title 26/600 · screen title 20/600 · section 13/600 grey
 # (or 16/600 dark) · body 15/400 · labels 14/500 · big numbers 34/600 (status) and 26/600 (tiles).
@@ -124,6 +125,10 @@ h2, h3 {font-size: 14px !important; font-weight: 600 !important; color: var(--mu
 .stButton button[kind="tertiary"] {min-height: 44px; padding: 0 4px; color: var(--pri);}
 .stButton button[kind="tertiary"] p {font-size: 15px; font-weight: 600;}
 .stButton button[kind="tertiary"]:hover {color: var(--pri-dark);}
+/* 8.5r: «Гарах» is a link (the API clears the HttpOnly cookie), styled like a tertiary button */
+a.logout {display: inline-flex; align-items: center; min-height: 44px; padding: 0 4px; color: var(--pri);
+  font-size: 15px; font-weight: 600; text-decoration: none;}
+a.logout:hover {color: var(--pri-dark);}
 .st-key-link_center {display: flex; justify-content: center;}
 
 /* cards */
@@ -444,12 +449,24 @@ def recent_rows(key_prefix: str) -> bool:
     return True
 
 
+def session_cookie() -> str | None:
+    """The browser's login cookie. Streamlit reads it from the page request / websocket
+    handshake (HttpOnly is fine: the server reads it, JavaScript never does). Tests replace this."""
+    return st.context.cookies.get(auth.COOKIE_NAME)
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def auth_status(token: str | None) -> dict | None:
+    """auth.status, cached 60 s per token: every rerun checks, without one API call per click.
+    An ApiError is not cached (Streamlit never caches an exception)."""
+    return auth.status(token)
+
+
 def logout_button() -> None:
-    """«Гарах» at the bottom of a screen (only when login is on)."""
-    if auth.login_required():
-        if st.button("Гарах", key="logout", type="tertiary"):
-            st.session_state["authed"] = False
-            st.rerun()
+    """«Гарах» at the bottom of home (only when login is on). A plain link in the SAME tab:
+    GET /auth/logout deletes the cookie and shows the login page."""
+    if st.session_state.get(LOGIN_ON):
+        html_block(f'<a class="logout" href="{auth.LOGOUT_URL}" target="_self">Гарах</a>')
 
 
 # --- navigation ----------------------------------------------------------------------

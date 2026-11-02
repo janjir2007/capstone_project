@@ -45,15 +45,16 @@ UI_BROWSER=1 UI_BROWSER_PLATE="1001 УБА" UI_SCREENSHOT_DIR=~/Desktop/ui_scree
 Without `UI_BROWSER=1`, or without Playwright installed, this file **skips** (it never fails
 collection, so CI and the normal `pytest` are unaffected).
 
-No `.env` entries are needed for the UI in local dev (all defaults are in git). In production only
-`UI_PASSWORD` is secret (server `.env`, never committed); `API_URL` is set by compose (§3).
+No `.env` entries are needed for the UI in local dev (all defaults are in git). Since task 8.5r the
+UI has **no secret at all**: `UI_PASSWORD` + `AUTH_SECRET` belong to the **API** (login page, 30-day
+cookie; docs/deploy.md §13). `API_URL` is set by compose (§3).
 
 ## Environment variables
 
 | Variable | Default | Meaning |
 |---|---|---|
 | `API_URL` | `http://localhost:8000` locally · `http://api:8000` in the Docker image | FastAPI base URL, no trailing slash needed |
-| `UI_PASSWORD` | unset | Company password (D-061). **Unset or empty → no login** (local dev only). Never commit it; pass at run time |
+| *(login)* | — | Decided by the API (`GET /auth/check`). API without `UI_PASSWORD` → no login (local dev). With it, the login only works behind Caddy (`/auth/*` on the same address), e.g. the local stack of docs/deploy.md §6 |
 
 Theme and limits (primary color, background, 15 MB upload, minimal toolbar) live in
 `src/ui/.streamlit/config.toml`. Streamlit reads that file from the **current folder**, so the
@@ -73,7 +74,7 @@ curl http://localhost:8000/health            # {"status":"ok","db":"ok"}
 # UI: start FROM src/ui/
 cd src/ui
 ../../.venv/bin/streamlit run app.py         # http://localhost:8501
-# with login:   UI_PASSWORD=demo-pass ../../.venv/bin/streamlit run app.py
+# with login:   only via Caddy (docs/deploy.md §6, https://localhost); the API owns the password
 # other API:    API_URL=http://192.168.1.20:8000 ../../.venv/bin/streamlit run app.py
 ```
 
@@ -103,8 +104,7 @@ Run against the local compose API (same Docker network, API reached by service n
 # so read it from the running API container instead of typing it:
 NET=$(docker inspect ocp-api --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{end}}')
 docker run --rm --name ocp-ui -p 8501:8501 --network "$NET" \
-  -e UI_PASSWORD=demo-pass \
-  ocp-ui
+  ocp-ui                       # login: decided by the API (8.5r), no password env here
 # API_URL defaults to http://api:8000 in the image; override with -e API_URL=...
 docker inspect ocp-ui --format '{{.State.Health.Status}}'   # "healthy" after ~15 s
 ```
@@ -134,7 +134,7 @@ The UI does not edit compose files. Values the prod compose needs:
       dockerfile: src/ui/Dockerfile
     environment:
       API_URL: http://api:8000          # internal network; the API need not be public (D-061)
-      UI_PASSWORD: ${UI_PASSWORD}       # from .env on the server, never committed
+      # (8.5r: no UI_PASSWORD here any more; it moved to the api service with AUTH_SECRET)
     expose:
       - "8501"                          # reverse proxy (Caddy, HTTPS) -> ui:8501
     depends_on:

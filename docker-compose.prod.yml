@@ -68,6 +68,10 @@ services:
       CONTACT_PHONE: ${CONTACT_PHONE:-}
       # Task 9.5a: target km of the next oil change = odometer at the last change + this.
       OIL_INTERVAL_KM: ${OIL_INTERVAL_KM:-15000}
+      # Task 8.5r (D-117): the API serves the login page and signs the 30-day cookie, so the
+      # password lives here now (not in ui). New UI_PASSWORD -> every cookie invalid = all logged out.
+      UI_PASSWORD: ${UI_PASSWORD:?set UI_PASSWORD in .env (company login, D-061)}
+      AUTH_SECRET: ${AUTH_SECRET:?set AUTH_SECRET in .env (openssl rand -hex 32, task 8.5r)}
     volumes:
       - ./models:/app/models:ro
     expose:
@@ -85,8 +89,7 @@ services:
       dockerfile: src/ui/Dockerfile
     image: ocp-ui:prod
     environment:
-      API_URL: http://api:8000
-      UI_PASSWORD: ${UI_PASSWORD:?set UI_PASSWORD in .env (company login, D-061)}
+      API_URL: http://api:8000   # login is checked by the API (/auth/check), no password here
     expose:
       - "8501"
     depends_on:

@@ -2,7 +2,8 @@
 
 Run:  cd src/ui && streamlit run app.py   (from src/ui/ so .streamlit/config.toml = theme applies)
 Env:  API_URL (default http://localhost:8000)
-      UI_PASSWORD (unset -> no login, local dev; D-061)
+Login (task 8.5r, D-117): the API decides. UI_PASSWORD + AUTH_SECRET live in the API's
+environment; unset UI_PASSWORD there -> no login (local dev). The UI only reads the cookie.
 """
 
 import sys
@@ -16,7 +17,7 @@ if str(ROOT) not in sys.path:
 
 import streamlit as st  # noqa: E402
 
-from src.ui import auth, common  # noqa: E402
+from src.ui import api_client, auth, common  # noqa: E402
 
 st.set_page_config(
     page_title="Тос солилт",
@@ -32,22 +33,37 @@ if st.query_params.get("diag") == "1":
 
 
 def login_screen() -> None:
-    """Password screen; shown only when UI_PASSWORD is set."""
+    """Not logged in (or the cookie has just expired): only a link to the API's login page.
+    Behind Caddy this screen is rare: Caddy already sends a browser without a valid cookie
+    to /auth/login before Streamlit is reached."""
     common.header("Нэвтрэх")
-    with st.form("login", border=False), st.container(key="card_login"):
-        password = st.text_input("Нууц үг", type="password")
-        if st.form_submit_button("Нэвтрэх", width="stretch", type="primary"):
-            if auth.check_password(password):
-                st.session_state["authed"] = True
-                st.rerun()
-            st.error("Нууц үг буруу байна.")
+    with st.container(key="card_login"):
+        common.html_block("<p>Үргэлжлүүлэхийн тулд нэвтэрнэ үү.</p>")
+        # target="_self": the same tab; the API's page sets the cookie and comes back here
+        common.html_block(f'<a class="logout" href="{auth.login_url()}" target="_self">Нэвтрэх</a>')
 
 
-if auth.login_required() and not st.session_state.get("authed"):
-    # Only the login page exists until the password is right, so no other
-    # page can be opened by URL.
-    st.navigation([st.Page(login_screen, title="Нэвтрэх")], position="hidden").run()
+check_error: api_client.ApiError | None = None
+try:
+    status = common.auth_status(common.session_cookie())
+except api_client.ApiError as exc:
+    status, check_error = None, exc   # the API did not answer: open nothing (fail closed)
+
+
+def connection_error_screen() -> None:
+    """The login check failed (API down): the usual connection message, no screens."""
+    common.header("Нэвтрэх")
+    if check_error is not None:
+        common.show_api_error(check_error)
+
+
+if status is None:
+    # Only the login page exists until the API accepts the cookie, so no other
+    # page can be opened by URL (login-bypass guard, 5.3).
+    gate = login_screen if check_error is None else connection_error_screen
+    st.navigation([st.Page(gate, title="Нэвтрэх")], position="hidden").run()
 else:
+    st.session_state[common.LOGIN_ON] = status.get("login_required", False)
     # Screens navigate with their own big buttons (DESIGN v2), so the menu is hidden.
     pages = [
         st.Page(common.HOME_PAGE, title="Нүүр", default=True),

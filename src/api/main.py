@@ -10,6 +10,7 @@ prediction is null and the model endpoints answer 503.
 """
 
 import logging
+import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -18,11 +19,12 @@ from typing import Any
 from fastapi import FastAPI
 from sqlalchemy import Engine
 
+from src.api.auth import LoginLimiter, load_auth_config
 from src.api.config import load_settings, oil_interval_km
 from src.api.config import model_dir as model_dir_from_env
 from src.api.db import create_db_engine
 from src.api.prediction import load_predictor
-from src.api.routers import destinations, health, plates, reminders, services, stats, vehicles
+from src.api.routers import auth, destinations, health, plates, reminders, services, stats, vehicles
 from src.cv.plate_reader import PlateRecognizer
 
 API_VERSION = "0.5.0"  # = docs/api_contract.md version
@@ -50,6 +52,8 @@ def create_app(engine: Engine | None = None, model_dir: Path | None = None) -> F
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         oil_interval_km()  # 9.5a: a bad OIL_INTERVAL_KM stops the start here, not every card request
+        # 8.5r: UI_PASSWORD + AUTH_SECRET read once; UI_PASSWORD set without AUTH_SECRET stops the start
+        app.state.auth = load_auth_config()
         app.state.engine = engine if engine is not None else create_db_engine(load_settings().database_url)
         folder = model_dir if model_dir is not None else model_dir_from_env()
         app.state.predictor = _load("prediction model", load_predictor, folder)
@@ -58,7 +62,10 @@ def create_app(engine: Engine | None = None, model_dir: Path | None = None) -> F
         app.state.engine.dispose()  # close pooled connections on shutdown
 
     app = FastAPI(title="Oil Change Predictor API", version=API_VERSION, lifespan=lifespan)
+    app.state.clock = time.time                # tests replace it to test token expiry and the lock
+    app.state.login_limiter = LoginLimiter()   # wrong-password counts, in memory (8.5r)
     app.include_router(health.router)
+    app.include_router(auth.router)
     app.include_router(vehicles.router)
     app.include_router(services.router)
     app.include_router(stats.router)

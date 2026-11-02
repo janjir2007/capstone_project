@@ -1,31 +1,32 @@
-"""Simple password gate (D-061).
+"""Login gate of the UI (task 8.5r, D-117; before: D-061 password form in Streamlit).
 
-The password comes from the env var UI_PASSWORD. If it is unset or empty
-(local development), there is no login. This module has no Streamlit import:
-the screen itself is in app.py.
+The UI no longer knows the password. The API serves the login page (/auth/login) and
+sets an HttpOnly cookie; Caddy checks that cookie before every request. The UI checks
+it a second time by asking the API (GET /auth/check), so a Caddy mistake or a direct
+connection to Streamlit still shows only the login link. This module has no Streamlit
+import: the cookie is read in app.py (st.context.cookies).
 """
 
-import hmac
-import os
+from urllib.parse import quote
+
+from src.ui import api_client
+
+COOKIE_NAME = "ocp_session"   # = src/api/auth.py COOKIE_NAME
+LOGIN_URL = "/auth/login"
+LOGOUT_URL = "/auth/logout"
 
 
-def required_password() -> str | None:
-    """The configured UI password, or None when login is disabled."""
-    return os.environ.get("UI_PASSWORD") or None
+def status(token: str | None) -> dict | None:
+    """{"login_required": bool} when this browser may use the app, None when it must log in.
 
-
-def login_required() -> bool:
-    """True when UI_PASSWORD is set, i.e. the login screen must be shown."""
-    return required_password() is not None
-
-
-def check_password(entered: str | None) -> bool:
-    """Compare the entered password with UI_PASSWORD in constant time.
-
-    Always True when login is disabled. compare_digest avoids leaking how many
-    leading characters were right through response timing.
+    Raises api_client.ApiError when the API cannot answer (shown as a connection error;
+    nothing is opened then either).
     """
-    expected = required_password()
-    if expected is None:
-        return True
-    return hmac.compare_digest((entered or "").encode(), expected.encode())
+    return api_client.auth_check(token)
+
+
+def login_url(next_path: str = "/") -> str:
+    """Link to the API's login page; after login the browser comes back to next_path."""
+    if not next_path.startswith("/") or next_path == "/":
+        return LOGIN_URL
+    return f"{LOGIN_URL}?next={quote(next_path, safe='')}"

@@ -87,6 +87,26 @@ def _request(method: str, path: str, **kwargs: Any) -> Any:
     raise ApiError(response.status_code, detail)
 
 
+def auth_check(token: str | None) -> dict | None:
+    """GET /auth/check with the browser's session cookie (task 8.5r).
+
+    200 -> {"login_required": bool}. 302/401/403 -> None (not logged in). A connection or
+    server error raises ApiError, so a broken API never counts as "logged in".
+    """
+    # The token is base64url + "." only, so it is safe as a raw header value.
+    headers = {"Cookie": f"ocp_session={token}"} if token else {}
+    try:
+        with httpx.Client(base_url=api_url(), timeout=TIMEOUT_SECONDS, transport=_transport) as client:
+            response = client.get("/auth/check", headers=headers)   # httpx does not follow the 302
+    except httpx.HTTPError as exc:
+        raise ApiError(0, str(exc)) from exc
+    if response.status_code == 200:
+        return response.json()
+    if response.status_code in (302, 303, 401, 403):
+        return None
+    raise ApiError(response.status_code, response.text)
+
+
 def lookup(query: str) -> dict:
     """GET /vehicles/lookup?q= -> {query, match_type, normalized, vehicles: [VehicleCard]}.
 

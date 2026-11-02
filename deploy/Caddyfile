@@ -1,4 +1,4 @@
-# Caddy = HTTPS reverse proxy in front of the Streamlit UI (task 6.1, D-061).
+# Caddy = HTTPS reverse proxy in front of the Streamlit UI (task 6.1, D-061; login 8.5r, D-117).
 # DOMAIN comes from .env (docker-compose.prod.yml). Caddy picks the certificate itself:
 #   a public name (app.geoexpert.mn, 1.2.3.4.sslip.io) -> Let's Encrypt, renewed automatically
 #   localhost                                           -> Caddy's own local CA (browser warns once)
@@ -7,15 +7,33 @@
 {$DOMAIN} {
 	encode zstd gzip
 
-	# Only the API's health check is public (uptime checks, docs/deploy.md).
-	# Every other API route stays inside the compose network (D-061).
+	# Public API routes: the health check (uptime checks, docs/deploy.md) and, since task 8.5r
+	# (D-117), the login pages. Every other API route stays inside the compose network (D-061).
 	handle /health {
 		reverse_proxy api:8000
 	}
 
-	# Everything else = the UI. reverse_proxy passes WebSockets (Streamlit's /_stcore/stream)
-	# by default. Request body limit = Streamlit's own 15 MB upload limit (+ form overhead).
+	# Login / logout / cookie check. X-Real-IP = the real TCP peer as Caddy sees it, which
+	# REPLACES any X-Real-IP the browser sent; the API counts wrong passwords per this IP
+	# (5 wrong -> 15 min lock), so a fake X-Forwarded-For cannot dodge the lock.
+	handle /auth/* {
+		request_body {
+			max_size 8KB
+		}
+		reverse_proxy api:8000 {
+			header_up X-Real-IP {remote_host}
+		}
+	}
+
+	# Everything else = the UI, but only with a valid login cookie: forward_auth asks the API
+	# (GET /auth/check, the browser's Cookie header copied) before EVERY request, including
+	# Streamlit's websocket /_stcore/stream. 2xx -> passed on; otherwise the API's 302 to
+	# /auth/login?next=<path> goes back to the browser.
+	# reverse_proxy passes WebSockets by default. Body limit = Streamlit's 15 MB upload limit (+ form).
 	handle {
+		forward_auth api:8000 {
+			uri /auth/check
+		}
 		request_body {
 			max_size 16MB
 		}

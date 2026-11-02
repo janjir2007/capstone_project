@@ -7,9 +7,10 @@ from datetime import date
 from pathlib import Path
 from urllib.parse import unquote
 
+import httpx
 import pytest
 
-from src.ui import auth, logic
+from src.ui import api_client, auth, logic
 
 SERVICE = {
     "id": 1,
@@ -308,25 +309,66 @@ def test_error_messages_connection_and_server() -> None:
     assert "500" in logic.error_messages(500, None)[0]
 
 
-# --- auth (D-061) -------------------------------------------------------------------------
+# --- auth (8.5r, D-117: the API checks the cookie) ---------------------------------------
 
-def test_no_password_means_no_login(monkeypatch) -> None:
-    monkeypatch.delenv("UI_PASSWORD", raising=False)
-    assert not auth.login_required()
-    assert auth.check_password("")
+def _auth_api(status: int, body: dict | None = None, seen: list | None = None):
+    def handle(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/auth/check"
+        if seen is not None:
+            seen.append(request.headers.get("cookie"))
+        if status == 302:
+            return httpx.Response(302, headers={"location": "/auth/login"})
+        return httpx.Response(status, json=body or {})
+    api_client.set_transport(httpx.MockTransport(handle))
 
 
-def test_empty_password_env_means_no_login(monkeypatch) -> None:
-    monkeypatch.setenv("UI_PASSWORD", "")
-    assert not auth.login_required()
+def test_auth_status_sends_cookie_and_reads_answer() -> None:
+    seen: list = []
+    try:
+        _auth_api(200, {"login_required": True}, seen)
+        assert auth.status("v1.abc.def") == {"login_required": True}
+        assert auth.status(None) == {"login_required": True}
+        assert seen == ["ocp_session=v1.abc.def", None]   # no cookie -> no Cookie header
+    finally:
+        api_client.set_transport(None)
 
 
-def test_password_checked(monkeypatch) -> None:
-    monkeypatch.setenv("UI_PASSWORD", "demo-pass")
-    assert auth.login_required()
-    assert auth.check_password("demo-pass")
-    assert not auth.check_password("wrong")
-    assert not auth.check_password(None)
+@pytest.mark.parametrize("status", [302, 401, 403])
+def test_auth_status_not_logged_in(status: int) -> None:
+    try:
+        _auth_api(status)
+        assert auth.status("v1.old.token") is None
+    finally:
+        api_client.set_transport(None)
+
+
+@pytest.mark.parametrize("status", [500, 503])
+def test_auth_status_api_error_is_not_logged_in(status: int) -> None:
+    """Fail closed: a broken API raises, it never counts as logged in."""
+    try:
+        _auth_api(status)
+        with pytest.raises(api_client.ApiError):
+            auth.status("v1.abc.def")
+    finally:
+        api_client.set_transport(None)
+
+
+def test_login_url() -> None:
+    assert auth.login_url() == "/auth/login"
+    assert auth.login_url("/record") == "/auth/login?next=%2Frecord"
+    assert auth.login_url("https://evil.com") == "/auth/login"
+
+
+def test_ui_and_api_use_the_same_cookie_name() -> None:
+    from src.api import auth as api_auth
+    assert auth.COOKIE_NAME == api_auth.COOKIE_NAME
+
+
+def test_ui_no_longer_reads_the_password() -> None:
+    """8.5r: UI_PASSWORD lives only in the API container now."""
+    ui = Path(__file__).resolve().parent.parent / "src" / "ui"
+    for path in ui.rglob("*.py"):
+        assert '"UI_PASSWORD"' not in path.read_text(encoding="utf-8"), path   # no env lookup of it
 
 
 VIEWS = ("home.py", "record.py", "search.py", "dashboard.py", "card.py", "reminders.py")

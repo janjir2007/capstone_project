@@ -19,7 +19,7 @@ import pytest
 st = pytest.importorskip("streamlit")
 from streamlit.testing.v1 import AppTest  # noqa: E402
 
-from src.ui import api_client  # noqa: E402
+from src.ui import api_client, common  # noqa: E402
 
 APP = str(Path(__file__).resolve().parent.parent / "src" / "ui" / "app.py")
 TODAY = "2026-10-12"
@@ -31,6 +31,9 @@ DESTINATIONS = [
     {"id": 6, "name": "Kyakhta (RU side of border)", "route_category": "mn_russia", "name_mn": ""},
     {"id": 7, "name": "Other / several / unknown", "route_category": "mixed"},
 ]
+
+
+GOOD_TOKEN = "v1.good.token"   # the only cookie FakeApi accepts when login_required
 
 
 class FakeApi:
@@ -50,6 +53,9 @@ class FakeApi:
         self.destinations: list[dict] = DESTINATIONS  # GET /destinations
         self.searches: list[str] = []               # q of every GET /vehicles/search (9.1)
         self.search_params: list[dict] = []         # all params of every GET /vehicles/search (9.1 step 2)
+        # 8.5r login: False = API without UI_PASSWORD (local dev). True = only GOOD_TOKEN passes.
+        self.login_required = False
+        self.auth_status = 200                      # 503 -> the login check itself fails
 
     # -- data ---------------------------------------------------------------
     def add_vehicle(self, identifier: str, company: str, identifier_type: str = "plate", **service) -> dict:
@@ -114,6 +120,12 @@ class FakeApi:
     # -- endpoints ----------------------------------------------------------
     def handle(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
+        if path == "/auth/check":
+            if self.auth_status != 200:
+                return httpx.Response(self.auth_status, json={"detail": "service unavailable"})
+            if self.login_required and request.headers.get("cookie") != f"ocp_session={GOOD_TOKEN}":
+                return httpx.Response(302, headers={"location": "/auth/login"})
+            return httpx.Response(200, json={"login_required": self.login_required})
         if path == "/destinations":
             return httpx.Response(200, json=self.destinations)
         if path.startswith("/vehicles/") and path.split("/")[-1].isdigit():
@@ -233,9 +245,9 @@ class FakeApi:
 
 @pytest.fixture
 def fake_api(monkeypatch):
-    """Fake backend behind the UI's HTTP client; login off; fresh cache."""
-    monkeypatch.delenv("UI_PASSWORD", raising=False)
+    """Fake backend behind the UI's HTTP client; login off; fresh cache; no browser cookie."""
     fake = FakeApi()
+    monkeypatch.setattr(common, "session_cookie", lambda: None)
     api_client.set_transport(httpx.MockTransport(fake.handle))
     st.cache_data.clear()
     yield fake
@@ -363,16 +375,42 @@ def test_no_password_env_opens_home(fake_api) -> None:
     assert "Гео-Эксперт" in html_blocks(at)
 
 
-def test_login_required_and_works(fake_api, monkeypatch) -> None:
-    monkeypatch.setenv("UI_PASSWORD", "demo-pass")
+def login_on(fake_api, monkeypatch, cookie: str | None) -> None:
+    """The API has a password; the browser sends this cookie (None = no cookie)."""
+    fake_api.login_required = True
+    monkeypatch.setattr(common, "session_cookie", lambda: cookie)
+
+
+@pytest.mark.parametrize("cookie", [None, "v1.bad.token"])
+def test_without_valid_cookie_only_login_link(fake_api, monkeypatch, cookie) -> None:
+    """8.5r: the password form is the API's page now; Streamlit shows only a link to it."""
+    login_on(fake_api, monkeypatch, cookie)
     at = run_app()
+    assert not at.exception
     assert texts(at.title) == ["Нэвтрэх"]
-    at.text_input[0].set_value("wrong")
-    at = click(at, "Нэвтрэх")
-    assert "Нууц үг буруу байна." in texts(at.error)
-    at.text_input[0].set_value("demo-pass")
-    at = click(at, "Нэвтрэх")
+    assert 'href="/auth/login" target="_self"' in html_blocks(at)
+    assert not at.text_input and not at.button
+
+
+def test_valid_cookie_opens_home_with_logout_link(fake_api, monkeypatch) -> None:
+    login_on(fake_api, monkeypatch, GOOD_TOKEN)
+    at = run_app()
     assert texts(at.title) == ["Сайн байна уу"]
+    assert 'href="/auth/logout" target="_self">Гарах</a>' in html_blocks(at)
+
+
+def test_login_off_has_no_logout_link(fake_api) -> None:
+    assert "/auth/logout" not in html_blocks(run_app())
+
+
+def test_login_check_failing_opens_nothing(fake_api) -> None:
+    """Fail closed: the API down is never "logged in"."""
+    fake_api.auth_status = 503
+    at = run_app()
+    assert not at.exception
+    assert texts(at.title) == ["Нэвтрэх"] and at.error
+    with pytest.raises(ValueError, match="Could not find a navigation page"):
+        at.switch_page(HOME)
 
 
 ALL_VIEWS = [HOME, RECORD, SEARCH, CARD, REMINDERS, DASHBOARD]
@@ -380,9 +418,9 @@ ALL_VIEWS = [HOME, RECORD, SEARCH, CARD, REMINDERS, DASHBOARD]
 
 @pytest.mark.parametrize("view", ALL_VIEWS)
 def test_logged_out_cannot_open_any_view(fake_api, monkeypatch, view) -> None:
-    """Login-bypass guard: with UI_PASSWORD set and not logged in, no screen is a
+    """Login-bypass guard: with login on and no valid cookie, no screen is a
     navigation page at all, so a direct URL only gets the login screen."""
-    monkeypatch.setenv("UI_PASSWORD", "demo-pass")
+    login_on(fake_api, monkeypatch, None)
     at = run_app()
     with pytest.raises(ValueError, match="Could not find a navigation page"):
         at.switch_page(view)
@@ -621,6 +659,8 @@ def test_fleet_number_in_two_companies(fake_api) -> None:
 
 def test_api_down_shows_message(fake_api) -> None:
     def down(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/auth/check":   # cached login check passed; data calls then fail
+            return httpx.Response(200, json={"login_required": False})
         raise httpx.ConnectError("refused", request=request)
 
     api_client.set_transport(httpx.MockTransport(down))
@@ -703,15 +743,13 @@ def test_retake_returns_to_camera_and_forgets_photo(fake_api, phone) -> None:
 def test_start_screen_mockup(fake_api, monkeypatch) -> None:
     """8.4 start: live camera component (not st.camera_input / st.file_uploader), «Гараар бичих»,
     «Дугааргүй машин», no «Гарах» here (it stays on home)."""
-    monkeypatch.setenv("UI_PASSWORD", "demo-pass")
+    login_on(fake_api, monkeypatch, GOOD_TOKEN)
     at = run_app()
-    at.text_input[0].set_value("demo-pass")
-    at = click(at, "Нэвтрэх")
-    assert "Гарах" in [b.label for b in at.button]                        # home keeps it
+    assert ">Гарах</a>" in html_blocks(at)                                # home keeps it
     at = on(click(at, "Үйлчилгээ бүртгэх"), RECORD).run()
     assert not at.exception and step(at) == "capture"
     labels = [b.label for b in at.button]
-    assert {"Гараар бичих", "Дугааргүй машин"} <= set(labels) and "Гарах" not in labels
+    assert {"Гараар бичих", "Дугааргүй машин"} <= set(labels) and ">Гарах</a>" not in html_blocks(at)
     assert not at.get("camera_input") and not at.get("file_uploader")
     assert "Зураг хадгалагдахгүй." in html_blocks(at)
 

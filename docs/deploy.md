@@ -1,6 +1,6 @@
 # Deploy runbook — one Linux server, HTTPS (tasks 6.1 / 6.3 / 8.3)
 
-- **Version:** 1.2 (2026-10-22, task 8.3: own domain, §11) · 1.1 (2026-10-19, tasks 6.3 + 6.4: deployed, §10 results) · **Owner:** Backend Engineer
+- **Version:** 1.3 (2026-10-30, task 8.5r: 30-day login cookie, §13) · 1.2 (2026-10-22, task 8.3: own domain, §11) · 1.1 (2026-10-19, tasks 6.3 + 6.4: deployed, §10 results) · **Owner:** Backend Engineer
 - **Deployed (6.3):** DigitalOcean droplet, Singapore, Ubuntu 24.04, 1 vCPU / 2 GB → **https://app.geoexpert.mn**
   (task 8.3; the first address https://168.144.143.203.sslip.io now redirects there, §11)
 - **Host-agnostic:** any Linux VPS with Docker.
@@ -9,11 +9,13 @@
   (images ≈ 2 GB unpacked + build cache + database).
 - **What runs** (`docker-compose.prod.yml`): `db` (Postgres 16) · `api` (FastAPI + models) ·
   `ui` (Streamlit) · `caddy` (HTTPS). **Only Caddy is reachable from outside** (ports 80/443).
-  The API is private (D-061); only `GET /health` is passed through for checks.
+  The API is private (D-061); only `GET /health` and the login pages `/auth/*` are passed
+  through (D-117). Every UI request is first checked by the API (`forward_auth`, §13).
 
 ```
-phone browser ──HTTPS──> caddy :443 ──> ui :8501 ──HTTP──> api :8000 ──> db :5432
-                                   └──> /health only ─────> api
+phone browser ──HTTPS──> caddy :443 ──(cookie ok?)──> ui :8501 ──HTTP──> api :8000 ──> db :5432
+                                   ├──> /health, /auth/* ──────────────> api
+                                   └──> forward_auth: GET /auth/check ─> api
 ```
 
 Below, `dc` means `docker compose -f docker-compose.prod.yml`. Make the alias once per shell:
@@ -30,6 +32,7 @@ alias dc='docker compose -f docker-compose.prod.yml'
 | Ports **80 and 443** open in the provider's firewall | Let's Encrypt + HTTPS | certificate fails (§8) |
 | A name: `app.<company-domain>` with a DNS **A record → server IP** (live: `app.geoexpert.mn`), or no domain: `<server-ip>.sslip.io` | HTTPS needs a name; the phone camera needs HTTPS (D-061) | use sslip.io (works at once, no DNS setup) |
 | `UI_PASSWORD` chosen | company login; instructor gets it | — |
+| `AUTH_SECRET` (`openssl rand -hex 32`, typed by Ari) | signs the 30-day login cookie (§13) | compose refuses to start |
 | Real `GEO_EXPERT_PHONE` (optional) | reminder message contact (D-068) | placeholder 99000000, UI warns |
 
 ## 1. Server: install Docker (once)
@@ -64,12 +67,13 @@ printf "Host github.com\n  IdentityFile ~/.ssh/github_deploy\n  IdentitiesOnly y
 git clone git@github.com:janjir2007/capstone_project.git oil-change-predictor
 cd oil-change-predictor
 cp .env.prod.example .env
-nano .env               # replace every CHANGE_ME: DOMAIN, POSTGRES_PASSWORD, UI_PASSWORD (OLD_DOMAIN: §11)
+nano .env               # replace every CHANGE_ME: DOMAIN, POSTGRES_PASSWORD, UI_PASSWORD, AUTH_SECRET (OLD_DOMAIN: §11)
 chmod 600 .env          # only root can read the secrets
 ```
 
 `POSTGRES_PASSWORD`: e.g. `openssl rand -base64 24 | tr -d '/+='`. `.env` is git-ignored — never commit it.
-Compose refuses to start if `DOMAIN`, `POSTGRES_PASSWORD` or `UI_PASSWORD` is empty.
+`AUTH_SECRET`: `openssl rand -hex 32` (never shared, not even with the instructor).
+Compose refuses to start if `DOMAIN`, `POSTGRES_PASSWORD`, `UI_PASSWORD` or `AUTH_SECRET` is empty.
 
 ## 3. Model files (from the Mac)
 
@@ -127,7 +131,8 @@ dc logs caddy | grep -i "certificate obtained"   # Let's Encrypt worked (first s
 
 Then on the **phone** (mobile data, not office Wi-Fi, to test from outside):
 
-1. Open `https://<DOMAIN>` → padlock shown → login with `UI_PASSWORD`.
+1. Open `https://<DOMAIN>` → padlock shown → login page → `UI_PASSWORD`, «Намайг сана» ticked →
+   the phone offers to save the password. Close the browser, open again → still logged in (§13).
 2. «Хайх» → `1001 УБА` → card: Байнгын, prediction «Загварын таамаглал».
 3. «Бүртгэх» → take a photo of a plate (Ari's own car or the printed demo plate, D-078 — never a
    customer's plate on the projector) → the camera opens (it only does on HTTPS) → plate read or
@@ -144,12 +149,14 @@ cat > /tmp/prod-local.env <<'EOF'
 DOMAIN=localhost
 POSTGRES_PASSWORD=local-prod-test
 UI_PASSWORD=demo-pass
+AUTH_SECRET=local-test-secret-0123456789
 EOF
 alias dcl='docker compose -f docker-compose.prod.yml --env-file /tmp/prod-local.env'
 dcl build && dcl run --rm api python -m scripts.migrate \
   && dcl run --rm api python -m src.data.seed_demo --as-of 2026-10-20 && dcl up -d
 curl -k https://localhost/health        # -k: Caddy's local certificate is not trusted by curl
 open https://localhost                  # Chrome warns once ("Advanced → Proceed")
+STACK_AUTH=1 STACK_PASSWORD=demo-pass .venv/bin/pytest -v tests/test_stack_auth.py   # login via Caddy (§13)
 dcl down -v                             # remove everything (incl. the test database)
 ```
 
@@ -179,6 +186,9 @@ Never `dc down -v` on the server without a backup: `-v` also deletes the certifi
 | `migrate: FAILED: migrations were applied by hand…` | database older than the runner: `--mark-applied` the versions it has (§7) |
 | `seed_demo`: `NOT seeded: database is not empty …` | it never writes into a database with data: re-seed only per §7 |
 | Login page loops / "connection error" after login | WebSocket blocked by a proxy in front of Caddy (e.g. a provider load balancer): Caddy must be the first hop |
+| `api` does not start, log: `AUTH_SECRET must be set too` | `.env` has `UI_PASSWORD` but no `AUTH_SECRET` (or < 16 chars): add it (§2), `dc up -d api` |
+| «Нууц үгийг олон удаа буруу оруулсан …» for a worker who typed nothing | someone on the same IP (same Wi-Fi / mobile network) typed 5 wrong passwords: wait 15 min, or `dc restart api` (clears all locks) |
+| After login the phone is back on the login page | cookie not saved: page not opened via `https://<DOMAIN>` (the cookie is Secure), or the browser blocks cookies (Settings → Safari → «Block All Cookies» off) |
 | Camera button missing on the phone | page opened over `http://` or an IP without HTTPS → use `https://<DOMAIN>` |
 | Caddy restarts in a loop, log says `server block without any key is global configuration` | a site address is empty. `OLD_DOMAIN` is optional (compose fills in `old.localhost`); check `dc config \| grep DOMAIN` |
 
@@ -327,3 +337,50 @@ transaction: all or nothing. Undo = "Real restore" above with the backup it name
 **Off-server copy (8.2c, not built):** a fire, a deleted droplet or a lost account takes the
 local backups with it. Options and cost: handoff 8.2 / PROJECT_STATE.
 
+## 13. Login: 30-day "remember me" and logging everyone out (task 8.5r, D-117)
+
+**How it works.** One shared password (`UI_PASSWORD`), checked by the **API** (not Streamlit):
+
+- `https://<DOMAIN>/auth/login` is a plain HTML form, so the phone can save the password.
+- «Намайг сана» (ticked by default) → cookie `ocp_session` for **30 days** on that phone/computer
+  (HttpOnly, Secure, SameSite=Lax). Unticked → until the browser closes.
+- Caddy asks the API (`forward_auth` → `/auth/check`) before **every** request to the UI,
+  including Streamlit's websocket. No valid cookie → login page, then back to the same screen.
+- The cookie is **signed** with a key made from `AUTH_SECRET` + `UI_PASSWORD`. Nothing is stored
+  on the server, so a single phone cannot be logged out from here, but **all** can (below).
+- 5 wrong passwords from one IP → that IP is locked for 15 minutes (even the right password).
+- «Гарах» (home, at the bottom) deletes the cookie on that phone only.
+
+### First deploy of 8.5r (once)
+
+```bash
+git pull
+echo "AUTH_SECRET=$(openssl rand -hex 32)" >> .env   # BEFORE build/up; Ari runs this on the server
+dc build && dc up -d                                  # api now reads UI_PASSWORD + AUTH_SECRET, ui none
+curl -s -o /dev/null -w "%{http_code}\n" https://<DOMAIN>/            # 302 (to /auth/login)
+curl -s -o /dev/null -w "%{http_code}\n" https://<DOMAIN>/vehicles/1  # 302 too: data routes stay private
+```
+
+Everyone logs in once more (old Streamlit sessions do not carry over). No migration.
+
+### How to log everyone out (e.g. a worker leaves)
+
+Change the password. Every cookie made with the old one stops working at once.
+
+```bash
+cd ~/oil-change-predictor
+nano .env                    # UI_PASSWORD=<new password>   (do not touch AUTH_SECRET)
+dc up -d api                 # recreates the api container with the new value (~10 s)
+dc logs --tail 20 api        # "Application startup complete", no AUTH_SECRET error
+curl -s -o /dev/null -w "%{http_code}\n" https://<DOMAIN>/   # 302 = login is asked again
+```
+
+Then give the new password to the workers who stay (in person or by phone, not in a group chat).
+Each phone logs in once and is remembered for 30 days again.
+
+- Only the **api** container reads `UI_PASSWORD` (`ui` does not need a restart).
+- Lost or stolen phone: same procedure; there is no per-phone logout.
+- `AUTH_SECRET` is changed only if `.env` itself may have leaked: new value
+  (`openssl rand -hex 32`) + `dc up -d api` also logs everyone out.
+- Rollback: put the old `UI_PASSWORD` back + `dc up -d api` — cookies made before the change work again
+  (they are still valid for their 30 days), cookies made with the new password stop.

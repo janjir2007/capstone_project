@@ -56,7 +56,8 @@ def test_dev_compose_also_leaves_migrations_to_migrate_py() -> None:
 
 
 @pytest.mark.parametrize(("service", "var"), [
-    ("db", "POSTGRES_PASSWORD"), ("api", "POSTGRES_PASSWORD"), ("ui", "UI_PASSWORD"), ("caddy", "DOMAIN")])
+    ("db", "POSTGRES_PASSWORD"), ("api", "POSTGRES_PASSWORD"), ("api", "UI_PASSWORD"), ("api", "AUTH_SECRET"),
+    ("caddy", "DOMAIN")])
 def test_secrets_have_no_default(service: str, var: str) -> None:
     """${VAR:?...} = compose refuses to start without it; no dev password slips into production."""
     assert re.fullmatch(r"\$\{" + var + r":\?[^}]+\}", SERVICES[service]["environment"][var])
@@ -66,12 +67,38 @@ def test_ui_talks_to_api_inside_the_network() -> None:
     assert SERVICES["ui"]["environment"]["API_URL"] == "http://api:8000"
 
 
-def test_caddy_proxies_ui_and_only_health_of_api() -> None:
-    caddyfile = (ROOT / "deploy" / "Caddyfile").read_text(encoding="utf-8")
-    assert "{$DOMAIN}" in caddyfile
-    assert "reverse_proxy ui:8501" in caddyfile
-    api_routes = re.findall(r"handle (\S+) \{\s*reverse_proxy api:8000", caddyfile)
-    assert api_routes == ["/health"]
+def test_password_only_in_api_not_in_ui() -> None:
+    """8.5r: the API checks the password and signs the cookie; the UI never sees the password."""
+    assert set(SERVICES["ui"]["environment"]) == {"API_URL"}
+
+
+CADDYFILE = (ROOT / "deploy" / "Caddyfile").read_text(encoding="utf-8")
+
+
+def _handle_blocks() -> dict[str, str]:
+    """{matcher: body} of the top-level `handle` blocks of the DOMAIN site ("" = catch-all)."""
+    site = re.search(r"^\{\$DOMAIN\} \{\n(.*?)^\}", CADDYFILE, re.S | re.M).group(1)
+    return {m.group(1): m.group(2) for m in re.finditer(r"^\thandle ?(\S*) \{\n(.*?)^\t\}", site, re.S | re.M)}
+
+
+def test_caddy_makes_only_health_and_auth_of_the_api_public() -> None:
+    """D-061 + D-117: of the API only /health and /auth/* are public."""
+    blocks = _handle_blocks()
+    assert set(blocks) == {"/health", "/auth/*", ""}
+    api_public = {m for m, body in blocks.items() if re.search(r"reverse_proxy api:8000", body)}
+    assert api_public == {"/health", "/auth/*"}
+    assert "reverse_proxy ui:8501" in blocks[""]
+
+
+def test_caddy_checks_the_cookie_before_every_ui_request() -> None:
+    body = _handle_blocks()[""]
+    assert re.search(r"forward_auth api:8000 \{\s*uri /auth/check\s*\}", body)
+    assert body.index("forward_auth") < body.index("reverse_proxy ui:8501")
+
+
+def test_caddy_sets_the_ip_for_the_login_lock() -> None:
+    """The lock counts per X-Real-IP; Caddy overwrites it with the real peer (header_up replaces)."""
+    assert "header_up X-Real-IP {remote_host}" in _handle_blocks()["/auth/*"]
 
 
 def test_old_domain_redirects_to_domain() -> None:
@@ -94,7 +121,7 @@ def test_env_example_covers_compose_and_holds_no_real_values() -> None:
     used = set(re.findall(r"\$\{([A-Z_]+)", text))
     values = dict(line.split("=", 1) for line in ENV_EXAMPLE.splitlines() if line and not line.startswith("#"))
     assert used <= set(values)
-    for var in ("POSTGRES_PASSWORD", "UI_PASSWORD", "DOMAIN"):
+    for var in ("POSTGRES_PASSWORD", "UI_PASSWORD", "AUTH_SECRET", "DOMAIN"):
         assert values[var] == "CHANGE_ME"
     assert values["GEO_EXPERT_PHONE"] == "99000000"  # placeholder (D-068), not a real number
 

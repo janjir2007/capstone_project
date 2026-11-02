@@ -7,7 +7,7 @@
 ## Run
 
 See **[`ui_run.md`](ui_run.md)**: local run (start from `src/ui/` so the theme loads), env vars
-`API_URL` / `UI_PASSWORD`, Docker image (`src/ui/Dockerfile`), and the compose service values for 6.1.
+`API_URL` (login: API, 8.5r), Docker image (`src/ui/Dockerfile`), and the compose service values for 6.1.
 Tests: `pytest -v tests/test_ui_*.py` (API mocked with `httpx.MockTransport`; screen tests use
 Streamlit `AppTest` and are skipped if Streamlit is not installed).
 
@@ -26,7 +26,7 @@ Streamlit `AppTest` and are skipped if Streamlit is not installed).
 | `src/ui/common.py` | DESIGN v5 CSS, header, plate chip, chips, row cards, status/arrival blocks, fact rows, timeline, plate strip, navigation hand-off |
 | `src/ui/api_client.py` | HTTP client (no Streamlit): one function per endpoint, `ApiError`, `DuplicateService` |
 | `src/ui/logic.py` | Pure helpers: labels, pre-fill, payload, prediction view, recognize outcome, errors |
-| `src/ui/auth.py` | `UI_PASSWORD` check (constant-time compare) |
+| `src/ui/auth.py` | Login gate (8.5r): asks the API `GET /auth/check` with the browser's cookie; login/logout URLs. No password in the UI |
 | `src/ui/Dockerfile` (+ `.dockerignore`) | UI image: python:3.11-slim, non-root, WORKDIR src/ui, port 8501 |
 
 The folder is `views/`, **not** `pages/`: Streamlit runs a folder named `pages/` in legacy mode,
@@ -59,8 +59,11 @@ truck, full form, card, reminders) + the brief (Montserrat 400/500/600, line-hei
 
 ## Screens
 
-**Login** (only if `UI_PASSWORD` set): password card → «Нэвтрэх». Until logged in only this page
-exists, so a direct URL cannot skip it.
+**Login** (only if the API has `UI_PASSWORD`; task 8.5r): the form is the API's page `/auth/login`
+(password + «Намайг сана», 30-day cookie), not a Streamlit screen. Behind Caddy a browser without a
+valid cookie never reaches Streamlit. If it does (cookie expired while open, no Caddy), Streamlit shows
+only «Нэвтрэх» + a link to that page. Until the API accepts the cookie only this page exists, so a direct
+URL cannot skip it. «Гарах» on home is a link to `/auth/logout` (same tab).
 
 **Нүүр (Home)**: «ГЭ Гео-Эксперт» + today («10-р сарын 12, Даваа»), «Сайн байна уу», line «Өнөөдөр N
 машин сануулга хүлээж байна.» → numbers card: Сануулах (the «Илгээх» group of `GET /reminders/due`),

@@ -1,6 +1,6 @@
 # API contract — data, model and reminder endpoints (tasks 4.2, 4.2b, 4.3, 4.4)
 
-- **Version:** 0.11 (task 9.1 step 2, 2026-10-28) · **Owner:** Backend Engineer
+- **Version:** 0.14 (task 8.5r, 2026-10-30) · **Owner:** Backend Engineer
 - Extends PROJECT_STATE §8 "API contract" with exact fields. The live, always
   current version is the OpenAPI page of the running API: `http://localhost:8000/docs`.
 - Field names follow [`data_dictionary.md`](data_dictionary.md). Code:
@@ -241,6 +241,22 @@ Phones that asked for no more messages (`reminder_stops`, migration 006).
 - `POST {phone}` (8 digits, +976 optional, normalized) → **201** stored · **200** already there · **422** not a phone
 - `DELETE /reminders/stops/{phone}` → **204** (also when it was not there) · **422** not a phone
 
+### Login: `GET/POST /auth/login` · `GET /auth/logout` · `GET /auth/check` (v0.14, task 8.5r, D-117)
+The only API routes besides `/health` that Caddy makes public. Not used by the UI's data code;
+`src/api/routers/auth.py`. Without `UI_PASSWORD` in the API's env: no login (check always 200).
+
+- `GET /auth/login?next=/path` → **200** HTML form (password, «Намайг сана» ticked) · **303** to `next` if already logged in
+- `POST /auth/login` (form: `password`, `remember=1`, `next`) → **303** to `next` + cookie
+  `ocp_session` (HttpOnly, Secure, SameSite=Lax, Path=/; Max-Age 30 days with remember, else
+  browser session) · **401** wrong password · **429** locked (5 wrong from one IP → 15 min) · **413** body > 4 KB.
+  `next` must be a path on this site: `//…`, `/\…`, `/auth/*`, `/_stcore/*`, `/static/*` → `/`
+- `GET /auth/logout` → **303** `/auth/login`, cookie deleted (this device only)
+- `GET /auth/check` → **200** `{login_required: bool}` · **302** `/auth/login?next=<X-Forwarded-Uri>` (no or bad cookie).
+  Caddy `forward_auth` calls it before every UI request; the UI calls it too (`api_client.auth_check`)
+- Token = `v1.<expires>.<nonce>.<HMAC-SHA256>`, key from `AUTH_SECRET` + `UI_PASSWORD`; nothing stored.
+  New `UI_PASSWORD` → every cookie invalid. New settings: `AUTH_SECRET` (required with `UI_PASSWORD`,
+  ≥ 16 chars, else the API does not start); `UI_PASSWORD` moved from the ui to the api service
+
 ## Change log
 
 | Version | Date | Change |
@@ -258,3 +274,4 @@ Phones that asked for no more messages (`reminder_stops`, migration 006).
 | 0.11 | 2026-10-28 | Task 9.1 step 2: search filters `date_from`, `date_to`, `company_id`, `route`, `oil_grade` + `options` in the answer; `with_services=true` adds each row's matching `services` (additive) |
 | 0.12 | 2026-10-29 | Task 9.5a: `target_km` added to ServiceOut (additive, everywhere a service appears: card `last_service` / `history`, search rows, `POST /services` answer); `POST /services` destination optional (at most one of `destination_id` / `destination_raw`). New API setting `OIL_INTERVAL_KM` (default 15000; not a whole number > 0 → the API does not start) |
 | 0.13 | 2026-10-29 | Task 9.5b: **breaking** for `GET /reminders/due` (month stages: `stage`, `days_since`, `odometer_km`, `target_km` added; `method`, `buffer_days`, `predicted_date`, `days_left`, `status` removed; no 503). `POST /reminders/{id}/sent` needs `?stage=`. New `GET/POST/DELETE /reminders/stops`. `at_risk` = 90+ days since the latest service everywhere (card, search, stats, reminders). New setting `CONTACT_PHONE` (falls back to `GEO_EXPERT_PHONE`). Migration 006 |
+| 0.14 | 2026-10-30 | Task 8.5r (D-117): `/auth/login`, `/auth/logout`, `/auth/check` (additive; data endpoints unchanged and still private). API settings `UI_PASSWORD` + `AUTH_SECRET` |
