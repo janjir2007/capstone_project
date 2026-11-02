@@ -1,0 +1,16 @@
+# gitleaks config (task 9.7). CI runs `gitleaks git` over the FULL history on every push / PR.
+# We keep ALL default rules and only add narrow allowlists for known test fixtures.
+# Rule for new entries: one file, one rule, one exact value, plus a comment saying why it is fake.
+
+[extend]
+useDefault = true
+
+# tests/test_auth.py: AUTH_SECRET fixture for the 8.5r remember-me cookie tests (D-117).
+# It is a made-up test value, never used on the server (the real AUTH_SECRET lives only in the
+# server .env). All three conditions must match, so a real key in this file is still caught.
+[[allowlists]]
+description = "test_auth.py fake AUTH_SECRET fixture"
+condition = "AND"
+targetRules = ["generic-api-key"]
+paths = ['''^tests/test_auth\.py$''']
+regexes = ['''^test-secret-0123456789abcdef$''']
