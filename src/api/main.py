@@ -24,10 +24,10 @@ from src.api.config import load_settings, oil_interval_km, reminder_rules
 from src.api.config import model_dir as model_dir_from_env
 from src.api.db import create_db_engine
 from src.api.prediction import load_predictor
-from src.api.routers import auth, destinations, health, plates, reminders, services, stats, vehicles
+from src.api.routers import auth, destinations, health, payments, plates, reminders, services, stats, vehicles
 from src.cv.plate_reader import PlateRecognizer
 
-API_VERSION = "0.5.0"  # = docs/api_contract.md version
+API_VERSION = "0.16.0"  # = docs/api_contract.md version (task 9.6b-4: was stale at 0.5.0)
 log = logging.getLogger("uvicorn.error")
 
 
@@ -73,6 +73,7 @@ def create_app(engine: Engine | None = None, model_dir: Path | None = None) -> F
     app.include_router(destinations.router)
     app.include_router(plates.router)
     app.include_router(reminders.router)
+    app.include_router(payments.router)  # task 9.6b-4: Artlab payments, read only
     return app
 
 

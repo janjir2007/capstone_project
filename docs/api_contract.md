@@ -1,6 +1,6 @@
 # API contract — data, model and reminder endpoints (tasks 4.2, 4.2b, 4.3, 4.4)
 
-- **Version:** 0.15 (task 9.5c, 2026-11-02) · **Owner:** Backend Engineer
+- **Version:** 0.16 (task 9.6b-4, 2026-11-02) · **Owner:** Backend Engineer
 - Extends PROJECT_STATE §8 "API contract" with exact fields. The live, always
   current version is the OpenAPI page of the running API: `http://localhost:8000/docs`.
 - Field names follow [`data_dictionary.md`](data_dictionary.md). Code:
@@ -28,6 +28,9 @@
 | `destination_raw` | string \| null | |
 | `driver_name`, `driver_phone`, `oil_changer`, `photo_ref` | string \| null | phone = 8 digits |
 | `created_at` | datetime with offset | |
+| `payment_status` | `paid` \| `unpaid` \| `paid_later` \| `unknown` \| null | v0.16 (task 9.6b-4): Artlab payment of this service, rolled up from every Artlab receipt linked to it (any `unpaid` → unpaid; else any `unknown` → unknown; else any `paid_later` → paid_later; else paid). `unknown` = no receipt linked. Labels: Төлсөн / Төлөөгүй / Төлсөн (дараа) / Тодорхойгүй. **null** = payments not connected (no successful Artlab sync yet) and in the `POST /services` answer |
+| `amount_due` | number \| null | v0.16: credit still owed (MNT) = credit part of its unpaid receipts; only with `unpaid` |
+| `match_confidence` | `both` \| `plate` \| `phone` \| null | v0.16: how its receipts were linked (the weakest one when several) |
 
 **VehicleCard**
 
@@ -113,7 +116,10 @@ separators allowed). A valid phone is searched as a phone; anything else as a pl
   Excel export (one row per service). Without it `services` is null.
 - `options: {companies: [{id, name}], oil_grades: [str]}` = choices for the filter lists, from the
   whole database (they do not shrink while filtering).
-- **422** `limit` out of range, `q` too long, unknown `route`, bad date, `date_from` after `date_to`
+- `payment_status` (v0.16, task 9.6b-4), optional: `paid` \| `unpaid` \| `paid_later` \| `unknown` — a fifth
+  SERVICE filter (one service must pass it together with the others). Nothing matches while payments
+  are not connected. Rows' `last_service` / `services` carry the ServiceOut payment fields.
+- **422** `limit` out of range, `q` too long, unknown `route`, bad date, `date_from` after `date_to`, unknown `payment_status`
 
 ### `GET /vehicles/{id}`
 - **200** VehicleCard · **404** unknown id
@@ -244,6 +250,27 @@ Phones that asked for no more messages (`reminder_stops`, migration 006).
 - `POST {phone}` (8 digits, +976 optional, normalized) → **201** stored · **200** already there · **422** not a phone
 - `DELETE /reminders/stops/{phone}` → **204** (also when it was not there) · **422** not a phone
 
+### `GET /payments/unpaid?limit=` (v0.16, task 9.6b-4 — read only)
+Unpaid Artlab receipts (`payment_status = unpaid`, credit sale «Зээл»), **oldest first**. Data =
+the sync's copy in our database (`artlab_bills`); the API never calls Artlab. `limit` 1–1000, default 200.
+- **200** `{connected, total, total_due, items: UnpaidBill[]}` — `total` / `total_due` count every
+  unpaid receipt, `items` at most `limit`. `connected` false = no successful sync yet (then empty).
+- UnpaidBill: `artlab_id` (**string**: Artlab ids exceed 2^53), `bill_date`, `days_waiting` (today in
+  UB − bill_date), `amount_due` (credit part, MNT), `total_gross` (number \| null), `match_confidence`
+  (`both` \| `plate` \| `phone` \| null), `match_note` (`none` \| `multiple` \| `conflict` \| null = why
+  not linked), `service_id`, `vehicle_id`, `identifier` (plate / fleet no), `company_name` (null when
+  not linked), `plates` + `phones` (found in the receipt text; the text itself is not stored)
+- **422** `limit` out of range
+
+### `GET /payments/sync-status` (v0.16, task 9.6b-4 — read only)
+- **200** `{connected, runs: SyncRun[]}` — the latest run per kind (`bills`, `nightly`) and per acc-txn
+  bank account (`kind = acc_txn`, `account_code` set; includes the per-account calls a nightly run
+  makes). Empty `runs` before the first sync.
+- SyncRun: `kind, account_code, started_at, finished_at` (null = running or crashed), `ok, bills_seen,
+  transfers_seen, error_class` (exception class only, e.g. `ArtlabError`), `last_ok_at` (end of the
+  latest successful run of that kind / account), `zero_row_streak` (acc_txn only: finished ok runs in
+  a row with 0 rows; the sync logs a warning at `ARTLAB_ZERO_ROW_WARN_RUNS`, default 12)
+
 ### Login: `GET/POST /auth/login` · `GET /auth/logout` · `GET /auth/check` (v0.14, task 8.5r, D-117)
 The only API routes besides `/health` that Caddy makes public. Not used by the UI's data code;
 `src/api/routers/auth.py`. Without `UI_PASSWORD` in the API's env: no login (check always 200).
@@ -279,3 +306,4 @@ The only API routes besides `/health` that Caddy makes public. Not used by the U
 | 0.13 | 2026-10-29 | Task 9.5b: **breaking** for `GET /reminders/due` (month stages: `stage`, `days_since`, `odometer_km`, `target_km` added; `method`, `buffer_days`, `predicted_date`, `days_left`, `status` removed; no 503). `POST /reminders/{id}/sent` needs `?stage=`. New `GET/POST/DELETE /reminders/stops`. `at_risk` = 90+ days since the latest service everywhere (card, search, stats, reminders). New setting `CONTACT_PHONE` (falls back to `GEO_EXPERT_PHONE`). Migration 006 |
 | 0.14 | 2026-10-30 | Task 8.5r (D-117): `/auth/login`, `/auth/logout`, `/auth/check` (additive; data endpoints unchanged and still private). API settings `UI_PASSWORD` + `AUTH_SECRET` |
 | 0.15 | 2026-11-02 | Task 9.5c (D-119): **breaking** — one reminder per service at `REMINDER_DAYS` (75) after the latest service replaces the 1m/2m/3m stages: `stage` removed from `GET /reminders/due` items; `POST /reminders/{id}/sent` takes no `?stage=` (stores `single`); old 1m/2m/3m rows count as sent. `channel` added to the sent row (additive). `at_risk` = `AT_RISK_DAYS` (150)+ days everywhere. New settings `REMINDER_DAYS`, `AT_RISK_DAYS` (bad value or `AT_RISK_DAYS <= REMINDER_DAYS` → the API does not start). Migration 007 |
+| 0.16 | 2026-11-02 | Task 9.6b-4: Artlab payments, **additive + read only**. ServiceOut gets `payment_status`, `amount_due`, `match_confidence` (card `history` / `last_service`, lookup cards, search rows; null in the `POST /services` answer and before the first successful sync). `GET /vehicles/search?payment_status=`. New `GET /payments/unpaid`, `GET /payments/sync-status`. Needs migrations 008 + 009 (run `scripts.migrate` before the new API starts) |

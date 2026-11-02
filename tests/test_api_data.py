@@ -44,6 +44,7 @@ SQL_FILES = ["schema.sql", "migrations/001_destinations.up.sql", "migrations/002
              "migrations/003_reminders_sent.up.sql", "migrations/004_destinations_name_mn_rest.up.sql",
              "migrations/005_destinations_cross_border.up.sql",
              "migrations/006_reminder_stages.up.sql", "migrations/007_single_reminder.up.sql",
+             "migrations/008_artlab.up.sql", "migrations/009_sync_runs_account.up.sql",
              "sample_data.sql"]
 TODAY = date(2026, 9, 30)
 

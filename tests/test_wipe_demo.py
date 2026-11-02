@@ -20,8 +20,11 @@ SQL_FILES = ["schema.sql", "migrations/001_destinations.up.sql", "migrations/002
              "migrations/003_reminders_sent.up.sql", "migrations/004_destinations_name_mn_rest.up.sql",
              "migrations/005_destinations_cross_border.up.sql",
              "migrations/006_reminder_stages.up.sql", "migrations/007_single_reminder.up.sql",
+             "migrations/008_artlab.up.sql", "migrations/009_sync_runs_account.up.sql",
              "sample_data.sql"]
-EMPTIED = ["companies", "predictions", "reminder_stops", "reminders", "reminders_sent", "service_records", "vehicles"]
+# artlab_bills (9.6b-4): found through its foreign key to service_records, like predictions / reminders.
+EMPTIED = ["artlab_bills", "companies", "predictions", "reminder_stops", "reminders", "reminders_sent",
+           "service_records", "vehicles"]
 
 
 @pytest.fixture
@@ -41,6 +44,10 @@ def conn() -> Iterator[psycopg.Connection]:
     connection.execute(
         "INSERT INTO reminders_sent (vehicle_id, service_id, message_text, method, model_version, predicted_date, send_on) "
         "SELECT vehicle_id, id, 'Сайн байна уу', 'ridge', 'ridge-test', service_date + 60, service_date + 50 "
+        "FROM service_records ORDER BY id LIMIT 1")
+    connection.execute(  # a synthetic Artlab receipt linked to a service (task 9.6b-4)
+        "INSERT INTO artlab_bills (artlab_id, bill_date, bill_type, bill_status, payment_status, service_id, "
+        "match_confidence, match_note) SELECT 1, service_date, 'SALE', 'COMPLETE', 'unpaid', id, 'plate', NULL "
         "FROM service_records ORDER BY id LIMIT 1")
     yield connection
     connection.execute(f"DROP SCHEMA {schema} CASCADE")

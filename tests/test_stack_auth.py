@@ -39,6 +39,7 @@ DATA_ROUTES = [
     ("GET", "/reminders/due"), ("GET", "/reminders/stops"), ("POST", "/reminders/1/sent"),
     ("POST", "/services"), ("GET", "/stats/segments"), ("GET", "/destinations"),
     ("POST", "/plates/recognize"), ("GET", "/docs"), ("GET", "/openapi.json"),
+    ("GET", "/payments/unpaid"), ("GET", "/payments/sync-status"),  # task 9.6b-4
 ]
 
 

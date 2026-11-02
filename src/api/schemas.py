@@ -22,6 +22,9 @@ from src.api.config import oil_interval_km
 
 Route = Literal["ub_city", "mn_china", "mn_russia", "mine_site", "mixed"]
 Segment = Literal["new", "returning", "loyal", "at_risk"]
+# Task 9.6b-4: Artlab payment of a service (labels: Төлсөн / Төлөөгүй / Төлсөн (дараа) / Тодорхойгүй).
+PaymentStatus = Literal["paid", "unpaid", "paid_later", "unknown"]
+MatchConfidence = Literal["both", "plate", "phone"]
 
 PHONE_SEPARATORS = re.compile(r"[\s\-().]")
 
@@ -155,6 +158,14 @@ class ServiceOut(BaseModel):
     oil_changer: str | None
     photo_ref: str | None
     created_at: datetime
+    # Task 9.6b-4 (filled by the API from artlab_bills, not stored on the service). All null while
+    # payments are not connected (no successful Artlab sync yet).
+    payment_status: PaymentStatus | None = Field(
+        None, description="paid «Төлсөн» · unpaid «Төлөөгүй» · paid_later «Төлсөн (дараа)» · "
+                          "unknown «Тодорхойгүй» (no Artlab receipt linked); null = payments not connected")
+    amount_due: float | None = Field(None, description="Credit still owed (MNT); only when payment_status = unpaid")
+    match_confidence: MatchConfidence | None = Field(
+        None, description="How the receipt was linked: plate + phone, plate only, phone only (weakest of its receipts)")
 
     @computed_field(description="Task 9.5a: odometer of the next oil change = odometer_km + OIL_INTERVAL_KM "
                                 "(default 15000); null without odometer_km (mine trucks: engine hours only)")
@@ -410,3 +421,57 @@ class StopOut(BaseModel):
 
     phone: str
     created_at: datetime
+
+
+# ---------------------------------------------------------------- task 9.6b-4: payments (read only)
+
+
+class UnpaidBillOut(BaseModel):
+    """One unpaid Artlab receipt (GET /payments/unpaid)."""
+
+    artlab_id: str = Field(description="Artlab bill id as a STRING: ids exceed 2^53 (JavaScript-safe)")
+    bill_date: date
+    days_waiting: int = Field(description="Days since the receipt, up to today (Ulaanbaatar)")
+    amount_due: float = Field(description="Credit part still owed (MNT)")
+    total_gross: float | None
+    match_confidence: MatchConfidence | None
+    match_note: Literal["none", "multiple", "conflict"] | None = Field(
+        description="Why the receipt is not linked to a service (null when linked)")
+    service_id: int | None
+    vehicle_id: int | None
+    identifier: str | None = Field(description="The linked truck's plate or fleet number")
+    company_name: str | None
+    plates: list[str] = Field(description="Plates found in the receipt text (normalized)")
+    phones: list[str] = Field(description="Phones found in the receipt text (8 digits)")
+
+
+class UnpaidList(BaseModel):
+    """GET /payments/unpaid: oldest receipt first."""
+
+    connected: bool = Field(description="False until the first successful Artlab sync")
+    total: int
+    total_due: float
+    items: list[UnpaidBillOut]
+
+
+class SyncRunOut(BaseModel):
+    """Latest run of one sync kind, or of one acc-txn bank account."""
+
+    kind: Literal["bills", "acc_txn", "nightly"]
+    account_code: str | None = Field(description="acc_txn rows only: the bank account")
+    started_at: datetime
+    finished_at: datetime | None = Field(description="null = still running, or crashed")
+    ok: bool | None
+    bills_seen: int
+    transfers_seen: int
+    error_class: str | None = Field(description="Exception class of a failed run, e.g. ArtlabError")
+    last_ok_at: datetime | None = Field(description="End of the latest successful run of this kind / account")
+    zero_row_streak: int | None = Field(
+        description="acc_txn only: finished runs in a row with 0 rows (sync warns at ARTLAB_ZERO_ROW_WARN_RUNS)")
+
+
+class SyncStatusOut(BaseModel):
+    """GET /payments/sync-status."""
+
+    connected: bool
+    runs: list[SyncRunOut]

@@ -12,7 +12,7 @@ when the model is not loaded).
 
 from collections import Counter
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import date
 from decimal import Decimal
 from typing import Annotated
@@ -27,10 +27,11 @@ from src.api.db import get_session
 from src.api.history import records_as_of, service_records, to_visit, visits_oldest_first
 from src.api.matching import clean_company_name, company_key, fleet_no_key, search_matches
 from src.api.models import ServiceRecord, Vehicle
+from src.api.payments import ServicePayment, connected, payment_of, service_payments
 from src.api.prediction import Predictor
 from src.api.reminders import segment_of
-from src.api.schemas import (CompanyOut, LookupResult, PredictionOut, Route, SearchOptions, ServiceOut, VehicleCard,
-                             VehicleRow, VehicleSearch, normalize_phone)
+from src.api.schemas import (CompanyOut, LookupResult, PaymentStatus, PredictionOut, Route, SearchOptions, ServiceOut,
+                             VehicleCard, VehicleRow, VehicleSearch, normalize_phone)
 from src.common.plates import normalize_plate
 
 router = APIRouter(prefix="/vehicles", tags=["vehicles"])
@@ -69,10 +70,19 @@ def predict(predictor: Predictor | None, vehicle_id: int, records: Sequence[Serv
                                         from_attributes=True)
 
 
+def service_out(record: ServiceRecord, payments: dict[int, ServicePayment], is_connected: bool) -> ServiceOut:
+    """One service for the API, with its Artlab payment fields (task 9.6b-4; null when not connected)."""
+    pay = payment_of(record.id, payments, is_connected)
+    return ServiceOut.model_validate(record).model_copy(update={
+        "payment_status": pay.payment_status, "amount_due": pay.amount_due, "match_confidence": pay.match_confidence})
+
+
 def build_card(session: Session, vehicle: Vehicle, today: date, predictor: Predictor | None = None) -> VehicleCard:
     """Assemble the vehicle card from the vehicle row and its service records."""
     records = service_records(session, vehicle.id)
-    history = [ServiceOut.model_validate(record) for record in records]
+    is_connected = connected(session)
+    payments = service_payments(session, [r.id for r in records]) if is_connected else {}
+    history = [service_out(record, payments, is_connected) for record in records]
     liters = usual_liters([record.liters for record in records])
     prediction = predict(predictor, vehicle.id, records, today)
     # One rule everywhere (src/api/reminders.py): at_risk = AT_RISK_DAYS (150)+ days since the latest service.
@@ -186,14 +196,18 @@ class SearchFilters:
     company_id: int | None = None
     route: str | None = None
     oil_grade: str | None = None
+    # Task 9.6b-4: service filter on the Artlab payment; `payments` = {service_id: status} of the run.
+    payment_status: str | None = None
+    payments: dict[int, str | None] = field(default_factory=dict)
 
     def service_passes(self, record: ServiceRecord) -> bool:
-        """One service inside the date range (both ends included), on the route, with the oil grade.
-        Oil grade is compared like company names: case and extra spaces ignored."""
+        """One service inside the date range (both ends included), on the route, with the oil grade
+        and the payment status. Oil grade is compared like company names: case and extra spaces ignored."""
         return ((self.date_from is None or record.service_date >= self.date_from)
                 and (self.date_to is None or record.service_date <= self.date_to)
                 and (self.route is None or record.route == self.route)
-                and (self.oil_grade is None or company_key(record.oil_grade) == company_key(self.oil_grade)))
+                and (self.oil_grade is None or company_key(record.oil_grade) == company_key(self.oil_grade))
+                and (self.payment_status is None or self.payments.get(record.id) == self.payment_status))
 
     def passing_services(self, records: Sequence[ServiceRecord]) -> list[ServiceRecord]:
         """The services that pass the service filters (all of them when none is used)."""
@@ -202,7 +216,8 @@ class SearchFilters:
     def vehicle_passes(self, vehicle: Vehicle, records: Sequence[ServiceRecord]) -> bool:
         if self.company_id is not None and vehicle.company_id != self.company_id:
             return False
-        uses_services = any(v is not None for v in (self.date_from, self.date_to, self.route, self.oil_grade))
+        uses_services = any(v is not None for v in (self.date_from, self.date_to, self.route, self.oil_grade,
+                                                    self.payment_status))
         return not uses_services or any(self.service_passes(r) for r in records)
 
 
@@ -232,6 +247,10 @@ def search_rows(session: Session, query: str, today: date, predictor: Predictor 
     """
     vehicles = session.scalars(select(Vehicle).options(selectinload(Vehicle.company))).all()
     records = records_as_of(session, today)  # {vehicle_id: services oldest first}
+    is_connected = connected(session)
+    payments = service_payments(session) if is_connected else {}  # one query for every linked service
+    filters = replace(filters, payments={r.id: payment_of(r.id, payments, is_connected).payment_status
+                                         for rows_ in records.values() for r in rows_})
     rows: list[tuple[Vehicle, list[str]]] = []
     for vehicle in vehicles:
         own = records.get(vehicle.id, [])
@@ -257,12 +276,12 @@ def search_rows(session: Session, query: str, today: date, predictor: Predictor 
             vehicle_model=vehicle.vehicle_model,
             company=CompanyOut.model_validate(vehicle.company),
             service_count=len(own),
-            last_service=ServiceOut.model_validate(own[-1]) if own else None,
+            last_service=service_out(own[-1], payments, is_connected) if own else None,
             segment=segment_of(len(own), own[-1].service_date, today, rules) if own else None,
             status=prediction.status if prediction else None,
             days_left=prediction.days_left if prediction else None,
             matched_on=matched,
-            services=[ServiceOut.model_validate(r) for r in reversed(filters.passing_services(own))]
+            services=[service_out(r, payments, is_connected) for r in reversed(filters.passing_services(own))]
             if with_services else None,
         ))
     # Newest service first; trucks without a service last; id keeps the order stable.
@@ -287,6 +306,9 @@ def search(
                                                                       "(case and spaces ignored)")] = None,
     with_services: Annotated[bool, Query(description="Add each truck's services that pass the filters "
                                                      "(one Excel row per service)")] = False,
+    payment_status: Annotated[PaymentStatus | None, Query(description="Has a service with this Artlab payment "
+                                                                      "status (task 9.6b-4); nothing matches while "
+                                                                      "payments are not connected")] = None,
 ) -> VehicleSearch:
     """Dashboard search (task 9.1): trucks whose plate, fleet number, company or any driver phone
     CONTAINS ``q``, narrowed by the filters. The service filters (dates, route, oil grade) must all
@@ -296,7 +318,7 @@ def search(
     """
     if date_from and date_to and date_from > date_to:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "date_from is after date_to")
-    filters = SearchFilters(date_from, date_to, company_id, route, (oil_grade or "").strip() or None)
+    filters = SearchFilters(date_from, date_to, company_id, route, (oil_grade or "").strip() or None, payment_status)
     rows, options = search_rows(session, q, today, predictor, filters, with_services)
     return VehicleSearch(query=q, total=len(rows), vehicles=rows[:limit], options=options)
 
