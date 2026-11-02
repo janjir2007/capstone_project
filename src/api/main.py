@@ -27,7 +27,7 @@ from src.api.prediction import load_predictor
 from src.api.routers import auth, destinations, health, payments, plates, reminders, services, stats, vehicles
 from src.cv.plate_reader import PlateRecognizer
 
-API_VERSION = "0.16.0"  # = docs/api_contract.md version (task 9.6b-4: was stale at 0.5.0)
+API_VERSION = "0.17.0"  # = docs/api_contract.md version
 log = logging.getLogger("uvicorn.error")
 
 

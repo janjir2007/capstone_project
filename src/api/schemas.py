@@ -338,6 +338,20 @@ class SegmentStats(BaseModel):
     as_of: date
     total: int
     counts: SegmentCounts
+    at_risk_days: int = Field(description="Task 9.12-1: AT_RISK_DAYS, the days without a service after which "
+                                          "a truck is at_risk («Эргэж ирээгүй»), for the card label")
+
+
+class PeriodStats(BaseModel):
+    """GET /stats/period (task 9.12-1): one period's work numbers for the dashboard."""
+
+    period: Literal["today", "week", "month"]
+    date_from: date
+    date_to: date
+    services: int = Field(description="Service records dated in the period")
+    new_vehicles: int = Field(description="Vehicles whose FIRST-EVER service is in the period")
+    liters: float = Field(description="Oil liters of those services")
+    reminders_sent: int = Field(description="Reminders marked sent (sent_at on a UB day in the period)")
 
 
 # --------------------------------------------------------------------------

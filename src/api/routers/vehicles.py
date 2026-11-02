@@ -30,8 +30,8 @@ from src.api.models import ServiceRecord, Vehicle
 from src.api.payments import ServicePayment, connected, payment_of, service_payments
 from src.api.prediction import Predictor
 from src.api.reminders import segment_of
-from src.api.schemas import (CompanyOut, LookupResult, PaymentStatus, PredictionOut, Route, SearchOptions, ServiceOut,
-                             VehicleCard, VehicleRow, VehicleSearch, normalize_phone)
+from src.api.schemas import (CompanyOut, LookupResult, PaymentStatus, PredictionOut, Route, SearchOptions, Segment,
+                             ServiceOut, VehicleCard, VehicleRow, VehicleSearch, normalize_phone)
 from src.common.plates import normalize_plate
 
 router = APIRouter(prefix="/vehicles", tags=["vehicles"])
@@ -199,6 +199,8 @@ class SearchFilters:
     # Task 9.6b-4: service filter on the Artlab payment; `payments` = {service_id: status} of the run.
     payment_status: str | None = None
     payments: dict[int, str | None] = field(default_factory=dict)
+    # Task 9.12-1: the truck's segment today (same rule as the row's `segment`); a truck filter like company_id.
+    segment: str | None = None
 
     def service_passes(self, record: ServiceRecord) -> bool:
         """One service inside the date range (both ends included), on the route, with the oil grade
@@ -252,9 +254,13 @@ def search_rows(session: Session, query: str, today: date, predictor: Predictor 
     filters = replace(filters, payments={r.id: payment_of(r.id, payments, is_connected).payment_status
                                          for rows_ in records.values() for r in rows_})
     rows: list[tuple[Vehicle, list[str]]] = []
+    rules = reminder_rules()
     for vehicle in vehicles:
         own = records.get(vehicle.id, [])
         if not filters.vehicle_passes(vehicle, own):
+            continue
+        if filters.segment is not None and (
+                not own or segment_of(len(own), own[-1].service_date, today, rules) != filters.segment):
             continue
         phones = {r.driver_phone for r in own if r.driver_phone}
         matched = search_matches(query, vehicle.identifier_type, vehicle.identifier, vehicle.plate_normalized,
@@ -265,7 +271,6 @@ def search_rows(session: Session, query: str, today: date, predictor: Predictor 
     histories = {v.id: [to_visit(r) for r in records[v.id]] for v, _ in rows if v.id in records}
     predictions = predictor.predict_many(histories, today) if predictor is not None else {}
     out = []
-    rules = reminder_rules()
     for vehicle, matched in rows:
         own = records.get(vehicle.id, [])
         prediction = predictions.get(vehicle.id)
@@ -309,6 +314,8 @@ def search(
     payment_status: Annotated[PaymentStatus | None, Query(description="Has a service with this Artlab payment "
                                                                       "status (task 9.6b-4); nothing matches while "
                                                                       "payments are not connected")] = None,
+    segment: Annotated[Segment | None, Query(description="Truck's segment today (task 9.12-1): new · returning · "
+                                                          "loyal · at_risk, the same rule as each row's segment")] = None,
 ) -> VehicleSearch:
     """Dashboard search (task 9.1): trucks whose plate, fleet number, company or any driver phone
     CONTAINS ``q``, narrowed by the filters. The service filters (dates, route, oil grade) must all
@@ -318,7 +325,8 @@ def search(
     """
     if date_from and date_to and date_from > date_to:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "date_from is after date_to")
-    filters = SearchFilters(date_from, date_to, company_id, route, (oil_grade or "").strip() or None, payment_status)
+    filters = SearchFilters(date_from, date_to, company_id, route, (oil_grade or "").strip() or None, payment_status,
+                            segment=segment)
     rows, options = search_rows(session, q, today, predictor, filters, with_services)
     return VehicleSearch(query=q, total=len(rows), vehicles=rows[:limit], options=options)
 

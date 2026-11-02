@@ -1,0 +1,173 @@
+<!doctype html>
+<!-- Task 9.12 step 1: STATIC layout mockup of the new «Хяналтын самбар» (not the app).
+     Demo data only (seed_demo trucks, as of 2026-10-08). Tokens copied from src/ui/common.py.
+     Screenshots: .venv/bin/python docs/design/9.12/shoot.py  (Playwright, 390 + 1280 px). -->
+<html lang="mn">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Хяналтын самбар · 9.12 mockup</title>
+<style>
+:root {--ink:#111827; --muted:#4B5563; --line:#EEF0F3; --fill:#F3F4F6; --pri:#1F4E9D; --pri-tint:#EAF0FA;
+  --red:#B42318; --red-tint:#FDECEC; --green:#1E7A4C; --green-tint:#E8F5EE; --r:18px;
+  --shadow:0 1px 2px rgba(16,24,40,.04), 0 4px 16px rgba(16,24,40,.05);
+  /* ONE spacing scale (9.12): 4 8 12 16 24 32 */
+  --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:24px; --s6:32px; --pad:16px; --card:16px;}  /* card padding 16 phone / 24 computer (PM review) */
+* {box-sizing: border-box; margin: 0;}
+body {background: #F6F7F9; color: var(--ink); line-height: 1.4; font-size: 15px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;}
+.page {max-width: 1360px; margin: 0 auto; padding: var(--s3) var(--pad) var(--s6);}
+.top {display: flex; align-items: center; gap: var(--s3); height: 48px;}
+.top .back {font-size: 22px; color: var(--ink); width: 24px;}
+.top h1 {font-size: 20px; font-weight: 600;}
+section {margin-top: var(--s5);}
+.sec {display: flex; align-items: baseline; justify-content: space-between; gap: var(--s3); margin-bottom: var(--s3);}
+.sec h2 {font-size: 13px; font-weight: 600; color: var(--muted); letter-spacing: .01em;}
+.sec .r {font-size: 13px; color: var(--muted);}
+.card {background: #fff; border-radius: var(--r); box-shadow: var(--shadow); padding: var(--card);}
+.muted {color: var(--muted); font-size: 13px;}
+/* 1. period switch + KPIs */
+.seg-ctl {display: grid; grid-template-columns: repeat(3, 1fr); background: #E9ECF1; border-radius: 12px; padding: 4px; gap: 4px;}
+.seg-ctl span {text-align: center; padding: 10px 4px; border-radius: 9px; font-size: 14px; font-weight: 500; color: var(--muted); white-space: nowrap;}
+.seg-ctl .on {background: #fff; color: var(--ink); box-shadow: 0 1px 2px rgba(16,24,40,.08);}
+.grid4 {display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s3); margin-top: var(--s3);}
+.kpi .v {font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums;}
+.kpi .v small {font-size: 15px; font-weight: 500; color: var(--muted); margin-left: 2px;}
+.kpi .k {font-size: 13px; color: var(--muted); margin-top: 2px;}
+.new-api {display: inline-block; font-size: 11px; color: #A05A00; background: #FFF4E0; border-radius: 6px; padding: 0 6px; margin-left: 4px;}
+/* 2. segment cards (tap = table filtered) */
+.segc {display: block; border: 2px solid transparent; cursor: pointer;}
+.segc.on {border-color: var(--pri);}
+.segc .v {font-size: 26px; font-weight: 600;}
+.segc .k {font-size: 15px; font-weight: 500; margin-top: 2px;}
+.segc .d {font-size: 13px; color: var(--muted);}
+.segc .k .dot {display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: 2px;}
+/* 3. payments */
+.pay-head {display: flex; align-items: baseline; justify-content: space-between; gap: var(--s3);}
+.pay-head .n {font-size: 15px;} .pay-head .t {font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums;}
+.pay-row {border-top: 1px solid var(--line); margin-top: var(--s4); padding-top: var(--s4);}
+.pay-row .t1 {display: flex; justify-content: space-between; gap: var(--s3); align-items: center;}
+.noplate {font-weight: 500; color: var(--muted);} .amt {font-weight: 600; white-space: nowrap;}
+.pay-row .who {margin-top: var(--s2);} .pay-row .m {font-size: 13px; color: var(--muted);}
+.call {display: inline-flex; align-items: center; min-height: 44px; padding: 0 20px; margin-top: var(--s3);
+  border-radius: 12px; background: var(--fill); color: var(--ink); text-decoration: none; font-weight: 500;}
+/* 4. search, filters, table */
+.search {display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--s3); align-items: end;}
+.field label {display: block; font-size: 14px; font-weight: 500; margin-bottom: var(--s2);}
+.input {height: 48px; border-radius: 12px; background: var(--fill); padding: 0 var(--s4); display: flex; align-items: center; color: var(--muted); font-size: 16px; white-space: nowrap; overflow: hidden;}
+.btn {height: 48px; border-radius: 12px; background: var(--pri); color: #fff; font-weight: 600; padding: 0 var(--s5); display: flex; align-items: center;}
+.filters-toggle {margin-top: var(--s3); color: var(--pri); font-weight: 600; font-size: 15px;}  /* same left edge as the field */
+.summary {display: flex; justify-content: space-between; align-items: center; gap: var(--s3); margin-top: var(--s4); flex-wrap: wrap;}
+.excel {height: 40px; border-radius: 12px; border: 1px solid #E5E7EB; background: #fff; padding: 0 var(--s4); display: flex; align-items: center; font-size: 14px; gap: 6px;}
+.plate {display: inline-block; font-weight: 600; letter-spacing: .02em; padding: 4px 10px; border-radius: 10px; background: var(--fill); font-variant-numeric: tabular-nums; white-space: nowrap;}
+table.t {width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums;}
+table.t th {text-align: left; color: var(--muted); font-weight: 600; font-size: 12px; padding: 10px 12px; border-bottom: 1px solid var(--line); white-space: nowrap;}
+table.t td {padding: 10px 12px; border-bottom: 1px solid var(--line); white-space: nowrap;}
+table.t td.num, table.t th.num {text-align: right;}
+table.t tr.sel td {background: var(--pri-tint);}
+.tablewrap {padding: 4px 8px; overflow-x: auto;}  /* 768-1180 px: the TABLE scrolls sideways, never the page */
+table.t.wide {min-width: 1160px;}
+.vcards .row {padding: var(--s3) 0; border-top: 1px solid var(--line);} .vcards .row:first-child {border-top: 0; padding-top: 0;}
+.vcards .l1 {display: flex; gap: var(--s3); align-items: center;} .vcards .co {color: var(--muted); font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;}
+.vcards .l2 {font-size: 13px; color: var(--muted); margin-top: var(--s1);}
+.panel .ph {display: flex; align-items: center; gap: var(--s3);} .panel .close {margin-left: auto; color: var(--pri); font-weight: 600;}
+.chip {font-size: 13px; padding: 4px 10px; border-radius: 999px; background: var(--fill); color: var(--muted);}
+.pill {font-size: 12px; padding: 2px 10px; border-radius: 999px; white-space: nowrap;}
+.panel table {margin-top: var(--s4);}
+.note {margin-top: var(--s6); font-size: 12px; color: var(--muted);}
+.wide-only {display: none;} .phone-only {display: block;}
+@media (min-width: 768px) {
+  :root {--pad: 40px; --card: 24px;}
+  .grid4 {grid-template-columns: repeat(4, minmax(0, 1fr));}
+  .seg-ctl {display: inline-grid; grid-template-columns: repeat(3, auto);}
+  .seg-ctl span {padding: 8px 20px;}
+  .wide-only {display: block;} .phone-only {display: none;}
+  .top-row {display: flex; align-items: center; justify-content: space-between; gap: var(--s4);}
+}
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="top"><span class="back">‹</span><h1>Хяналтын самбар</h1></div>
+
+  <!-- 1. Period + KPIs -->
+  <section>
+    <div class="sec"><h2>Ажил</h2><span class="r">2026-10-08 · демо</span></div>
+    <div class="seg-ctl"><span class="on">Өнөөдөр</span><span>Энэ 7 хоног</span><span>Энэ сар</span></div>
+    <div class="grid4">
+      <div class="card kpi"><div class="v">1</div><div class="k">Үйлчилгээ</div></div>
+      <div class="card kpi"><div class="v">1</div><div class="k">Шинэ машин<span class="new-api">шинэ API</span></div></div>
+      <div class="card kpi"><div class="v">40<small>л</small></div><div class="k">Литр</div></div>
+      <div class="card kpi"><div class="v">0</div><div class="k">Сануулга илгээсэн<span class="new-api">шинэ API</span></div></div>
+    </div>
+  </section>
+
+  <!-- 2. Segment cards: tap = table filtered to that segment -->
+  <section>
+    <div class="sec"><h2>Машинууд</h2><span class="r">Дарж шүүнэ</span></div>
+    <div class="grid4">
+      <div class="card segc on"><div class="v">40</div><div class="k">Бүгд</div><div class="d">12 нь 2 удаа</div></div>
+      <div class="card segc"><div class="v">19</div><div class="k">⭐ Байнгын</div><div class="d">3+ удаа</div></div>
+      <div class="card segc"><div class="v">9</div><div class="k"><span class="dot" style="background:#1F4E9D"></span>Шинэ</div><div class="d">1 удаа</div></div>
+      <div class="card segc"><div class="v">0</div><div class="k"><span class="dot" style="background:#B42318"></span>Эргэж ирээгүй</div><div class="d">150+ хоног</div></div>
+    </div>
+  </section>
+
+  <!-- 3. Payments (hidden while not connected) -->
+  <section>
+    <div class="sec"><h2>Төлбөр</h2><span class="r">Сүүлд шинэчилсэн 15:10</span></div>
+    <div class="card">
+      <div class="pay-head"><span class="n">Төлөөгүй <b>2</b> баримт</span><span class="t">160 000₮</span></div>
+      <div class="pay-row"><div class="t1"><span class="plate">7711 ТЕЕ</span><span class="amt">60 000₮</span></div>
+        <div class="who">Демо Экспресс ХХК</div><div class="m">50 хоног хүлээж байна · 2026-09-13 · 8811 9900</div>
+        <a class="call">Залгах</a></div>
+      <div class="pay-row"><div class="t1"><span class="noplate">Дугааргүй баримт</span><span class="amt">100 000₮</span></div>
+        <div class="who">Машин олдсонгүй</div><div class="m">780 хоног хүлээж байна · 2024-09-13</div></div>
+    </div>
+  </section>
+
+  <!-- 4. Search + filters + table (unchanged in function, spacing fixed) -->
+  <section>
+    <div class="sec"><h2>Машин хайх</h2></div>
+    <div class="card">
+      <div class="search">
+        <div class="field"><label>Улсын дугаар, утас эсвэл компани</label><div class="input">1234 УБА · 9911 · Говь Тээвэр</div></div>
+        <div class="btn">Хайх</div>
+      </div>
+      <div class="filters-toggle">Шүүлтүүр</div>
+    </div>
+    <div class="summary"><span class="muted">Бүх машин · 40 · мөр дээр дарж түүхийг харна</span><span class="excel">⤓ Excel татах</span></div>
+
+    <div class="card tablewrap wide-only" style="margin-top: var(--s3)">
+      <table class="t wide">
+        <thead><tr><th>Дугаар</th><th>Компани</th><th>Сүүлд солисон</th><th class="num">Гүйлт (км)</th><th class="num">Дараагийн солилт (км)</th><th>Тос</th><th class="num">Литр</th><th>Жолооч</th><th>Утас</th><th class="num">Удаа</th></tr></thead>
+        <tbody>
+          <tr class="sel"><td>1168 ПОД</td><td>Демо Транс ХХК</td><td>2026-10-08</td><td class="num">482 791</td><td class="num">497 791</td><td>15W-40</td><td class="num">40.0</td><td>М. Дорж</td><td>0000 0004</td><td class="num">1</td></tr>
+          <tr><td>8023 МКС</td><td>Демо Хил Тээвэр ХХК</td><td>2026-10-06</td><td class="num">139 068</td><td class="num">154 068</td><td>10W-40</td><td class="num">38.0</td><td>С. Оюун</td><td>0000 0005</td><td class="num">1</td></tr>
+          <tr><td>9515 ЧАЧ</td><td>Демо Тээвэр ХХК</td><td>2026-10-01</td><td class="num">462 073</td><td class="num">477 073</td><td>10W-40</td><td class="num">30.0</td><td>Д. Төмөр</td><td>0000 0031</td><td class="num">4</td></tr>
+          <tr><td>1003 УНА</td><td>Демо Тээвэр ХХК</td><td>2026-09-28</td><td class="num">562 255</td><td class="num">577 255</td><td>15W-40</td><td class="num">38.0</td><td>Г. Энхбаяр</td><td>0000 0001</td><td class="num">1</td></tr>
+          <tr><td>1001 УБА</td><td>Демо Экспресс ХХК</td><td>2026-09-27</td><td class="num">511 548</td><td class="num">526 548</td><td>10W-40</td><td class="num">32.0</td><td>Г. Оюун</td><td>0000 0018</td><td class="num">5</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card vcards phone-only" style="margin-top: var(--s3)">
+      <div class="row"><div class="l1"><span class="plate">1168 ПОД</span><span class="co">Демо Транс ХХК</span></div><div class="l2">Дараагийн: 497 791 км · 2026-10-08 · М. Дорж</div></div>
+      <div class="row"><div class="l1"><span class="plate">8023 МКС</span><span class="co">Демо Хил Тээвэр ХХК</span></div><div class="l2">Дараагийн: 154 068 км · 2026-10-06 · С. Оюун</div></div>
+      <div class="row"><div class="l1"><span class="plate">9515 ЧАЧ</span><span class="co">Демо Тээвэр ХХК</span></div><div class="l2">Дараагийн: 477 073 км · 2026-10-01 · Д. Төмөр</div></div>
+    </div>
+
+    <!-- truck panel: BELOW the table (full width, nothing clipped) from 768 px -->
+    <div class="card panel wide-only" style="margin-top: var(--s4)">
+      <div class="ph"><span class="plate">1168 ПОД</span><span class="chip">● Шинэ · 1 удаа</span><span class="muted">Демо Транс ХХК</span><span class="close">Хаах</span></div>
+      <table class="t">
+        <thead><tr><th>Огноо</th><th>Төлбөр</th><th class="num">Гүйлт</th><th class="num">Дараагийн</th><th>Тос</th><th class="num">Литр</th><th>Жолооч</th><th>Утас</th></tr></thead>
+        <tbody><tr><td>2026-10-08</td><td><span class="pill" style="color:#4B5563;background:#F3F4F6">Тодорхойгүй</span></td><td class="num">482 791 км</td><td class="num">497 791 км</td><td>15W-40</td><td class="num">40 л</td><td>М. Дорж</td><td>0000 0004</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <p class="note">9.12 mockup · static HTML, not the app · demo data (seed_demo) · «шинэ API» = needs a new API field.</p>
+</div>
+</body>
+</html>

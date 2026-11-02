@@ -1,6 +1,6 @@
 # API contract — data, model and reminder endpoints (tasks 4.2, 4.2b, 4.3, 4.4)
 
-- **Version:** 0.16 (task 9.6b-4, 2026-11-02) · **Owner:** Backend Engineer
+- **Version:** 0.17 (task 9.12-1, 2026-11-02) · **Owner:** Backend Engineer
 - Extends PROJECT_STATE §8 "API contract" with exact fields. The live, always
   current version is the OpenAPI page of the running API: `http://localhost:8000/docs`.
 - Field names follow [`data_dictionary.md`](data_dictionary.md). Code:
@@ -119,7 +119,10 @@ separators allowed). A valid phone is searched as a phone; anything else as a pl
 - `payment_status` (v0.16, task 9.6b-4), optional: `paid` \| `unpaid` \| `paid_later` \| `unknown` — a fifth
   SERVICE filter (one service must pass it together with the others). Nothing matches while payments
   are not connected. Rows' `last_service` / `services` carry the ServiceOut payment fields.
-- **422** `limit` out of range, `q` too long, unknown `route`, bad date, `date_from` after `date_to`, unknown `payment_status`
+- `segment` (v0.17, task 9.12-1), optional: `new` \| `returning` \| `loyal` \| `at_risk` — a TRUCK filter (like
+  `company_id`): the truck's segment today, the same rule as each row's `segment` and `GET /stats/segments`
+  (trucks without a service never match). The dashboard's segment cards use it.
+- **422** `limit` out of range, `q` too long, unknown `route`, bad date, `date_from` after `date_to`, unknown `payment_status` or `segment`
 
 ### `GET /vehicles/{id}`
 - **200** VehicleCard · **404** unknown id
@@ -199,6 +202,19 @@ List for the "where are you heading next?" picker; send the chosen `id` as `dest
   **`AT_RISK_DAYS` (default 150)+ days** since the latest service up to `as_of` (v0.13: 90 days;
   before that predicted date + 7 days, D-007). The same rule gives the card's and the search rows'
   `segment`. Needs no model files.
+
+- v0.17 (task 9.12-1): the answer also has **`at_risk_days`** (int) = `AT_RISK_DAYS` (default 150), so the
+  UI can label the at_risk card («Эргэж ирээгүй» · 150+ хоног) without its own copy of the setting.
+
+### `GET /stats/period?period=&as_of=` (v0.17, task 9.12-1 — dashboard, read only)
+Work numbers of one period, both ends included, in **Ulaanbaatar time**:
+- `period`: `today` (default) \| `week` (**Monday** to `as_of`) \| `month` (the 1st to `as_of`); `as_of` (YYYY-MM-DD,
+  optional) = the period's last day, default today.
+- **200** `{period, date_from, date_to, services, new_vehicles, liters, reminders_sent}`:
+  `services` = service records dated in the range · `new_vehicles` = vehicles whose **first-ever** service is in
+  the range (not "created in the system") · `liters` = their oil liters (number) · `reminders_sent` = reminders
+  marked sent with `sent_at` on a UB day in the range (any stage / channel).
+- **422** unknown `period`, bad `as_of`
 
 ### `GET /reminders/due?as_of=` (v0.15, task 9.5c: one reminder per service)
 Trucks to remind on `as_of`: **one reminder per service**, due on the truck's latest service date +
@@ -307,3 +323,4 @@ The only API routes besides `/health` that Caddy makes public. Not used by the U
 | 0.14 | 2026-10-30 | Task 8.5r (D-117): `/auth/login`, `/auth/logout`, `/auth/check` (additive; data endpoints unchanged and still private). API settings `UI_PASSWORD` + `AUTH_SECRET` |
 | 0.15 | 2026-11-02 | Task 9.5c (D-119): **breaking** — one reminder per service at `REMINDER_DAYS` (75) after the latest service replaces the 1m/2m/3m stages: `stage` removed from `GET /reminders/due` items; `POST /reminders/{id}/sent` takes no `?stage=` (stores `single`); old 1m/2m/3m rows count as sent. `channel` added to the sent row (additive). `at_risk` = `AT_RISK_DAYS` (150)+ days everywhere. New settings `REMINDER_DAYS`, `AT_RISK_DAYS` (bad value or `AT_RISK_DAYS <= REMINDER_DAYS` → the API does not start). Migration 007 |
 | 0.16 | 2026-11-02 | Task 9.6b-4: Artlab payments, **additive + read only**. ServiceOut gets `payment_status`, `amount_due`, `match_confidence` (card `history` / `last_service`, lookup cards, search rows; null in the `POST /services` answer and before the first successful sync). `GET /vehicles/search?payment_status=`. New `GET /payments/unpaid`, `GET /payments/sync-status`. Needs migrations 008 + 009 (run `scripts.migrate` before the new API starts) |
+| 0.17 | 2026-11-02 | Task 9.12-1: **additive, read only**. New `GET /stats/period?period=today\|week\|month&as_of=` (services, new vehicles = first-ever service, liters, reminders sent; week = Monday to today, UB). `GET /vehicles/search?segment=` (truck filter, same segment rule). `at_risk_days` added to `GET /stats/segments` |

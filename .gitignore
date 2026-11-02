@@ -50,6 +50,8 @@ exports/**/*.txt
 *.webp
 # Exception: charts/diagrams for slides (must NOT contain real plates or people)
 !docs/figures/**/*.png
+# Task 9.12: dashboard mockups only (static HTML, demo data, each PNG < 1 MB)
+!docs/design/9.12/*.png
 
 # --- Spreadsheets with real service records
 *.xlsx

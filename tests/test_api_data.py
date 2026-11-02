@@ -508,6 +508,7 @@ def test_segment_stats_sample_data(client: TestClient) -> None:
         "as_of": "2026-09-30",
         "total": 6,
         "counts": {"new": 2, "returning": 3, "loyal": 1, "at_risk": 0},
+        "at_risk_days": 150,  # 9.12-1: AT_RISK_DAYS default, for the «Эргэж ирээгүй» card label
     }
     later = client.get("/stats/segments", params={"as_of": "2026-10-07"}).json()["counts"]
     assert (later["new"], later["at_risk"]) == (1, 1)

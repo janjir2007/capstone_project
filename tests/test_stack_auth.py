@@ -40,6 +40,7 @@ DATA_ROUTES = [
     ("POST", "/services"), ("GET", "/stats/segments"), ("GET", "/destinations"),
     ("POST", "/plates/recognize"), ("GET", "/docs"), ("GET", "/openapi.json"),
     ("GET", "/payments/unpaid"), ("GET", "/payments/sync-status"),  # task 9.6b-4
+    ("GET", "/stats/period"),  # task 9.12-1
 ]
 
 
