@@ -1,0 +1,11 @@
+# Artlab bank transfers (acc-txn) every 2 h (PM 9.6b §3), task 9.6b-3.
+# At :15 so it never starts together with a bills run (:00 / :30).
+[Unit]
+Description=Artlab acc-txn sync every 2 h
+
+[Timer]
+OnCalendar=*-*-* 00/2:15:00 Asia/Ulaanbaatar
+Unit=ocp-artlab-sync@acc_txn.service
+
+[Install]
+WantedBy=timers.target

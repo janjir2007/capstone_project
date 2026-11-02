@@ -1,0 +1,13 @@
+# Nightly re-check of unpaid + unlinked Artlab bills at 02:30 Ulaanbaatar (PM 9.6b §3), task 9.6b-3.
+# Before the 03:00 backup (ocp-backup.timer). Persistent=true: runs once after a server restart
+# if 02:30 was missed.
+[Unit]
+Description=Artlab nightly re-check at 02:30 Asia/Ulaanbaatar
+
+[Timer]
+OnCalendar=*-*-* 02:30:00 Asia/Ulaanbaatar
+Persistent=true
+Unit=ocp-artlab-sync@nightly.service
+
+[Install]
+WantedBy=timers.target

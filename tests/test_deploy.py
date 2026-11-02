@@ -26,7 +26,20 @@ ENV_EXAMPLE = (ROOT / ".env.prod.example").read_text(encoding="utf-8")
 # ==========================================================================
 
 def test_four_services() -> None:
-    assert set(SERVICES) == {"db", "api", "ui", "caddy"}
+    """`up -d` starts these four; artlab-sync (task 9.6b-3) only runs under the "sync" profile."""
+    always = {name for name, s in SERVICES.items() if not s.get("profiles")}
+    assert always == {"db", "api", "ui", "caddy"}
+    assert set(SERVICES) - always == {"artlab-sync"}
+
+
+def test_artlab_credentials_only_in_the_sync_service() -> None:
+    """Task 9.6b-3 (RISK-22): the web API never holds Artlab credentials; the sync holds no web secrets."""
+    sync = SERVICES["artlab-sync"]
+    assert sync["profiles"] == ["sync"] and not sync.get("ports")
+    assert {"ARTLAB_URL", "ARTLAB_USER", "ARTLAB_PASS"} <= set(sync["environment"])
+    assert not {"UI_PASSWORD", "AUTH_SECRET"} & set(sync["environment"])
+    for name in ("api", "ui", "caddy", "db"):
+        assert not any(k.startswith("ARTLAB_") for k in SERVICES[name].get("environment") or {}), name
 
 
 def test_only_caddy_publishes_ports() -> None:

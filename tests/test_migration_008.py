@@ -87,7 +87,7 @@ def bill(conn, artlab_id, *, plates=(), phones=(), service_id=None, confidence=N
 def test_runner_applies_008_after_007(pg_007: psycopg.Connection) -> None:
     pending = [m.version for m in M.find_migrations()
                if m.version not in {r[0] for r in pg_007.execute("SELECT version FROM schema_migrations")}]
-    assert pending == ["008"]
+    assert pending[0] == "008"  # 009+ follow (task 9.6b-3)
     M.apply_one(pg_007, {m.version: m for m in M.find_migrations()}["008"])
     assert TABLES <= tables(pg_007)
 

@@ -1,0 +1,17 @@
+# Artlab -> database sync, one run (task 9.6b-3). %i = bills | acc_txn | nightly.
+# Started by ocp-artlab-bills.timer / ocp-artlab-acctxn.timer / ocp-artlab-nightly.timer.
+# NOT INSTALLED YET: the real Artlab connection waits for the accounting OK (D-114).
+# Install steps: docs/artlab_api_notes.md §8e. One run by hand:
+#   systemctl start ocp-artlab-sync@bills.service && journalctl -u ocp-artlab-sync@bills -n 20
+# Type=oneshot: while one run of a kind is still going, its timer does not start a second one.
+[Unit]
+Description=Oil change predictor: Artlab sync (%i)
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/root/oil-change-predictor
+# Profile "sync": the artlab-sync service is never started by `up -d`, only by this run.
+ExecStart=/usr/bin/docker compose -f docker-compose.prod.yml --profile sync run --rm --no-deps artlab-sync python -m src.artlab.sync --kind %i
+TimeoutStartSec=15min

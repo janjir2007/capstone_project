@@ -85,6 +85,34 @@ services:
     restart: unless-stopped
     logging: *logging
 
+  # Task 9.6b-3: Artlab -> database sync, one run per call (deploy/systemd/ocp-artlab-*).
+  # Profile "sync": never started by `up -d`; systemd runs it with `--profile sync run --rm`.
+  # Same image as api, but only the database + Artlab settings: the web API never holds the
+  # Artlab credentials. NOT installed on the server until the accounting OK (D-114).
+  artlab-sync:
+    image: ocp-api:prod
+    profiles: ["sync"]
+    environment:
+      APP_ENV: prod
+      POSTGRES_USER: ${POSTGRES_USER:-oil}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-oil_change}
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      TZ: Asia/Ulaanbaatar
+      # Empty defaults so `docker compose config` works before Artlab is set up; the sync
+      # itself stops with "Missing in .env: ..." if the login values are empty.
+      ARTLAB_URL: ${ARTLAB_URL:-}
+      ARTLAB_USER: ${ARTLAB_USER:-}
+      ARTLAB_PASS: ${ARTLAB_PASS:-}
+      ARTLAB_BANK_ACCOUNTS: ${ARTLAB_BANK_ACCOUNTS:-}
+      ARTLAB_CREDIT_PAY_TYPES: ${ARTLAB_CREDIT_PAY_TYPES:-LOAN}
+      ARTLAB_ZERO_ROW_WARN_RUNS: ${ARTLAB_ZERO_ROW_WARN_RUNS:-12}
+    depends_on:
+      db:
+        condition: service_healthy
+    logging: *logging
+
   ui:
     # Values from docs/ui_run.md §3 (task T5).
     build:

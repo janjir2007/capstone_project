@@ -204,6 +204,41 @@ Extraction limits found while testing (synthetic text):
 Smoke run on the test DB: 1,348 bills → 1,332 completed sales: 1,329 paid, 1 unpaid (the LOAN bill), 2 unknown (no payment),
 0 with a plate or phone (system-note descriptions, so no false positives either).
 
+## 8e. Sync job (task 9.6b-3) — NOT installed on the server
+
+`python -m src.artlab.sync --kind bills|acc_txn|nightly [--as-of YYYY-MM-DD]` reads Artlab and writes only
+`artlab_bills` + `sync_runs`. `artlab_transfers` stays empty until `transfers.py` is finished. Migration 009 adds
+`sync_runs.account_code` (one acc-txn row per account).
+
+| Run | Schedule (UB) | Reads | Writes |
+| --- | --- | --- | --- |
+| bills | every 30 min 07:00–22:00 | bills, today + 2 days before | upsert + match |
+| acc_txn | every 2 h at :15 | acc-txn per account, today + day before | counts only (parser = stub) |
+| nightly | 02:30 | bills back to the oldest unpaid bill (cap 90 days), re-match unlinked bills, acc-txn same span | upsert + re-match |
+
+- A re-sync never downgrades «Төлсөн (дараа)» back to unpaid while Artlab still shows the LOAN.
+- **Zero-row warning:** after `ARTLAB_ZERO_ROW_WARN_RUNS` (default 12 = 1 day) finished, successful runs in a row with 0 rows for one
+  account, the log gets a WARNING: `acc-txn <code>: 0 rows in the last N runs; check ARTLAB_BANK_ACCOUNTS`. A failed run breaks the streak.
+- Logs and `sync_runs` hold counts, dates, account codes and the exception class only.
+- Calendars were checked with `systemd-analyze calendar` (systemd 255, the same version as the server):
+  bills 07:00, 07:30 … 21:30, 22:00; acc-txn 00:15, 02:15 …; nightly 02:30 (= 18:30 UTC).
+
+Local run 2026-11-02 (Artlab TEST account → local Docker DB, `--as-of` because the test data ends 2026-08-10):
+bills 2026-08-08..10 1213 sales; 2024-09-13..15 8 sales, 1 unpaid; nightly 2024-09-13..20 22 sales, re-match 1235
+unlinked → 0 linked (no plates/phones in test descriptions); acc-txn 127000000001 0 rows ×3 → warning on the 3rd run.
+Result: 1232 paid, 1 unpaid (credit 100,000), 2 unknown, 0 linked.
+
+**Install later (only after the accounting OK, D-114 — not before):**
+```
+# server .env: ARTLAB_URL / ARTLAB_USER / ARTLAB_PASS / ARTLAB_BANK_ACCOUNTS (real values, never in git)
+docker compose -f docker-compose.prod.yml build && docker compose -f docker-compose.prod.yml run --rm api python -m scripts.migrate
+cp deploy/systemd/ocp-artlab-sync@.service deploy/systemd/ocp-artlab-*.timer /etc/systemd/system/
+systemctl daemon-reload
+systemctl start ocp-artlab-sync@bills.service && journalctl -u ocp-artlab-sync@bills -n 20   # one run by hand first
+systemctl enable --now ocp-artlab-bills.timer ocp-artlab-acctxn.timer ocp-artlab-nightly.timer
+systemctl list-timers 'ocp-artlab-*'
+```
+
 ## 9. Open questions for Artlab
 
 1. ~~Which type marks a credit sale?~~ `LOAN` (§8c). Still open: a **test-DB account code with transactions**

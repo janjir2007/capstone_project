@@ -1,0 +1,11 @@
+# Artlab receipts every 30 min, 07:00-22:00 Ulaanbaatar (PM 9.6b §3), task 9.6b-3.
+[Unit]
+Description=Artlab bills sync every 30 min, 07:00-22:00 Asia/Ulaanbaatar
+
+[Timer]
+OnCalendar=*-*-* 07..21:00,30:00 Asia/Ulaanbaatar
+OnCalendar=*-*-* 22:00:00 Asia/Ulaanbaatar
+Unit=ocp-artlab-sync@bills.service
+
+[Install]
+WantedBy=timers.target

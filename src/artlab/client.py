@@ -59,11 +59,11 @@ class ArtlabError(RuntimeError):
     """Artlab answered with an error, or config is missing. The message never holds a secret."""
 
 
-def load_env(path: Path = Path(".env")) -> dict[str, str]:
-    """Read ARTLAB_* keys from a .env file, then let real environment variables override them.
+def artlab_settings(path: Path = Path(".env")) -> dict[str, str]:
+    """Every ARTLAB_* key from a .env file, then real environment variables override them.
 
-    Minimal KEY=VALUE parser (comments, blank lines, optional quotes); no extra package needed.
-    Raises ArtlabError naming the MISSING keys (never their values).
+    Minimal KEY=VALUE parser (comments, blank lines, optional quotes, "export "); no extra package.
+    Other keys in the file (POSTGRES_*, ...) are not read.
     """
     values: dict[str, str] = {}
     if path.exists():
@@ -73,11 +73,18 @@ def load_env(path: Path = Path(".env")) -> dict[str, str]:
                 continue
             key, _, value = line.partition("=")
             key = key.strip().removeprefix("export ").strip()
-            if key in ENV_KEYS:
+            if key.startswith("ARTLAB_"):
                 values[key] = value.strip().strip('"').strip("'")
-    for key in ENV_KEYS:
-        if os.environ.get(key):
-            values[key] = os.environ[key]
+    values.update({k: v for k, v in os.environ.items() if k.startswith("ARTLAB_") and v})
+    return values
+
+
+def load_env(path: Path = Path(".env")) -> dict[str, str]:
+    """The three login settings (ARTLAB_URL / USER / PASS) from .env + environment.
+
+    Raises ArtlabError naming the MISSING keys (never their values).
+    """
+    values = {k: v for k, v in artlab_settings(path).items() if k in ENV_KEYS}
     missing = [k for k in ENV_KEYS if not values.get(k)]
     if missing:
         raise ArtlabError(f"Missing in .env: {', '.join(missing)}")
