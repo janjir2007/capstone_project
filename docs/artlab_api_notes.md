@@ -134,10 +134,58 @@ is `POST /report/acc-txn` («Дансны хуулга», Report → Account tra
 **Do NOT call it yet.** It is a POST, so it is not on the allow-list. We are waiting for Artlab to confirm two things:
 that it is read-only, and that it returns the transfer description. Once confirmed, it gets added as a single named exception, with a test.
 
+## 8c. Probe 9.6b-1: payment methods + acc-txn (test DB, 2026-11-02)
+
+```
+.venv/bin/python -m scripts.artlab_probe --section paymethods
+.venv/bin/python -m scripts.artlab_probe --section acc-txn --account 127000000001 --from 2024-01-01 --to 2026-11-02
+```
+
+Allow-list now: GET `/pos/paymethods` and `/pos/paymethods/types` were added. POST is `/auth/login` plus `/report/acc-txn` (Artlab confirmed
+read-only). The acc-txn body is built in `ArtlabClient.acc_txn()` from exactly `accountCodes` (digits only),
+`startDate` and `endDate` (YYYY-MM-DD). The client has no generic POST.
+
+**Payment methods** (`GET /pos/paymethods`, 9 rows, fields `id, name, type`). These are company settings, not personal data:
+
+| id | name | type |
+| --- | --- | --- |
+| 1 | Бэлэн | CASH |
+| 2 | Карт | NON_CASH |
+| 3 | Мобайл | NON_CASH |
+| **4** | **Зээл** | **LOAN** |
+| 76319565209409539 | QPAY | NON_CASH_PAY |
+| 88525920677673985 | NON_CASH_CARD | NON_CASH_CARD |
+| 104333378544483329 | NON_CASH_PAY_QPAY | NON_CASH_PAY_QPAY |
+| 104333547737725953 | NON_CASH_SEND | NON_CASH_SEND |
+| 104333577398533121 | NON_CASH_PAY_TOKI | NON_CASH_PAY_TOKI |
+
+`/pos/paymethods/types` lists 15 types: CASH, NON_CASH, NON_CASH_CARD, NON_CASH_POS_MINU, NON_CASH_SEND,
+NON_CASH_PAY, NON_CASH_PAY_SOCIALPAY / QPAY / MONPAY / TOKI / POCKET / STOREPAY / OMNI / HIPAY, **LOAN «Зээл»**.
+Ids go above 2^53. That is fine in Python and in Postgres `BIGINT`, but a JavaScript client needs them as strings (`js-response-modify`).
+
+**Credit code = `LOAN`.** Bill `payments[].type` carries the payment-method type
+(e.g. `CASH` with `name` «Бэлэн», `LOAN` with «Зээл»). Over all 1348 test bills: NON_CASH_CARD 637, NON_CASH_PAY_QPAY 452,
+CASH 260, NON_CASH_SEND 3, NON_CASH_PAY_TOKI 1, **LOAN 1**. The one LOAN bill (2024-09-13) has type `SALE`
+(«Зарлага /Тооцоотой/»), status COMPLETE and **3 payments; the LOAN part ≠ totalGross**. That is a real mixed bill, which supports
+PM decision 6(a): compare a later transfer to the **credit amount**, not the gross. That bill has no customer/entity field
+either. Suggested `.env`: `ARTLAB_CREDIT_PAY_TYPES=LOAN`. The accountant should confirm that Geo-Expert's credit sales use it.
+
+**acc-txn** (`POST /report/acc-txn`, account `127000000001`):
+- HTTP 200 in about 0.85 s. Response `{"value": [], "success": true}` for Aug 2026 and also for **2024-01-01..2026-11-02**.
+- Response headers include `x-limit` / `x-offset`, so the report probably pages like the lists (needs verification once there are rows).
+- **A made-up code (`999999999999`) also returns 200 with an empty list.** A wrong account code therefore looks the same as
+  "no transfers". The sync must flag "0 rows for N days" in `sync_runs` instead of trusting an empty result.
+- **Row fields are still unknown.** 127000000001 is Artlab's example code and has no transactions in the test DB. The API
+  offers no read-only GET that lists account codes; trial balance would, but it is not on the allow-list.
+
+**Blocking for the transfer parser (9.6b-2):** we need one account code **that has transactions in the test DB**
+(from Artlab, or the bank/receivable account the accountant will use), so that the `--section acc-txn` probe can
+show the row fields: id / date / amount / sign / description. Until then the parser can't be written against real fields.
+
 ## 9. Open questions for Artlab
 
-1. Which bill type/field marks a credit (unpaid) sale? Is `POST /report/acc-txn` read-only, and does it return
-   the bank-transfer description (§8b)?
+1. ~~Which type marks a credit sale?~~ `LOAN` (§8c). Still open: a **test-DB account code with transactions**
+   for acc-txn, and whether its rows carry the bank-transfer description (§8b, §8c).
 2. Does `GET /pos/bills/:id` carry `entity` (customer) when list rows do not?
 3. A rate limit number for `429`.
 4. Earlier safeguard questions (IP restriction, separate API user, activity log) still stand (§4 PROJECT_STATE).

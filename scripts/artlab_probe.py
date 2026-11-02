@@ -1,17 +1,25 @@
-"""Read-only probe of the Artlab Cloud ERP API v2 (task 9.6a, Artlab TEST account).
+"""Read-only probe of the Artlab Cloud ERP API v2 (tasks 9.6a + 9.6b-1, Artlab TEST account).
 
-Logs in, checks paging and date filters, lists POS bills + invoices for a date range and prints a
-FIELD SUMMARY: key names, types, counts, enum values (type / status / payment type), date range and
+Logs in and prints a FIELD SUMMARY per section: key names, types, counts, enum values, date ranges,
 amount totals. It never prints descriptions, names, phones, register numbers, the token or the
-password (RISK-06, RISK-22) -- for descriptions it only counts how many contain a plate / a phone.
+password (RISK-06, RISK-22) -- free text is only counted (has plate / has phone) or masked
+("1234 УБА" -> "9999 ААА").
 
-Safety (D-114): the only POST allowed is /auth/login; every other request must be a GET on the
-fixed READ_PATHS allow-list, anything else raises before a request is sent. Note
+Sections (--section, default all):
+  bills       9.6a: paging, date filters, POS bills + invoices for --from/--to
+  paymethods  9.6b-1: payment methods + their type enum (find the credit type code)
+  acc-txn     9.6b-1: account transaction report («Дансны хуулга») for --account codes
+
+Safety (D-114): POSTs allowed are /auth/login and /report/acc-txn (Artlab confirmed read-only),
+each with a body built here from fixed keys -- there is no generic POST. Every other request must
+be a GET on the fixed READ_PATHS allow-list; anything else raises before a request is sent.
 GET /auth/connections/switch/:id is a GET that CHANGES the session, so it is not on the list.
 
 Credentials come from .env (ARTLAB_URL, ARTLAB_USER, ARTLAB_PASS); real environment variables win.
 
     .venv/bin/python -m scripts.artlab_probe --from 2026-10-01 --to 2026-10-31
+    .venv/bin/python -m scripts.artlab_probe --section acc-txn --account 127000000001 \\
+        --from 2026-06-01 --to 2026-06-30
 """
 
 from __future__ import annotations
@@ -43,8 +51,13 @@ READ_PATHS = frozenset(
         "/pos/bills/types",
         "/pos/bills/statuses",
         "/invoices",
+        "/pos/paymethods",
+        "/pos/paymethods/types",
     }
 )
+ACC_TXN_PATH = "/report/acc-txn"  # POST, but read-only (Artlab confirmed, PM 9.6b review)
+_ACCOUNT_CODE = re.compile(r"^[0-9]{1,20}$")
+_ISO_DATE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
 ENV_KEYS = ("ARTLAB_URL", "ARTLAB_USER", "ARTLAB_PASS")
 REQUEST_PAUSE_S = 0.3  # stay far below any rate limit (the docs list 429 but no number)
 PAGE_LIMIT = 50
@@ -122,7 +135,7 @@ def _header(headers: dict[str, str], name: str) -> str | None:
 
 @dataclass
 class ArtlabClient:
-    """Tiny read-only Artlab client: login once, then GETs on READ_PATHS only."""
+    """Tiny read-only Artlab client: login once, then GETs on READ_PATHS + the acc-txn report."""
 
     base_url: str
     send: Sender = urllib_send
@@ -151,16 +164,37 @@ class ArtlabClient:
         """GET an allow-listed path. Returns (status, response headers, parsed JSON or None)."""
         if path not in READ_PATHS:
             raise NotAllowedError(f"GET {path} is not on the read-only allow-list")
-        if self.token is None:
-            raise RuntimeError("login() first")
         url = self.base_url + path
         if params:
             url += "?" + urllib.parse.urlencode(params)
-        all_headers = {"Authorization": self.token, "Accept": "application/json"}
+        all_headers = self._auth_headers()
         all_headers.update(headers or {})
         time.sleep(self.pause_s)
         status, resp_headers, raw = self.send("GET", url, all_headers, None)
         return status, resp_headers, _json_or_empty(raw) if raw else None
+
+    def acc_txn(
+        self, account_codes: list[str], start: str, end: str
+    ) -> tuple[int, dict[str, str], Any]:
+        """POST /report/acc-txn («Дансны хуулга»). The body is built HERE from exactly three keys;
+        account codes must be digits and dates YYYY-MM-DD, so nothing else can be sent."""
+        if not account_codes or not all(_ACCOUNT_CODE.match(c) for c in account_codes):
+            raise ValueError("account codes must be 1-20 digits")
+        if not (_ISO_DATE.match(start) and _ISO_DATE.match(end)):
+            raise ValueError("dates must be YYYY-MM-DD")
+        body = json.dumps({"accountCodes": account_codes, "startDate": start, "endDate": end})
+        headers = self._auth_headers()
+        headers["Content-Type"] = "application/json"
+        time.sleep(self.pause_s)
+        status, resp_headers, raw = self.send(
+            "POST", self.base_url + ACC_TXN_PATH, headers, body.encode()
+        )
+        return status, resp_headers, _json_or_empty(raw) if raw else None
+
+    def _auth_headers(self) -> dict[str, str]:
+        if self.token is None:
+            raise RuntimeError("login() first")
+        return {"Authorization": self.token, "Accept": "application/json"}
 
     def count(self, path: str, params: dict[str, str]) -> int | None:
         """Total rows matching params, via the documented X-Summary: 1 header (empty list back)."""
@@ -432,8 +466,106 @@ def probe_date_filter(
     return result
 
 
+def shape_tree(obj: Any, depth: int = 0, max_depth: int = 4) -> Any:
+    """Structure of a JSON value without its values: dict -> {key: shape}, list -> [len, shape of
+    first item], scalar -> type name. Used for the undocumented acc-txn response."""
+    if depth >= max_depth:
+        return type(obj).__name__
+    if isinstance(obj, dict):
+        return {k: shape_tree(v, depth + 1, max_depth) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [len(obj), shape_tree(obj[0], depth + 1, max_depth) if obj else None]
+    return type(obj).__name__
+
+
+def find_rows(obj: Any, path: str = "") -> tuple[str, list[dict]]:
+    """The largest list of objects anywhere in the response -> (its JSON path, the list)."""
+    best: tuple[str, list[dict]] = ("", [])
+    if isinstance(obj, list) and obj and all(isinstance(x, dict) for x in obj):
+        best = (path or "$", obj)
+    children = obj.items() if isinstance(obj, dict) else enumerate(obj) if isinstance(obj, list) else []
+    for key, value in children:
+        sub = find_rows(value, f"{path}.{key}" if isinstance(key, str) else f"{path}[{key}]")
+        if len(sub[1]) > len(best[1]):
+            best = sub
+    return best
+
+
+def column_profile(rows: list[dict]) -> dict[str, dict[str, Any]]:
+    """Per top-level column: no values, only counts / sums / masked shapes.
+
+    numbers -> n, sum, min, max, negatives; dates (YYYY-MM-DD...) -> min, max;
+    other text -> distinct count, max length, plate / phone counts, top-3 masked shapes.
+    'unique' = every non-empty value differs (a candidate row key).
+    """
+    out: dict[str, dict[str, Any]] = {}
+    keys = sorted({k for r in rows for k in r})
+    for key in keys:
+        values = [r.get(key) for r in rows if r.get(key) not in (None, "")]
+        info: dict[str, Any] = {"non_empty": len(values)}
+        hashable = [json.dumps(v, sort_keys=True, default=str) for v in values]
+        info["unique"] = bool(values) and len(set(hashable)) == len(values)
+        nums = [v for v in values if isinstance(v, (int, float)) and not isinstance(v, bool)]
+        texts = [v for v in values if isinstance(v, str)]
+        if nums and len(nums) == len(values):
+            info.update(kind="number", sum=round(sum(nums), 2), min=min(nums), max=max(nums),
+                        negatives=sum(n < 0 for n in nums))
+        elif texts and len(texts) == len(values) and all(_ISO_DATE.match(t[:10]) for t in texts):
+            info.update(kind="date", min=min(t[:10] for t in texts), max=max(t[:10] for t in texts))
+        elif texts and len(texts) == len(values):
+            info.update(
+                kind="text", distinct=len(set(texts)), max_len=max(len(t) for t in texts),
+                has_plate=sum(bool(find_plates(t)) for t in texts),
+                has_phone=sum(bool(find_phones(t)) for t in texts),
+                shapes_top3=dict(Counter(text_shape(t) for t in texts).most_common(3)),
+            )
+        else:
+            info["kind"] = ",".join(sorted({type(v).__name__ for v in values})) or "empty"
+        out[key] = info
+    return out
+
+
+def paymethods_summary(rows: list[dict]) -> list[dict[str, Any]]:
+    """Payment methods are company settings (e.g. «Бэлэн», «Зээл»), not personal data:
+    id, name, type and active are printed as they are."""
+    keep = ("id", "name", "type", "active")
+    return [{k: r.get(k) for k in keep if k in r} for r in rows]
+
+
+def run_paymethods(client: ArtlabClient) -> dict[str, Any]:
+    """9.6b-1: which payment method / type code means credit (zeel)?"""
+    st_types, _, types = client.get("/pos/paymethods/types")
+    st_list, _, methods = client.get("/pos/paymethods")
+    rows = _as_list(methods)
+    return {
+        "types": {"status": st_types, "values": types},
+        "methods": {"status": st_list, "count": len(rows), "fields": sorted(field_summary(rows)),
+                    "rows": paymethods_summary(rows),
+                    "by_type": dict(Counter(str(r.get("type")) for r in rows))},
+    }
+
+
+def run_acc_txn(client: ArtlabClient, accounts: list[str], start: str, end: str) -> dict[str, Any]:
+    """9.6b-1: shape of the undocumented account-transaction report, summaries only."""
+    t0 = time.monotonic()
+    status, headers, data = client.acc_txn(accounts, start, end)
+    elapsed = round(time.monotonic() - t0, 2)
+    path, rows = find_rows(data)
+    return {
+        "request": {"accounts": accounts, "startDate": start, "endDate": end},
+        "status": status,
+        "seconds": elapsed,
+        "response_headers": sorted(k.lower() for k in headers),
+        "shape": shape_tree(data),
+        "rows_path": path,
+        "rows": len(rows),
+        "columns": column_profile(rows),
+        "nested_fields": sorted(k for k in field_summary(rows) if "." in k or "[]" in k),
+    }
+
+
 def run(client: ArtlabClient, start: str, end: str) -> dict[str, Any]:
-    """The whole probe; returns a JSON-safe summary."""
+    """The 9.6a probe (bills + invoices); returns a JSON-safe summary."""
     report: dict[str, Any] = {"range": [start, end]}
     status, _, check = client.get("/auth/check")
     report["auth_check"] = {"status": status, "keys": sorted(check) if isinstance(check, dict) else None}
@@ -472,6 +604,9 @@ def main() -> None:
     parser.add_argument("--from", dest="start", default=str(today - timedelta(days=30)))
     parser.add_argument("--to", dest="end", default=str(today))
     parser.add_argument("--env", type=Path, default=Path(".env"))
+    parser.add_argument("--section", choices=("all", "bills", "paymethods", "acc-txn"), default="all")
+    parser.add_argument("--account", action="append", default=[],
+                        help="account code for acc-txn (repeatable); acc-txn is skipped without one")
     args = parser.parse_args()
 
     env = load_env(args.env)
@@ -482,8 +617,14 @@ def main() -> None:
         "login": {"body_keys": sorted(login_body) if isinstance(login_body, dict) else None,
                   "token_starts_with_bearer": client.token.startswith("Bearer "),
                   "token_jwt": token_lifetime(client.token)},
-        **run(client, args.start, args.end),
     }
+    if args.section in ("all", "bills"):
+        report["bills_section"] = run(client, args.start, args.end)
+    if args.section in ("all", "paymethods"):
+        report["paymethods"] = run_paymethods(client)
+    if args.section in ("all", "acc-txn"):
+        report["acc_txn"] = (run_acc_txn(client, args.account, args.start, args.end)
+                             if args.account else "skipped: no --account")
     print(json.dumps(report, ensure_ascii=False, indent=2, default=str))
 
 

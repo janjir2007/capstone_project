@@ -46,6 +46,11 @@ class FakeArtlab:
             page = self.bills[offset : offset + limit]
             body = {"value": page, "success": True}  # Artlab's wrapper (seen on the test DB)
             return 200, {"X-Offset-Next": str(offset + limit)}, json.dumps(body).encode()
+        if method == "POST" and path == "/report/acc-txn":
+            self.acc_body = json.loads(body)
+            rows = [{"txnDate": "2026-06-02", "amount": -50000, "descr": "1234 УБА 99112233",
+                     "id": 7}, {"txnDate": "2026-06-05", "amount": 80000, "descr": "x", "id": 8}]
+            return 200, {}, json.dumps({"value": {"total": 2, "rows": rows}}).encode()
         return 200, {}, b'{"value": true, "success": true}'
 
 
@@ -78,7 +83,9 @@ def test_login_sends_token_unchanged_and_hides_it_from_repr():
 
 
 @pytest.mark.parametrize(
-    "path", ["/auth/connections/switch/5", "/pos/bills/123", "/gl/save", "/entities", "/auth/login"]
+    "path",
+    ["/auth/connections/switch/5", "/pos/bills/123", "/gl/save", "/entities", "/auth/login",
+     "/report/acc-txn", "/pos/paymethods/5"],
 )
 def test_get_outside_allow_list_is_refused_before_sending(path):
     fake = FakeArtlab()
@@ -215,3 +222,73 @@ def test_text_shape_masks_every_letter_and_digit():
     assert text_shape("1234 УБА 9911-2233") == "9999 ААА 9999-9999"
     assert text_shape("Bat ӨҮ") == "aaa АА"
     assert text_shape("x" * 25) == "a" * 20 + "…"
+
+
+# ---------------------------------------------------------------- 9.6b-1: acc-txn + paymethods
+
+
+def test_acc_txn_body_has_exactly_three_keys():
+    fake = FakeArtlab()
+    client = make_client(fake)
+    client.acc_txn(["127000000001"], "2026-06-01", "2026-06-30")
+    method, url, headers = fake.calls[-1]
+    assert (method, urllib.parse.urlparse(url).path) == ("POST", "/v2/report/acc-txn")
+    assert fake.acc_body == {"accountCodes": ["127000000001"], "startDate": "2026-06-01",
+                             "endDate": "2026-06-30"}
+    assert headers["Authorization"] == TOKEN
+
+
+@pytest.mark.parametrize(
+    "codes, start, end",
+    [([], "2026-06-01", "2026-06-30"), (["12a"], "2026-06-01", "2026-06-30"),
+     (["1; DROP"], "2026-06-01", "2026-06-30"), (["127"], "June", "2026-06-30")],
+)
+def test_acc_txn_rejects_bad_input_before_sending(codes, start, end):
+    fake = FakeArtlab()
+    client = make_client(fake)
+    n_calls = len(fake.calls)
+    with pytest.raises(ValueError):
+        client.acc_txn(codes, start, end)
+    assert len(fake.calls) == n_calls
+
+
+def test_client_has_no_generic_post():
+    assert not any(name in dir(ArtlabClient) for name in ("post", "patch", "put", "delete", "request"))
+
+
+def test_paymethod_paths_are_allowed():
+    fake = FakeArtlab()
+    client = make_client(fake)
+    client.get("/pos/paymethods")
+    client.get("/pos/paymethods/types")
+    assert [m for m, _, _ in fake.calls] == ["POST", "GET", "GET"]
+
+
+def test_run_acc_txn_summarizes_without_values():
+    from scripts.artlab_probe import run_acc_txn
+
+    summary = run_acc_txn(make_client(FakeArtlab()), ["127000000001"], "2026-06-01", "2026-06-30")
+    assert summary["rows_path"] == ".value.rows" and summary["rows"] == 2
+    cols = summary["columns"]
+    assert cols["amount"] == {"non_empty": 2, "unique": True, "kind": "number", "sum": 30000,
+                              "min": -50000, "max": 80000, "negatives": 1}
+    assert cols["txnDate"]["kind"] == "date" and cols["id"]["unique"] is True
+    assert cols["descr"]["has_plate"] == 1 and cols["descr"]["has_phone"] == 1
+    text = json.dumps(summary, ensure_ascii=False)
+    assert "УБА" not in text and "99112233" not in text
+
+
+def test_find_rows_picks_largest_object_list():
+    from scripts.artlab_probe import find_rows
+
+    data = {"a": [{"x": 1}], "b": {"c": [{"y": 1}, {"y": 2}]}, "d": [1, 2, 3]}
+    assert find_rows(data) == (".b.c", [{"y": 1}, {"y": 2}])
+    assert find_rows([{"z": 0}]) == ("$", [{"z": 0}])
+    assert find_rows({"x": 1}) == ("", [])
+
+
+def test_shape_tree_keeps_structure_drops_values():
+    from scripts.artlab_probe import shape_tree
+
+    assert shape_tree({"v": [{"name": "Бат", "n": 1}], "ok": True}) == {
+        "v": [1, {"name": "str", "n": "int"}], "ok": "bool"}
