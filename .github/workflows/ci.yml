@@ -37,9 +37,12 @@ jobs:
           "$RUNNER_TEMP/gitleaks" version
 
       # --redact: findings are printed with the secret replaced by REDACTED (public CI logs).
+      # --log-opts=HEAD: scan every commit in the history of the checked-out commit only.
+      # fetch-depth 0 also fetches other branches; without this a leak on any branch would
+      # turn every run red (seen in task 9.7 with the canary branch).
       - name: Scan full git history for secrets
         run: |
-          "$RUNNER_TEMP/gitleaks" git --config .gitleaks.toml --redact --verbose --no-banner --exit-code 1 .
+          "$RUNNER_TEMP/gitleaks" git --config .gitleaks.toml --log-opts=HEAD --redact --verbose --no-banner --exit-code 1 .
 
   test:
     runs-on: ubuntu-latest
