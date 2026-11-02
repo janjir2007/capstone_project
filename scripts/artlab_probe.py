@@ -27,227 +27,31 @@ from __future__ import annotations
 import argparse
 import base64
 import json
-import os
 import re
 import time
-import urllib.error
-import urllib.parse
-import urllib.request
 from collections import Counter
-from collections.abc import Callable
-from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from src.common.plates import is_valid_plate, normalize_plate
-
-LOGIN_PATH = "/auth/login"
-READ_PATHS = frozenset(
-    {
-        "/auth/check",
-        "/auth/connections",
-        "/pos/bills",
-        "/pos/bills/types",
-        "/pos/bills/statuses",
-        "/invoices",
-        "/pos/paymethods",
-        "/pos/paymethods/types",
-    }
+from src.artlab.client import (  # noqa: F401  (re-exported for tests / interactive use)
+    ACC_TXN_PATH,
+    MAX_PAGES,
+    READ_PATHS,
+    ArtlabClient,
+    ArtlabError,
+    NotAllowedError,
+    as_list,
+    header,
+    load_env,
 )
-ACC_TXN_PATH = "/report/acc-txn"  # POST, but read-only (Artlab confirmed, PM 9.6b review)
-_ACCOUNT_CODE = re.compile(r"^[0-9]{1,20}$")
+from src.artlab.extract import find_phones, find_plates  # noqa: F401
+
+PAGE_LIMIT = 50  # probe pages stay small (date-filter checks look at the first page only)
 _ISO_DATE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
-ENV_KEYS = ("ARTLAB_URL", "ARTLAB_USER", "ARTLAB_PASS")
-REQUEST_PAUSE_S = 0.3  # stay far below any rate limit (the docs list 429 but no number)
-PAGE_LIMIT = 50
-MAX_PAGES = 20  # cap: at most 1,000 rows per list in one probe run
 
 # Only these fields have their VALUES counted and printed (enums, not personal data).
 ENUM_FIELDS = ("type", "status")
-
-# "1234 УБА", "1234-уба", "1234УБА" in free text; normalize_plate() + is_valid_plate() decide.
-_PLATE_IN_TEXT = re.compile(r"(?<![0-9])([0-9]{4})[\s\-.]*([А-ЯЁӨҮа-яёөү]{3})(?![А-ЯЁӨҮа-яёөү])")
-# Letter triples that are words, not plates: "5000 төг" (tugrik) would otherwise read as 5000ТӨГ.
-_NOT_PLATE_LETTERS = frozenset({"ТӨГ"})
-# Mongolian phone numbers have 8 digits, often written "9911 2233" or "9911-2233".
-_PHONE_IN_TEXT = re.compile(r"(?<![0-9])([0-9]{4})[\s\-]?([0-9]{4})(?![0-9])")
-
-# send(method, url, headers, body) -> (status, response headers, response body bytes)
-Sender = Callable[[str, str, dict[str, str], bytes | None], tuple[int, dict[str, str], bytes]]
-
-
-class NotAllowedError(RuntimeError):
-    """A request outside the read-only allow-list was attempted."""
-
-
-# ---------------------------------------------------------------- config
-
-
-def load_env(path: Path = Path(".env")) -> dict[str, str]:
-    """Read ARTLAB_* keys from a .env file, then let real environment variables override them.
-
-    Minimal KEY=VALUE parser (comments, blank lines, optional quotes); no extra package needed.
-    Raises SystemExit naming the MISSING keys (never their values).
-    """
-    values: dict[str, str] = {}
-    if path.exists():
-        for line in path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, _, value = line.partition("=")
-            key = key.strip().removeprefix("export ").strip()
-            if key in ENV_KEYS:
-                values[key] = value.strip().strip('"').strip("'")
-    for key in ENV_KEYS:
-        if os.environ.get(key):
-            values[key] = os.environ[key]
-    missing = [k for k in ENV_KEYS if not values.get(k)]
-    if missing:
-        raise SystemExit(f"Missing in .env: {', '.join(missing)}")
-    values["ARTLAB_URL"] = values["ARTLAB_URL"].rstrip("/")
-    return values
-
-
-# ---------------------------------------------------------------- HTTP
-
-
-def urllib_send(
-    method: str, url: str, headers: dict[str, str], body: bytes | None
-) -> tuple[int, dict[str, str], bytes]:
-    """Real network sender (stdlib). HTTP errors are returned as a status, not raised."""
-    req = urllib.request.Request(url, data=body, headers=headers, method=method)
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            return resp.status, dict(resp.headers.items()), resp.read()
-    except urllib.error.HTTPError as err:
-        return err.code, dict(err.headers.items()), err.read()
-
-
-def _header(headers: dict[str, str], name: str) -> str | None:
-    """Case-insensitive header lookup."""
-    for key, value in headers.items():
-        if key.lower() == name.lower():
-            return value
-    return None
-
-
-@dataclass
-class ArtlabClient:
-    """Tiny read-only Artlab client: login once, then GETs on READ_PATHS + the acc-txn report."""
-
-    base_url: str
-    send: Sender = urllib_send
-    pause_s: float = REQUEST_PAUSE_S
-    token: str | None = field(default=None, repr=False)  # repr=False: never printed by accident
-
-    def login(self, username: str, password: str) -> dict[str, Any]:
-        """POST /auth/login. The token comes back in the Authorization RESPONSE header and
-        already starts with "Bearer ", so it is stored and later sent unchanged."""
-        body = json.dumps({"username": username, "password": password, "type": "api"}).encode()
-        status, headers, raw = self.send(
-            "POST",
-            self.base_url + LOGIN_PATH,
-            {"Content-Type": "application/json", "Accept": "application/json"},
-            body,
-        )
-        token = _header(headers, "Authorization")
-        if status != 200 or not token:
-            raise SystemExit(f"Login failed: HTTP {status}, token header present: {bool(token)}")
-        self.token = token
-        return _json_or_empty(raw)
-
-    def get(
-        self, path: str, params: dict[str, str] | None = None, headers: dict[str, str] | None = None
-    ) -> tuple[int, dict[str, str], Any]:
-        """GET an allow-listed path. Returns (status, response headers, parsed JSON or None)."""
-        if path not in READ_PATHS:
-            raise NotAllowedError(f"GET {path} is not on the read-only allow-list")
-        url = self.base_url + path
-        if params:
-            url += "?" + urllib.parse.urlencode(params)
-        all_headers = self._auth_headers()
-        all_headers.update(headers or {})
-        time.sleep(self.pause_s)
-        status, resp_headers, raw = self.send("GET", url, all_headers, None)
-        return status, resp_headers, _json_or_empty(raw) if raw else None
-
-    def acc_txn(
-        self, account_codes: list[str], start: str, end: str
-    ) -> tuple[int, dict[str, str], Any]:
-        """POST /report/acc-txn («Дансны хуулга»). The body is built HERE from exactly three keys;
-        account codes must be digits and dates YYYY-MM-DD, so nothing else can be sent."""
-        if not account_codes or not all(_ACCOUNT_CODE.match(c) for c in account_codes):
-            raise ValueError("account codes must be 1-20 digits")
-        if not (_ISO_DATE.match(start) and _ISO_DATE.match(end)):
-            raise ValueError("dates must be YYYY-MM-DD")
-        body = json.dumps({"accountCodes": account_codes, "startDate": start, "endDate": end})
-        headers = self._auth_headers()
-        headers["Content-Type"] = "application/json"
-        time.sleep(self.pause_s)
-        status, resp_headers, raw = self.send(
-            "POST", self.base_url + ACC_TXN_PATH, headers, body.encode()
-        )
-        return status, resp_headers, _json_or_empty(raw) if raw else None
-
-    def _auth_headers(self) -> dict[str, str]:
-        if self.token is None:
-            raise RuntimeError("login() first")
-        return {"Authorization": self.token, "Accept": "application/json"}
-
-    def count(self, path: str, params: dict[str, str]) -> int | None:
-        """Total rows matching params, via the documented X-Summary: 1 header (empty list back)."""
-        _, headers, _ = self.get(path, params, {"X-Summary": "1"})
-        total = _header(headers, "X-Total-Records")
-        return int(total) if total and total.isdigit() else None
-
-    def page(self, path: str, params: dict[str, str], offset: int, limit: int) -> tuple[list, dict]:
-        """One page via the documented X-Offset / X-Limit request headers."""
-        status, headers, data = self.get(
-            path, params, {"X-Offset": str(offset), "X-Limit": str(limit)}
-        )
-        if status == 204 or data is None:
-            return [], headers
-        if status != 200:
-            raise SystemExit(f"GET {path}: HTTP {status}")
-        return _as_list(data), headers
-
-    def fetch_all(
-        self, path: str, params: dict[str, str], limit: int = PAGE_LIMIT, max_pages: int = MAX_PAGES
-    ) -> tuple[list, bool]:
-        """All rows (up to max_pages). Returns (rows, truncated)."""
-        rows: list = []
-        offset = 0
-        for _ in range(max_pages):
-            items, headers = self.page(path, params, offset, limit)
-            rows.extend(items)
-            nxt = _header(headers, "X-Offset-Next")
-            if len(items) < limit:
-                return rows, False
-            offset = int(nxt) if nxt and nxt.isdigit() and int(nxt) > offset else offset + limit
-        return rows, True
-
-
-def _json_or_empty(raw: bytes) -> Any:
-    """Parse JSON; {} for an empty or non-JSON body."""
-    try:
-        return json.loads(raw.decode("utf-8")) if raw else {}
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        return {}
-
-
-def _as_list(data: Any) -> list:
-    """List endpoints return {"value": [...], "success": true} (seen on the test DB); a bare list
-    or a {"data": [...]}-style wrapper is tolerated too."""
-    if isinstance(data, list):
-        return data
-    if isinstance(data, dict):
-        for key in ("value", "data", "items", "list", "rows"):
-            if isinstance(data.get(key), list):
-                return data[key]
-    return []
-
 
 # ---------------------------------------------------------------- summaries (no personal values)
 
@@ -303,21 +107,6 @@ def field_summary(rows: list[dict], prefix: str = "") -> dict[str, dict[str, Any
         if isinstance(row, dict):
             walk(row, prefix)
     return {k: {**v, "types": sorted(v["types"])} for k, v in sorted(out.items())}
-
-
-def find_plates(text: str) -> list[str]:
-    """Valid normalized plates found in free text (uses the ONE normalizer, src/common/plates)."""
-    found = []
-    for digits, letters in _PLATE_IN_TEXT.findall(text or ""):
-        plate = normalize_plate(digits + letters)
-        if is_valid_plate(plate) and plate[-3:] not in _NOT_PLATE_LETTERS:
-            found.append(plate)
-    return found
-
-
-def find_phones(text: str) -> list[str]:
-    """8-digit phone numbers found in free text, digits only."""
-    return [a + b for a, b in _PHONE_IN_TEXT.findall(text or "")]
 
 
 def text_shape(text: str, max_len: int = 20) -> str:
@@ -441,7 +230,7 @@ def probe_paging(client: ArtlabClient, path: str) -> dict[str, Any]:
         "page1_dates": date_range(first, "billDate"),
         "page2_dates": date_range(second, "billDate"),
         "paging_headers": sorted(k for k in h1 if k.lower().startswith("x-")),
-        "x_offset_next": _header(h1, "X-Offset-Next"),
+        "x_offset_next": header(h1, "X-Offset-Next"),
         "total_records": total,
     }
 
@@ -536,7 +325,7 @@ def run_paymethods(client: ArtlabClient) -> dict[str, Any]:
     """9.6b-1: which payment method / type code means credit (zeel)?"""
     st_types, _, types = client.get("/pos/paymethods/types")
     st_list, _, methods = client.get("/pos/paymethods")
-    rows = _as_list(methods)
+    rows = as_list(methods)
     return {
         "types": {"status": st_types, "values": types},
         "methods": {"status": st_list, "count": len(rows), "fields": sorted(field_summary(rows)),
@@ -570,7 +359,7 @@ def run(client: ArtlabClient, start: str, end: str) -> dict[str, Any]:
     status, _, check = client.get("/auth/check")
     report["auth_check"] = {"status": status, "keys": sorted(check) if isinstance(check, dict) else None}
     _, _, conns = client.get("/auth/connections")
-    conn_list = _as_list(conns)
+    conn_list = as_list(conns)
     report["connections"] = {"count": len(conn_list),
                              "fields": sorted(field_summary(conn_list))}
     for path in ("/pos/bills/types", "/pos/bills/statuses"):

@@ -182,6 +182,28 @@ either. Suggested `.env`: `ARTLAB_CREDIT_PAY_TYPES=LOAN`. The accountant should 
 (from Artlab, or the bank/receivable account the accountant will use), so that the `--section acc-txn` probe can
 show the row fields: id / date / amount / sign / description. Until then the parser can't be written against real fields.
 
+## 8d. Code (task 9.6b-2)
+
+| Module | Job |
+| --- | --- |
+| `src/artlab/client.py` | read-only client (allow-list, acc-txn fixed body), moved from the probe |
+| `src/artlab/extract.py` | plates + phones from a description; the text is dropped |
+| `src/artlab/bills.py` | Artlab bill → stored fields (completed SALE_VAT / SALE only) |
+| `src/artlab/status.py` | Төлсөн / Төлөөгүй (LOAN) / Тодорхойгүй per bill; roll-up per service |
+| `src/artlab/matching.py` | plate → phone, ±1 day, confidence both / plate / phone, else none / multiple / conflict |
+| `src/artlab/transfers.py` | **stub**: «Төлсөн (дараа)» from acc-txn, until Artlab sends a sample |
+| `src/data/migrations/008_artlab.*.sql` | artlab_bills, artlab_transfers, sync_runs |
+
+Extraction limits found while testing (synthetic text):
+- `9911 2233 тос`: the 2nd half of a phone is never read as plate digits. `ТОС` (oil) and `ТӨГ` (tugrik) are
+  stop-listed, so a real plate ending in them falls back to the phone.
+- Latin `b`/`B` is read as Cyrillic **В** by the shared `normalize_plate` (look-alike rule), so a plate typed
+  `1234 uba` becomes 1234УВА and falls back to the phone. `plates.py` is unchanged because OCR shares it.
+- Digit typos (`12З4`, `1O34`) are not fixed, so those also fall back to the phone.
+
+Smoke run on the test DB: 1,348 bills → 1,332 completed sales: 1,329 paid, 1 unpaid (the LOAN bill), 2 unknown (no payment),
+0 with a plate or phone (system-note descriptions, so no false positives either).
+
 ## 9. Open questions for Artlab
 
 1. ~~Which type marks a credit sale?~~ `LOAN` (§8c). Still open: a **test-DB account code with transactions**
