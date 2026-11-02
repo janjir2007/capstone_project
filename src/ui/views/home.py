@@ -48,7 +48,7 @@ red = ' style="color:#B42318"' if at_risk else ""
 common.html_block(
     '<div class="stats">'
     f'<div><div class="k">Сануулах</div><div class="v">{_num(None if counts is None else counts["to_send"])}</div></div>'
-    f'<div><div class="k">Эрсдэлтэй</div><div class="v"{red}>{_num(at_risk)}</div></div>'
+    f'<div><div class="k">{logic.SEGMENT_LABELS["at_risk"]}</div><div class="v"{red}>{_num(at_risk)}</div></div>'
     f'<div><div class="k">Машин</div><div class="v">{_num(total)}</div></div></div>'
 )
 

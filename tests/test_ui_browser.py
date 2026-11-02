@@ -39,8 +39,10 @@ SCREENS = {
     "/record": "Гараар бичих",
     "/search": "Камераар хайх",
     "/reminders": "Гараар илгээнэ",
-    "/dashboard": "Сегмент",
+    "/dashboard": "Машинууд",   # 9.12 section (was «Сегмент»)
 }
+# T9 page padding (top right bottom left); 9.12: the dashboard is on the 4/8/12/16/24/32 scale
+PAGE_PAD = {"/dashboard": "12px 16px 32px 16px"}
 
 
 def _free_port() -> int:
@@ -170,7 +172,7 @@ def test_max_font_weight_600(ui_url, phone_page, path) -> None:
 @pytest.mark.parametrize("x_frac", [0.08, 0.5, 0.95])
 @pytest.mark.parametrize(("card", "proof"), [
     ("act_record", "Гараар бичих"), ("act_search", "Камераар хайх"), ("act_reminders", "Гараар илгээнэ"),
-    ("act_dashboard", "Сегмент")])
+    ("act_dashboard", "Машинууд")])
 def test_home_card_tap_opens_screen(ui_url, phone_page, card, proof, x_frac) -> None:
     """T7 / 5.9b: the WHOLE card is the tap target (button stretched over the HTML card), for
     every home card, tapped at its left, middle and right."""
@@ -206,13 +208,13 @@ SPACING_JS = """() => {
 
 @pytest.mark.parametrize("path", list(SCREENS))
 def test_spacing_exact_values(ui_url, phone_page, path) -> None:
-    """T9: page padding 12/20/40, no empty blocks taking a gap, and no block overlapping or
+    """T9: page padding 12/20/40 (dashboard: PAGE_PAD), no empty blocks taking a gap, and no block overlapping or
     touching the next (HTML content spilling out of its Streamlit box, e.g. markdown's -1rem)."""
     phone_page.goto(ui_url + path)
     phone_page.wait_for_selector(f"text={SCREENS[path]}", timeout=20000)
     phone_page.wait_for_timeout(800)
     m = phone_page.evaluate(SPACING_JS)
-    assert m == {"pad": "12px 20px 40px 20px", "empty": 0, "tight": 0}, m
+    assert m == {"pad": PAGE_PAD.get(path, "12px 20px 40px 20px"), "empty": 0, "tight": 0}, m
 
 
 def test_oil_segment_selected_is_white(ui_url, phone_page) -> None:
@@ -308,7 +310,7 @@ def test_payments_fit_phone(ui_url, phone_page, shot_dir) -> None:
     fits 390 px, and every «Залгах» is a 44 px tap target. Skipped when the API's database has no
     successful Artlab sync yet (the block is hidden then, which test_screen_fits_phone covers)."""
     phone_page.goto(ui_url + "/dashboard")
-    phone_page.wait_for_selector("text=Сегмент", timeout=20000)
+    phone_page.wait_for_selector("text=Машинууд", timeout=20000)
     phone_page.wait_for_timeout(1500)
     if phone_page.locator("text=Сүүлд шинэчилсэн").count() == 0:
         pytest.skip("payments not connected in this API's database")
@@ -338,3 +340,110 @@ def test_card_payment_pills_fit_phone(ui_url, phone_page, shot_dir) -> None:
         box = pills.nth(i).bounding_box()
         assert box["x"] >= 0 and box["x"] + box["width"] <= PHONE["width"], box
     _check_phone_width(phone_page, shot_dir, "screen_card_payments")
+
+
+# --- «Хяналтын самбар» 9.12 at phone / tablet / computer width ---------------------------------
+# Needs an API with contract v0.17 (GET /stats/period). The demo DB (seed_demo) has 40 trucks.
+
+WIDTHS = {390: 844, 900: 1000, 1280: 900}
+DASH_JS = """() => {
+  const q = s => document.querySelector(s), box = s => q(s) && q(s).getBoundingClientRect();
+  const cols = s => q(s) ? getComputedStyle(q(s)).gridTemplateColumns.split(' ').length : 0;
+  const sc = q('.st-key-dash_table_wrap .dvn-scroller');
+  return {page: document.documentElement.scrollWidth, kpi: cols('.tiles.kpi'), segs: cols('.st-key-dash_segs'),
+    pads: [q('.tiles.kpi > div'), q('.st-key-act_seg_all'), q('.st-key-card_dash_search')].map(e => getComputedStyle(e).padding),
+    input: box('.st-key-card_dash_search [data-testid="stTextInputRootElement"]'),
+    button: box('.st-key-card_dash_search .stFormSubmitButton button'),
+    filters: box('.st-key-card_dash_search [data-testid="stExpander"] summary p'),
+    // the placeholder's text width vs the field's inner width (canvas: the input's own font)
+    hint: (i => { const c = document.createElement('canvas').getContext('2d'), st = getComputedStyle(i);
+      c.font = st.fontSize + ' ' + st.fontFamily;
+      return [Math.ceil(c.measureText(i.placeholder).width),
+              i.clientWidth - parseFloat(st.paddingLeft) - parseFloat(st.paddingRight)]; })(q('.st-key-card_dash_search input')),
+    track: box('.st-key-dash_period div:has(> button)'),
+    table: !!q('.st-key-dash_table_wrap')?.checkVisibility(), scroller: sc ? [sc.scrollWidth, sc.clientWidth] : null};
+}"""
+
+
+@pytest.fixture(scope="module", params=list(WIDTHS), ids=lambda w: f"{w}px")
+def dash(request, pw, ui_url, shot_dir):
+    """The dashboard open at one width (390 = phone, 900 = small laptop / tablet, 1280 = computer)."""
+    width = request.param
+    browser = pw.chromium.launch(channel=os.environ.get("UI_BROWSER_CHANNEL") or None)
+    page = browser.new_page(viewport={"width": width, "height": WIDTHS[width]},
+                            is_mobile=width < 768, has_touch=width < 768)
+    page.goto(ui_url + "/dashboard")
+    page.wait_for_selector(".tiles.kpi", timeout=20000)
+    page.wait_for_timeout(1500)
+    page.width = width
+    yield page
+    page.set_viewport_size({"width": width, "height": 3200})  # whole screen (Streamlit scrolls inside)
+    page.wait_for_timeout(500)
+    page.screenshot(path=str(shot_dir / f"dashboard_{width}.png"))
+    browser.close()
+
+
+def test_dashboard_layout_per_width(dash) -> None:
+    """No sideways page scroll; KPI tiles + segment cards 2×2 on a phone, 4 across from 768 px;
+    card padding 16 / 24; «Хайх» BESIDE the field, both 48 px, bottoms in line, the placeholder not
+    cut off; «Шүүлтүүр» starts at the field's left edge; the period switch is full width on a phone, word-wide on a computer."""
+    m = dash.evaluate(DASH_JS)
+    wide = dash.width >= 768
+    assert m["page"] <= dash.width, m
+    assert (m["kpi"], m["segs"]) == ((4, 4) if wide else (2, 2)), m
+    assert m["pads"] == ["24px" if wide else "16px"] * 3, m
+    assert round(m["input"]["height"]) == round(m["button"]["height"]) == 48, m
+    assert abs(m["input"]["bottom"] - m["button"]["bottom"]) < 1 and m["button"]["left"] > m["input"]["right"], m
+    assert abs(m["filters"]["left"] - m["input"]["left"]) < 1, m
+    assert m["hint"][0] <= m["hint"][1], m                           # the whole placeholder is visible
+    assert (m["track"]["width"] < 500) if wide else (m["track"]["width"] >= dash.width - 2 * 16 - 1), m
+    assert m["table"] == wide, m                                     # phone: tappable cards instead
+
+
+def test_dashboard_table_scrolls_inside_its_box(dash) -> None:
+    """768-1180 px: the 10-column table scrolls sideways INSIDE its box, the page never does;
+    at 1280 px every column fits (nothing clipped)."""
+    if dash.width < 768:
+        pytest.skip("phone: cards, no table")
+    m = dash.evaluate(DASH_JS)
+    inner, shown = m["scroller"]
+    assert m["page"] <= dash.width, m
+    assert (inner > shown) if dash.width < 1180 else (inner <= shown + 1), m
+
+
+def test_dashboard_segment_card_filters_and_outlines(dash) -> None:
+    """Tap «Шинэ»: blue outline moves to it and the list shows that many trucks; «Бүгд» brings all back."""
+    new = dash.locator(".st-key-act_seg_new")
+    count = int(new.locator(".segc .v").inner_text())
+    new.click()
+    dash.wait_for_function(f"document.body.innerText.includes('Шүүсэн · {count} машин')", timeout=15000)
+    outline = lambda key: dash.locator(f".st-key-act_seg_{key}").evaluate("e => getComputedStyle(e).outlineStyle")
+    assert outline("new") == "solid" and outline("all") == "none"
+    dash.locator(".st-key-act_seg_all").click()
+    dash.wait_for_function("document.body.innerText.includes('Бүх машин ·')", timeout=15000)
+    assert outline("all") == "solid"
+
+
+def test_dashboard_history_below_list_and_in_view(dash) -> None:
+    """Pick a truck (phone: its row; computer: the table's row marker): the history opens BELOW the
+    list, full width, and is scrolled into view."""
+    if dash.width < 768:
+        dash.locator('[class*="st-key-act_dash_"]').first.click()
+    else:
+        table = dash.locator(".st-key-dash_table_wrap")
+        dash.wait_for_timeout(1500)                                 # the last tap's rerun redraws the table
+        table.wait_for(state="visible", timeout=15000)
+        table.scroll_into_view_if_needed()
+        box = table.bounding_box()
+        dash.mouse.click(box["x"] + 14, box["y"] + 35 * 1.5)       # row 1's selection marker
+    panel = dash.locator(".st-key-card_dash_history")
+    panel.wait_for(timeout=15000)
+    dash.wait_for_timeout(1200)                                     # smooth scroll
+    p = panel.bounding_box()
+    list_box = dash.locator(".st-key-dash_list").bounding_box()
+    assert p["y"] >= list_box["y"] + list_box["height"] - 1         # below the list
+    assert abs(p["width"] - list_box["width"]) < 1                  # full width, nothing clipped
+    assert 0 <= p["y"] < WIDTHS[dash.width]                         # its top is on screen
+    assert dash.evaluate("document.documentElement.scrollWidth") <= dash.width
+    dash.get_by_role("button", name="Хаах").click()
+    panel.wait_for(state="detached", timeout=15000)

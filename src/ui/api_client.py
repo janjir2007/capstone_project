@@ -161,8 +161,14 @@ def recognize_plate(image: bytes, filename: str, content_type: str = "image/jpeg
 
 
 def segment_stats(as_of: str | None = None) -> dict:
-    """GET /stats/segments -> {as_of, total, counts: {new, returning, loyal, at_risk}}."""
+    """GET /stats/segments -> {as_of, total, counts: {new, returning, loyal, at_risk}, at_risk_days}."""
     return _request("GET", "/stats/segments", params={"as_of": as_of} if as_of else None)
+
+
+def period_stats(period: str = "today") -> dict:
+    """GET /stats/period -> {period, date_from, date_to, services, new_vehicles, liters, reminders_sent}
+    (contract v0.17, task 9.12; the API picks the dates from its Ulaanbaatar today)."""
+    return _request("GET", "/stats/period", params={"period": period})
 
 
 def reminders_due(as_of: str | None = None) -> dict:

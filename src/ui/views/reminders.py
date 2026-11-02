@@ -7,10 +7,10 @@
   reruns the app, so that row then asks «Илгээсэн үү?» -> «Тийм» marks it sent. No Viber API / auto send.
 - «SMS илгээх» (task 9.5d, main button above Viber): sms: link with the driver's number and the text;
   opens the phone's SMS app, nothing is sent by the app; the manager then taps «Илгээсэн».
-- 2 numbers: «Илгээх» (queue) and «Эрсдэлтэй» (red when > 0).
-- «Өнөөдрийн дараалал» and «Эрсдэлтэй» (API `segment` = at_risk = AT_RISK_DAYS (150)+ days, stays
+- 2 numbers: «Илгээх» (queue) and «Эргэж ирээгүй» (red when > 0; 9.12, was «Эрсдэлтэй»).
+- «Өнөөдрийн дараалал» and «Эргэж ирээгүй» (API `segment` = at_risk = AT_RISK_DAYS (150)+ days, stays
   until sent or a new service): a row per truck = plate, driver, days since the change · phone,
-  «Сануулах» / «Эрсдэлтэй» pill; the message text (st.code has a copy button = desktop fallback);
+  «Сануулах» / «Эргэж ирээгүй» pill; the message text (st.code has a copy button = desktop fallback);
   «Залгах» (tel:) and «Илгээсэн» -> POST /reminders/{id}/sent. Oldest first (API order).
 - «Дахиж илгээхгүй» (the driver said stop) -> «Тийм» -> POST /reminders/stops: no more messages to
   that phone. «Мессеж хүсээгүй утас» lists them; «Буцаах» = DELETE (a mistaken tap).
@@ -175,14 +175,14 @@ if due is not None:
     common.html_block(
         '<div class="tiles two">'
         f'<div><div class="v">{counts["queue"]}</div><div class="k">Илгээх</div></div>'
-        f'<div><div class="v"{red}>{counts["at_risk"]}</div><div class="k">Эрсдэлтэй</div></div></div>')
+        f'<div><div class="v"{red}>{counts["at_risk"]}</div><div class="k">{logic.SEGMENT_LABELS["at_risk"]}</div></div></div>')
     if due.get("contact_is_placeholder"):
         common.html_block('<div class="note-line"><i class="dot" style="background:#A05A00"></i>'
                           'Мессеж дэх утас түр дугаар байна (API-д CONTACT_PHONE тохируулаагүй).</div>')
     to_send, at_risk = logic.split_reminders(reminders)
     for key, title, group, empty in (
         ("queue", "Өнөөдрийн дараалал", to_send, "Өнөөдөр илгээх сануулга алга."),
-        ("risk", "Эрсдэлтэй", at_risk, "Эрсдэлтэй машин алга."),
+        ("risk", logic.SEGMENT_LABELS["at_risk"], at_risk, "Эргэж ирээгүй машин алга."),
     ):
         st.subheader(f"{title} ({len(group)})")
         with st.container(key=f"card_{key}"):

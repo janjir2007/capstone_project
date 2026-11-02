@@ -1,16 +1,26 @@
-"""«Хяналтын самбар» (8.1; was «Тойм») — manager overview, view only (tasks 5.4, 9.1).
+"""«Хяналтын самбар» (8.1; was «Тойм») — manager overview, view only (tasks 5.4, 9.1, 9.12).
 
-9.1: the only screen that uses a computer's full width (≥ 1024 px); every other screen keeps the
-480 px phone column (common.CSS). Below 1024 px this screen is one column too.
-- Segment tiles from GET /stats/segments (2×2 on a phone, 4 in a row on a computer).
+9.12 (approved plan + mockup docs/design/9.12/): top to bottom
+- «Ажил»: Өнөөдөр / Энэ 7 хоног / Энэ сар (default Өнөөдөр) + 4 KPI tiles from GET /stats/period
+  (2×2 on a phone, 4 across on a computer).
+- «Машинууд»: 4 segment cards (Бүгд · Байнгын · Шинэ · Эргэж ирээгүй). A tap filters the table
+  (?segment=, the same value as the «Сегмент» filter, where «Давтан» also is); the picked card has
+  a blue outline. Under «Бүгд»: how many came twice.
+- Computer layout from 768 px (was 1024). The truck's history opens BELOW the list at every width and
+  is scrolled into view; 768-1180 px the table scrolls sideways inside its own box, never the page.
+- One spacing scale 4/8/12/16/24/32; cards 16 px padding on a phone, 24 on a computer; «Хайх» and
+  the search field both 48 px, bottom-aligned.
+
+9.1: the only screen that uses a computer's full width (≥ 768 px since 9.12); every other screen keeps
+the 480 px phone column (common.CSS). Below 768 px this screen is one column too.
 - Search the database: any part of a plate, fleet number, company or driver phone
   (GET /vehicles/search, blank = every truck, newest service first). Results: a table on a
   computer (click a row), tappable cards on a phone.
 - 9.5a: target km of the next change (odometer at the last change + OIL_INTERVAL_KM, from the API)
   instead of the prediction status: a table column, the phone cards' second line, a history column
   and an Excel column. Mine trucks (engine hours only) have none («—» / empty cell).
-- Selected truck: every service (date, odometer, target, oil, liters, driver, phone) from GET /vehicles/{id};
-  beside the table on a computer, in place of the cards on a phone («Хаах» = back to the list).
+- Selected truck: every service (date, odometer, target, oil, liters, driver, phone) from GET /vehicles/{id},
+  below the list («Хаах» closes it).
 - Filters (step 2): date range, company, route, oil grade, sent with the search. «Excel татах»
   downloads one row per matching service (src/ui/export.py, built in memory, nothing stored).
 - Due list from GET /reminders/due, read only (sending stays on «Сануулга»).
@@ -34,34 +44,70 @@ DASH_OPTIONS = "dash_options"  # last filter choices from the API (companies, oi
 FILTER_WIDGETS = {name: f"dash_f_{name}" for name in logic.FILTER_KEYS}  # API param -> widget key
 DASH_VEHICLE = "dash_vid"      # truck whose history is open
 DASH_IDS = "dash_ids"          # vehicle ids in table order (the table selection gives a row number)
+DASH_PERIOD = "dash_period"    # «Ажил» switch: today | week | month (GET /stats/period)
+DASH_SCROLL = "dash_scroll"    # True -> scroll the just-opened history into view on this run
+DASH_SCROLLS = "dash_scrolls"  # counter: makes each scroll script new, so the browser runs it again
+SEGMENT_KEY = FILTER_WIDGETS["segment"]  # a card tap writes the «Сегмент» filter widget
 TABLE_KEY = "dash_table"
-WIDE_PX = 1024                 # computer layout from this viewport width
+WIDE_PX = 768                  # computer layout from this viewport width (9.12; was 1024)
 PHONE_CARDS_MAX = 50           # tappable rows on a phone; the table shows up to the API limit
 SEARCH_LIMIT = 1000            # API maximum: the table and the Excel file hold the whole filtered list
 ROW_PX = 35                    # table row (and header) height, so the table is exactly as tall as its rows
 
 # Screen-only CSS: it is part of this page's output, so it disappears when another screen opens.
+# 9.12 spacing scale: 4 / 8 / 12 / 16 / 24 / 32 only. Cards: 16 px padding on a phone, 24 on a computer.
 WIDE_CSS = f"""
 <style>
+.block-container {{padding: 12px 16px 32px !important; --card-pad: 16px;}}
+/* section title: flush with the cards' outer edge, 24 px above (12 + the 12 px gap), 12 px to its content */
+.block-container [data-testid="stElementContainer"]:has(> .stHeading h3) {{margin: 12px 0 0 0;}}
+.block-container [class*="st-key-card_"] {{padding: var(--card-pad); margin-top: 0;}}
+.block-container [class*="st-key-grp_"] {{margin-top: 0;}}
+.st-key-grp_dash_cards [class*="st-key-act_"] {{padding: 16px var(--card-pad);}}
+/* «Ажил»: period switch = segmented control (grey track, picked one white), full width on a phone */
+.st-key-dash_period, .st-key-dash_period [data-testid="stButtonGroup"], .st-key-dash_period div:has(> button) {{width: 100% !important; max-width: none !important;}}
+.st-key-dash_period div:has(> button) {{display: flex; background: #E9ECF1; border-radius: 12px; padding: 4px; gap: 4px !important;}}
+.st-key-dash_period button {{flex: 1 1 0; min-width: 0; min-height: 40px; padding: 4px 8px !important; border-radius: 8px !important;
+  background: transparent !important; color: var(--muted) !important; border: none !important;}}
+.st-key-dash_period button[aria-checked="true"] {{background: #fff !important; color: var(--ink) !important; box-shadow: 0 1px 2px rgba(16,24,40,.08);}}
+.st-key-dash_period button p {{font-size: 14px !important; font-weight: 500; white-space: nowrap;}}
 @media (min-width: {WIDE_PX}px) {{
-  .block-container {{max-width: 1360px !important; padding: 24px 40px 48px !important;}}
-  .tiles.seg {{grid-template-columns: repeat(4, 1fr);}}
-  .st-key-dash_split {{flex-direction: row !important; align-items: flex-start !important; gap: 24px !important;}}
-  /* the flex items are Streamlit's stLayoutWrapper around each keyed container */
-  [data-testid="stLayoutWrapper"]:has(> .st-key-dash_list) {{flex: 2 1 0 !important; min-width: 0;}}
-  [data-testid="stLayoutWrapper"]:has(> .st-key-dash_hist) {{flex: 1 1 0 !important; min-width: 0;
-    position: sticky; top: 16px;}}
+  .block-container {{max-width: 1360px !important; padding: 24px 32px 32px !important;}}
+  .block-container {{--card-pad: 24px;}}
+  .tiles.kpi, .st-key-dash_segs {{grid-template-columns: repeat(4, minmax(0, 1fr)) !important;}}
   .st-key-grp_dash_cards, [data-testid="stLayoutWrapper"]:has(> .st-key-grp_dash_cards) {{display: none !important;}}
+  /* computer: the switch is as wide as its 3 words, not the whole page */
+  .st-key-dash_period [data-testid="stButtonGroup"] {{width: auto !important;}}
+  .st-key-dash_period div:has(> button) {{display: inline-flex; width: auto !important;}}
+  .st-key-dash_period button {{flex: none; padding: 4px 24px !important;}}
 }}
 @media (max-width: {WIDE_PX - 0.02}px) {{
-  .st-key-dash_split {{flex-direction: column !important;}}
-  .st-key-dash_split > * {{width: 100% !important;}}
-  .st-key-dash_hist, [data-testid="stLayoutWrapper"]:has(> .st-key-dash_hist) {{order: -1;}}
-  /* phone: an open history replaces the list (else it opens above, out of sight); «Хаах» brings it back */
-  .st-key-dash_split:has(.st-key-dash_hist) .st-key-dash_list,
-  .st-key-dash_split:has(.st-key-dash_hist) [data-testid="stLayoutWrapper"]:has(> .st-key-dash_list) {{display: none !important;}}
   .st-key-dash_table_wrap, [data-testid="stLayoutWrapper"]:has(> .st-key-dash_table_wrap) {{display: none !important;}}
 }}
+/* KPI tiles + segment cards: 2×2 on a phone, 4 across on a computer, 12 px apart */
+.tiles.kpi {{grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 0;}}
+.tiles.kpi > div {{padding: var(--card-pad);}}
+.tiles.kpi .v small {{font-size: 15px; font-weight: 500; color: var(--muted); margin-left: 4px;}}
+.st-key-dash_segs {{display: grid !important; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px !important;}}
+.st-key-dash_segs [class*="st-key-act_seg_"] {{margin: 0; padding: var(--card-pad); height: 100%;}}
+.st-key-dash_segs [data-testid="stLayoutWrapper"] {{min-width: 0; width: auto !important;}}
+.segc .v {{font-size: 26px; font-weight: 600; line-height: 1.2;}}
+.segc .k {{display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 500; margin-top: 4px;}}
+.segc .d {{font-size: 13px; color: var(--muted); margin-top: 4px;}}
+/* search: field and «Хайх» both 48 px, bottom edges in line; «Шүүлтүүр» starts at the field's left edge */
+.st-key-card_dash_search [data-baseweb="input"], .st-key-card_dash_search [data-testid="stTextInputRootElement"] {{
+  min-height: 48px !important; height: 48px !important; box-sizing: border-box;}}
+.st-key-card_dash_search .stFormSubmitButton button {{min-height: 48px !important; height: 48px; border-radius: 12px; padding: 0 24px;}}
+/* the field and «Хайх» stay in ONE row on a phone too (Streamlit stacks columns below 640 px) */
+.st-key-dash_search_row [data-testid="stHorizontalBlock"] {{flex-wrap: nowrap !important; gap: 12px !important;}}
+.st-key-dash_search_row [data-testid="stColumn"]:first-child {{flex: 1 1 auto !important; width: auto !important; min-width: 0 !important;}}
+.st-key-dash_search_row [data-testid="stColumn"]:last-child {{flex: none !important; width: auto !important; min-width: 0 !important;}}
+/* the hidden expander icon still kept a 15 px slot + gap: drop it, so «Шүүлтүүр» starts at the field's edge */
+.st-key-card_dash_search [data-testid="stExpander"] summary > span > span:has([data-testid="stIconMaterial"]) {{display: none;}}
+/* history below the list: no table inside a table's box; scrolled to with 16 px air above it */
+.st-key-card_dash_history {{scroll-margin-top: 16px;}}
+/* the scroll script's box is 0 px tall but would still take a 12 px gap (it has already run) */
+[data-testid="stElementContainer"]:has(script) {{display: none;}}
 /* no table toolbar (CSV download, search, fullscreen): export only via the Excel button (9.1 step 2) */
 .st-key-dash_table_wrap [data-testid="stElementToolbar"] {{display: none !important;}}
 /* history: a table on a computer, one small card per service on a phone */
@@ -116,27 +162,82 @@ def on_table_select(key: str) -> None:
     """Table row clicked: open that truck's history (row number -> id of the table just shown)."""
     rows = st.session_state[key].selection.rows
     ids = st.session_state.get(DASH_IDS, [])
-    st.session_state[DASH_VEHICLE] = ids[rows[0]] if rows and rows[0] < len(ids) else None
+    open_history(ids[rows[0]] if rows and rows[0] < len(ids) else None)
 
 
 def open_history(vehicle_id: int | None) -> None:
     st.session_state[DASH_VEHICLE] = vehicle_id
+    st.session_state[DASH_SCROLL] = vehicle_id is not None  # the panel opens below the list: bring it into view
 
 
-def segment_tiles() -> None:
+def pick_segment(segment: str | None) -> None:
+    """Segment card tapped: the table shows that segment (None = «Бүгд»); an open history closes,
+    its truck may not be in the new list."""
+    st.session_state[SEGMENT_KEY] = segment
+    st.session_state[DASH_VEHICLE] = None
+
+
+def period_section() -> None:
+    """«Ажил»: Өнөөдөр / Энэ 7 хоног / Энэ сар + services, first-ever trucks, liters, reminders sent."""
+    period = st.segmented_control("Хугацаа", list(logic.PERIOD_LABELS), format_func=logic.PERIOD_LABELS.get,
+                                  default="today", required=True, key=DASH_PERIOD, label_visibility="collapsed")
+    try:
+        stats = api_client.period_stats(period or "today")
+    except api_client.ApiError as exc:
+        common.show_api_error(exc)
+        return
+    tiles = "".join(
+        f'<div><div class="v">{html.escape(value)}{f"<small>{unit}</small>" if unit else ""}</div>'
+        f'<div class="k">{html.escape(label)}</div></div>'
+        for value, unit, label in logic.period_tiles(stats)
+    )
+    common.html_block(f'<div class="tiles kpi">{tiles}</div>')
+    common.html_block(f'<span class="muted">{html.escape(logic.period_range_text(stats))}</span>')
+
+
+def segment_cards() -> None:
+    """«Машинууд»: 4 tappable cards; the picked one (None = «Бүгд») has a blue outline."""
     try:
         stats = api_client.segment_stats()
     except api_client.ApiError as exc:
         common.show_api_error(exc)
         return
-    counts = stats.get("counts") or {}
-    tiles = "".join(
-        f'<div><div class="v">{counts.get(s, 0)}</div><div class="k"><i class="dot" '
-        f'style="background:{logic.SEGMENT_DOTS[s]}"></i>{logic.SEGMENT_LABELS[s]}</div></div>'
-        for s in logic.SEGMENT_ORDER
-    )
-    common.html_block(f'<div class="tiles two seg">{tiles}</div>')
-    common.html_block(f'<span class="muted">Нийт {stats.get("total", 0)} машин · {stats.get("as_of", "")}</span>')
+    picked = st.session_state.get(SEGMENT_KEY)
+    with st.container(key="dash_segs"):
+        for card in logic.segment_cards(stats):
+            name = card["segment"] or "all"
+            dot = f'<i class="dot" style="background:{card["dot"]}"></i>' if card["dot"] else ""
+            with st.container(key=f"act_seg_{name}"):
+                common.html_block(
+                    f'<div class="segc"><div class="v">{card["count"]}</div>'
+                    f'<div class="k">{dot}{html.escape(card["label"])}</div>'
+                    f'<div class="d">{html.escape(card["hint"])}</div></div>')
+                # the label is what a screen reader says: count, and whether this card is the one shown
+                chosen = " · сонгосон" if card["segment"] == picked else ""
+                st.button(f'{card["label"]} · {card["count"]}{chosen}', key=f"dash_seg_{name}", width="stretch",
+                          on_click=pick_segment, args=(card["segment"],))
+    if picked in logic.SEGMENT_CARDS:  # «Давтан» (filter only) outlines no card
+        common.html_block(f'<style>.st-key-act_seg_{picked or "all"} {{outline: 2px solid var(--pri); '
+                          f'outline-offset: -2px;}}</style>')
+    common.html_block(f'<span class="muted">Дарж хүснэгтийг шүүнэ · {html.escape(stats.get("as_of", ""))}</span>')
+
+
+def scroll_to_history() -> None:
+    """Bring the history panel (below the list) into view once, right after a truck was picked.
+    A new counter in the script each time: the browser runs a changed script again."""
+    n = st.session_state[DASH_SCROLLS] = st.session_state.get(DASH_SCROLLS, 0) + 1
+    st.html(f"""<script>/* {n} */
+(() => {{
+  const smooth = !matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let tries = 0;
+  const go = () => {{
+    const panel = document.querySelector('.st-key-card_dash_history');
+    if (panel) panel.scrollIntoView({{behavior: smooth ? 'smooth' : 'auto', block: 'start'}});
+    else if (tries++ < 40) setTimeout(go, 50);
+  }};
+  go();
+}})();
+</script>""", unsafe_allow_javascript=True)
 
 
 def load_sync_view() -> dict | None:
@@ -194,18 +295,19 @@ def clear_filters() -> None:
         st.session_state[key] = None
 
 
-def search_form(options: dict, active: int, payments_on: bool = False) -> None:
-    """Search field + «Хайх»; filters in «Шүүлтүүр» (open while any is used). One submit applies all.
-    «Төлбөр» (9.6b-5) only while payments are connected."""
+def search_form(options: dict, active: int, payments_on: bool = False, expand: bool = False) -> None:
+    """Search field + «Хайх»; filters in «Шүүлтүүр» (open while ``expand``). One submit applies all.
+    «Төлбөр» (9.6b-5) only while payments are connected. «Сегмент» (9.12) is also set by a card tap."""
     companies = {c["id"]: c["name"] for c in options.get("companies") or []}
     with st.container(key="card_dash_search"):
         with st.form("dash_search_form", border=False):  # Enter in the field searches too
-            cols = st.columns([4, 1], vertical_alignment="bottom")
+            with st.container(key="dash_search_row"):  # CSS keeps this row unwrapped on a phone
+                cols = st.columns([4, 1], vertical_alignment="bottom")
             cols[0].text_input("Улсын дугаар, утас эсвэл компани", key=DASH_QUERY,
-                               placeholder="1234 УБА · 9911 · Говь Тээвэр")
+                               placeholder="Улсын дугаар эсвэл утас")  # 9.12: fits the ~227 px phone field
             cols[1].form_submit_button("Хайх", type="primary", width="stretch")
-            with st.expander(f"Шүүлтүүр ({active})" if active else "Шүүлтүүр", expanded=bool(active)):
-                f = st.columns(6 if payments_on else 5)
+            with st.expander(f"Шүүлтүүр ({active})" if active else "Шүүлтүүр", expanded=expand):
+                f = [*st.columns(4), *st.columns(4)]  # two rows: 4 fields each fit from 768 px
                 f[0].date_input("Хэднээс", key=FILTER_WIDGETS["date_from"], value=None, format="YYYY-MM-DD")
                 f[1].date_input("Хэдийг хүртэл", key=FILTER_WIDGETS["date_to"], value=None, format="YYYY-MM-DD")
                 f[2].selectbox("Компани", list(companies), key=FILTER_WIDGETS["company_id"], index=None,
@@ -214,8 +316,10 @@ def search_form(options: dict, active: int, payments_on: bool = False) -> None:
                                format_func=logic.route_label, placeholder="Бүгд")
                 f[4].selectbox("Тос", options.get("oil_grades") or [], key=FILTER_WIDGETS["oil_grade"], index=None,
                                placeholder="Бүгд")
+                f[5].selectbox("Сегмент", list(logic.SEGMENT_ORDER), key=SEGMENT_KEY, index=None,
+                               format_func=logic.segment_label, placeholder="Бүгд")
                 if payments_on:
-                    f[5].selectbox("Төлбөр", list(logic.PAYMENT_LABELS), key=FILTER_WIDGETS["payment_status"],
+                    f[6].selectbox("Төлбөр", list(logic.PAYMENT_LABELS), key=FILTER_WIDGETS["payment_status"],
                                    index=None, format_func=logic.PAYMENT_LABELS.get, placeholder="Бүгд")
                 common.html_block('<span class="muted">Огноо, маршрут, тос нэг үйлчилгээнд хамт таарах ёстой. '
                                   'Мөрөнд машины хамгийн сүүлийн үйлчилгээ харагдана.</span>')
@@ -312,7 +416,7 @@ def due_list() -> None:
             common.html_block('<span class="muted">Өнөөдөр сануулах машин алга.</span>')
             return
         rows = []
-        for i, r in enumerate(reminders):  # 9.5c: «Сануулах» / «Эрсдэлтэй» pill, days since the latest change
+        for i, r in enumerate(reminders):  # 9.5c: «Сануулах» / «Эргэж ирээгүй» pill, days since the latest change
             label, fg, bg = logic.reminder_pill(r)
             meta = " · ".join(t.replace(" ", " ") for t in
                               (logic.days_since_text(r.get("days_since")), logic.phone_text(r.get("phone")) or "утасгүй"))
@@ -328,8 +432,11 @@ def due_list() -> None:
 common.header("Хяналтын самбар", back=common.HOME_PAGE)  # 8.1: opened from home
 common.html_block(WIDE_CSS)
 
-st.subheader("Сегмент")
-segment_tiles()
+st.subheader("Ажил")
+period_section()
+
+st.subheader("Машинууд")
+segment_cards()
 
 sync = load_sync_view()  # 9.6b-5: None -> no payment element anywhere on this screen
 if sync is not None:
@@ -348,8 +455,12 @@ if not problems:
         found = api_client.search_vehicles(query, limit=SEARCH_LIMIT, filters=filters, with_services=True)
     except api_client.ApiError as exc:
         error = exc
+# «Шүүлтүүр» opens for the filters inside it; a segment picked by a card tap keeps it closed
+# (only «Давтан», which has no card, opens it).
+in_panel = {k: v for k, v in filters.items() if k != "segment" or v not in logic.SEGMENT_CARDS}
 search_form((found or {}).get("options") or st.session_state.get(DASH_OPTIONS) or {},
-            logic.active_filter_count(filters), payments_on=sync is not None)
+            logic.active_filter_count(filters), payments_on=sync is not None,
+            expand=logic.active_filter_count(in_panel) > 0)
 if found is not None:
     st.session_state[DASH_OPTIONS] = found.get("options")  # keeps the lists while a filter is invalid
 for message in problems:
@@ -372,18 +483,19 @@ if found is not None:
                 file_name=export.file_name(today), key="dash_excel", on_click="ignore", icon=":material/download:",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     selected = st.session_state.get(DASH_VEHICLE)
-    # Nothing selected -> the table gets the whole width; selected -> table 2/3 + history 1/3 (computer).
-    with st.container(horizontal=True, key="dash_split"):
-        with st.container(key="dash_list"):
-            if not vehicles:
-                with st.container(key="card_dash_none"):
-                    common.html_block('<span class="muted">Олдсонгүй.</span>')
-            else:
-                results_table(vehicles, f"{query}|{sorted(filters.items(), key=lambda kv: kv[0])}")
-                results_cards(vehicles)
-        if selected is not None:
-            with st.container(key="dash_hist"):
-                history_panel(selected)
+    # 9.12: the list always gets the whole width; the picked truck's history opens below it, at every
+    # width (beside the table it clipped both), and is scrolled into view.
+    with st.container(key="dash_list"):
+        if not vehicles:
+            with st.container(key="card_dash_none"):
+                common.html_block('<span class="muted">Олдсонгүй.</span>')
+        else:
+            results_table(vehicles, f"{query}|{sorted(filters.items(), key=lambda kv: kv[0])}")
+            results_cards(vehicles)
+    if selected is not None:
+        history_panel(selected)
+        if st.session_state.pop(DASH_SCROLL, False):
+            scroll_to_history()
 
 due_list()
 

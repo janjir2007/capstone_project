@@ -59,6 +59,7 @@ class FakeApi:
         # 9.6b-5: None -> 404 like an API without payments; set both to "connect" payments
         self.sync_status: dict | None = None        # GET /payments/sync-status
         self.unpaid: dict | None = None             # GET /payments/unpaid
+        self.periods: list[str] = []                # period of every GET /stats/period (9.12)
 
     # -- data ---------------------------------------------------------------
     def add_vehicle(self, identifier: str, company: str, identifier_type: str = "plate", **service) -> dict:
@@ -136,8 +137,15 @@ class FakeApi:
             vehicle = next((v for v in self.vehicles if v["id"] == vid), None)
             return httpx.Response(200, json=self.card(vehicle)) if vehicle else httpx.Response(404, json={"detail": "unknown"})
         if path == "/stats/segments":
-            return httpx.Response(200, json={"as_of": TODAY, "total": 7,
+            return httpx.Response(200, json={"as_of": TODAY, "total": 7, "at_risk_days": 150,
                                              "counts": {"new": 2, "returning": 3, "loyal": 1, "at_risk": 1}})
+        if path == "/stats/period":  # 9.12: invented numbers per period (the API's own rules: test_api_stats_period)
+            period = request.url.params.get("period", "today")
+            self.periods.append(period)
+            start = {"today": TODAY, "week": "2026-10-12", "month": "2026-10-01"}[period]
+            n = {"today": 1, "week": 4, "month": 9}[period]
+            return httpx.Response(200, json={"period": period, "date_from": start, "date_to": TODAY, "services": n,
+                                             "new_vehicles": n // 2, "liters": n * 30.5, "reminders_sent": n - 1})
         if path == "/reminders/stops":
             if request.method == "POST":
                 phone = json.loads(request.content)["phone"].replace(" ", "")
@@ -170,7 +178,8 @@ class FakeApi:
         if path == "/vehicles/search":
             self.search_params.append(dict(request.url.params))
             return self._search(request.url.params.get("q", ""), int(request.url.params.get("limit", 200)),
-                                request.url.params.get("company_id"), request.url.params.get("with_services") == "true")
+                                request.url.params.get("company_id"), request.url.params.get("with_services") == "true",
+                                request.url.params.get("segment"))
         if path == "/vehicles/lookup":
             return self._lookup(request.url.params["q"])
         if path == "/payments/sync-status" and self.sync_status is not None:
@@ -185,9 +194,10 @@ class FakeApi:
             return self._post(json.loads(request.content), request.url.params.get("force") == "true")
         return httpx.Response(404, json={"detail": "not found"})
 
-    def _search(self, q: str, limit: int, company_id: str | None = None, with_services: bool = False) -> httpx.Response:
-        """GET /vehicles/search: plate or company contains q, + company filter (enough for the screen
-        tests; the other filters are only checked as sent params). Options from every truck."""
+    def _search(self, q: str, limit: int, company_id: str | None = None, with_services: bool = False,
+                segment: str | None = None) -> httpx.Response:
+        """GET /vehicles/search: plate or company contains q, + company and segment filters (enough for
+        the screen tests; the other filters are only checked as sent params). Options from every truck."""
         self.searches.append(q)
         key = self._key(q)
         rows = []
@@ -196,6 +206,8 @@ class FakeApi:
             if key and key not in self._key(v["identifier"]) and key not in self._key(v["company"]["name"]):
                 continue
             if company_id is not None and v["company"]["id"] != int(company_id):
+                continue
+            if segment is not None and card["segment"] != segment:
                 continue
             rows.append({k: card[k] for k in ("id", "identifier_type", "identifier", "vehicle_model", "company",
                                               "service_count", "last_service", "segment")}
@@ -978,13 +990,13 @@ def test_home_card_navigates(fake_api, key, title) -> None:
 
 
 def test_home_dashboard_button(fake_api) -> None:
-    """8.1: «Хяналтын самбар» on home opens the manager screen (5.4) with its segment tiles."""
+    """8.1: «Хяналтын самбар» on home opens the manager screen (5.4); 9.12 sections: «Ажил», «Машинууд»."""
     at = run_app()
     assert at.button(key="home_dashboard").label == "Хяналтын самбар"
     at.button(key="home_dashboard").click().run()
     assert not at.exception
-    assert texts(at.subheader) == ["Сегмент", "Машин хайх"]
-    assert '<div class="tiles two seg">' in html_blocks(at)
+    assert texts(at.subheader) == ["Ажил", "Машинууд", "Машин хайх"]
+    assert '<div class="tiles kpi">' in html_blocks(at)
 
 
 def test_css_stops_iphone_tap_zoom() -> None:
@@ -1004,7 +1016,7 @@ def test_home_reminder_summary(fake_api) -> None:
     page = html_blocks(at)
     assert "Өнөөдөр 2 машин сануулга хүлээж байна." in page  # at-risk trucks are messages to send too
     assert 'Сануулах</div><div class="v">2</div>' in page
-    assert 'Эрсдэлтэй</div><div class="v" style="color:#B42318">1</div>' in page  # 9.5c: 150+ days
+    assert 'Эргэж ирээгүй</div><div class="v" style="color:#B42318">1</div>' in page  # 9.5c: 150+ days (9.12 name)
     assert 'Машин</div><div class="v">7</div>' in page
     assert '<span class="badge">2</span>' in page
 
@@ -1024,9 +1036,9 @@ def test_dashboard_tiles_and_two_groups(fake_api) -> None:
     assert not at.exception
     page = html_blocks(at)
     assert '<div class="tiles two"><div><div class="v">2</div><div class="k">Илгээх</div></div>' in page  # 9.5c
-    assert '<div class="v" style="color:#B42318">1</div><div class="k">Эрсдэлтэй</div>' in page
-    assert texts(at.subheader) == ["Өнөөдрийн дараалал (2)", "Эрсдэлтэй (1)"]
-    assert ">Сануулах</span>" in page and ">Эрсдэлтэй</span>" in page  # pill per row
+    assert '<div class="v" style="color:#B42318">1</div><div class="k">Эргэж ирээгүй</div>' in page  # 9.12 name
+    assert texts(at.subheader) == ["Өнөөдрийн дараалал (2)", "Эргэж ирээгүй (1)"]
+    assert ">Сануулах</span>" in page and ">Эргэж ирээгүй</span>" in page  # pill per row
     assert "80\u00a0хоногийн\u00a0өмнө" in page and "160\u00a0хоногийн\u00a0өмнө" in page  # days since
     assert "сар</span>" not in page                                     # no month stage pills left
     assert "0003 ТЕС" in page and "Тест Д." in page and "9911\u00a00002" in page
@@ -1133,9 +1145,11 @@ def test_overview_segment_tiles(fake_api) -> None:
     at = click(run_app(REMINDERS), "Машинуудын тойм харах")
     assert texts(at.title) == ["Хяналтын самбар"]
     page = html_blocks(at)
-    for label, count in (("Шинэ", 2), ("Давтан", 3), ("Байнгын", 1), ("Эрсдэлтэй", 1)):
-        assert f'<div class="v">{count}</div><div class="k">' in page and f"</i>{label}</div>" in page
-    assert "Нийт 7 машин" in page
+    # 9.12: 4 segment cards (count, dot + word, hint); «Давтан» is the hint under «Бүгд»
+    for count, label, hint in ((7, "Бүгд", "3 нь 2 удаа"), (1, "Байнгын", "3+ удаа"), (2, "Шинэ", "1 удаа"),
+                               (1, "Эргэж ирээгүй", "150+ хоног")):
+        assert (f'<div class="segc"><div class="v">{count}</div><div class="k">' in page
+                and f"{label}</div><div class=\"d\">{hint}</div>" in page), label
 
 
 def test_reminders_api_error_shown(fake_api) -> None:
@@ -1267,11 +1281,11 @@ def test_dashboard_writes_nothing(fake_api) -> None:
 
 
 def test_wide_layout_only_on_dashboard(fake_api) -> None:
-    """9.1: ≥ 1024 px the dashboard uses the full width; every other screen keeps the 480 px column."""
+    """9.1: the dashboard uses the full width (≥ 768 px since 9.12); every other screen keeps the 480 px column."""
     from src.ui import common
     assert ".block-container {padding: 12px 20px 40px !important; max-width: 480px;}" in common.CSS
     at = run_app(DASHBOARD)
-    assert "@media (min-width: 1024px)" in html_blocks(at) and "max-width: 1360px" in html_blocks(at)
+    assert "@media (min-width: 768px)" in html_blocks(at) and "max-width: 1360px" in html_blocks(at)
     for view in (HOME, SEARCH, CARD, RECORD, REMINDERS):
         assert "max-width: 1360px" not in html_blocks(run_app(view)), view
 
@@ -1496,3 +1510,105 @@ def test_payments_api_error_hides_payments_only(fake_api) -> None:
     fake_api.unpaid = None                                        # -> 404
     at = run_app(DASHBOARD)
     assert not at.exception and len(at.dataframe[0].value) == 2
+
+
+# --- «Хяналтын самбар» 9.12: period KPIs, segment cards, history below the list ----------------
+
+def scripts(at: AppTest) -> list[str]:
+    """Bodies of st.html elements (9.12: the scroll-into-view script)."""
+    return [e.proto.body for e in at.get("html")]
+
+
+def test_dashboard_period_switch_and_kpi_tiles(fake_api) -> None:
+    """Default «Өнөөдөр»; switching asks GET /stats/period for that period and shows its 4 numbers."""
+    at = run_app(DASHBOARD)
+    assert not at.exception
+    switch = at.get("button_group")[0]
+    assert fake_api.periods == ["today"]
+    page = html_blocks(at)
+    assert ('<div class="tiles kpi"><div><div class="v">1</div><div class="k">Үйлчилгээ</div></div>'
+            '<div><div class="v">0</div><div class="k">Шинэ машин</div></div>'
+            '<div><div class="v">30.5<small>л</small></div><div class="k">Литр</div></div>'
+            '<div><div class="v">0</div><div class="k">Сануулга илгээсэн</div></div></div>') in page
+    assert f'<span class="muted">{TODAY}</span>' in page                     # one day: one date
+    assert [o.content for o in switch.proto.options] == ["Өнөөдөр", "Энэ 7 хоног", "Энэ сар"]
+    at.session_state["dash_period"] = "month"
+    at = on(at, DASHBOARD).run()
+    assert fake_api.periods[-1] == "month"
+    page = html_blocks(at)
+    assert '<div class="v">9</div><div class="k">Үйлчилгээ</div>' in page and "274.5<small>л</small>" in page
+    assert f"2026-10-01 – {TODAY}" in page
+
+
+def test_dashboard_segment_card_filters_the_table(fake_api) -> None:
+    """A card tap sends ?segment= and outlines that card; «Бүгд» sends none; «Шүүлтүүр» stays shut."""
+    seed_two(fake_api)                                                  # two trucks, 1 service each
+    fake_api._add_service(1, {"service_date": "2026-10-01", "odometer_km": 215000, "oil_grade": "10W-40",
+                              "liters": 32.0})                          # 0002 ТЕС -> returning
+    at = run_app(DASHBOARD)
+    assert "segment" not in fake_api.search_params[-1] and len(at.dataframe[0].value) == 2
+    assert ".st-key-act_seg_all {outline: 2px solid var(--pri)" in html_blocks(at)   # «Бүгд» picked
+    assert at.button(key="dash_seg_all").label == "Бүгд · 7 · сонгосон"
+    at = on(at, DASHBOARD).button(key="dash_seg_new").click().run()
+    assert fake_api.search_params[-1]["segment"] == "new"
+    assert list(at.dataframe[0].value["Дугаар"]) == ["0003 ТЕС"]
+    page = html_blocks(at)
+    assert ".st-key-act_seg_new {outline" in page and ".st-key-act_seg_all {outline" not in page
+    assert at.button(key="dash_seg_new").label.endswith("· сонгосон")
+    assert at.expander[0].label == "Шүүлтүүр (1)" and not at.expander[0].proto.expanded  # shut: the card says it
+    assert at.selectbox(key="dash_f_segment").value == "new"            # the filter shows the same choice
+    at = on(at, DASHBOARD).button(key="dash_seg_all").click().run()
+    assert "segment" not in fake_api.search_params[-1] and len(at.dataframe[0].value) == 2
+
+
+def test_dashboard_returning_only_in_the_filter(fake_api) -> None:
+    """«Давтан» has no card: picked in «Шүүлтүүр» it filters, no card is outlined, the panel stays open."""
+    seed_two(fake_api)
+    fake_api._add_service(1, {"service_date": "2026-10-01", "odometer_km": 215000, "oil_grade": "10W-40",
+                              "liters": 32.0})
+    at = run_app(DASHBOARD)
+    assert "Давтан" in at.selectbox(key="dash_f_segment").options
+    at = set_filters(at, segment="returning")
+    assert fake_api.search_params[-1]["segment"] == "returning"
+    assert list(at.dataframe[0].value["Дугаар"]) == ["0002 ТЕС"]
+    assert "{outline: 2px" not in html_blocks(at) and at.expander[0].proto.expanded
+
+
+def test_dashboard_history_below_the_list_and_scrolled_to_once(fake_api) -> None:
+    """9.12: the history is drawn AFTER the list (below it at every width), with a one-time
+    scroll-into-view script; the next rerun does not scroll again. A card tap closes the history."""
+    seed_two(fake_api)
+    at = run_app(DASHBOARD)
+    assert scripts(at) == []
+    at = on(at, DASHBOARD).button(key="dash_open_1").click().run()
+    page = html_blocks(at)
+    assert '<table class="hist">' in page and len(at.dataframe[0].value) == 2      # list still there
+    assert page.index('class="vrow"') < page.index('<table class="hist">')         # list first, history below
+    [script] = scripts(at)
+    assert "scrollIntoView" in script and ".st-key-card_dash_history" in script
+    at = on(at, DASHBOARD).run()                                                   # any other rerun
+    assert '<table class="hist">' in html_blocks(at) and scripts(at) == []
+    at = on(at, DASHBOARD).button(key="dash_open_2").click().run()                 # another truck
+    assert len(scripts(at)) == 1 and scripts(at)[0] != script                      # a NEW script runs again
+    at = on(at, DASHBOARD).button(key="dash_seg_new").click().run()
+    assert '<table class="hist">' not in html_blocks(at)
+
+
+def test_dashboard_segment_named_in_excel_line(fake_api, monkeypatch) -> None:
+    from src.ui import export
+    seen = []
+    monkeypatch.setattr(export, "search_workbook", lambda vehicles, today, line: seen.append(line) or b"x")
+    seed_two(fake_api)
+    on(run_app(DASHBOARD), DASHBOARD).button(key="dash_seg_new").click().run()
+    assert seen[-1] == "Сегмент: Шинэ"
+
+
+def test_dashboard_period_error_keeps_the_rest(fake_api) -> None:
+    """An API without /stats/period (older than v0.17): an error in «Ажил», the rest still works."""
+    seed_two(fake_api)
+    handle = fake_api.handle
+    fake_api.handle = lambda r: httpx.Response(404, json={"detail": "Not Found"}) if r.url.path == "/stats/period" else handle(r)
+    api_client.set_transport(httpx.MockTransport(lambda r: fake_api.handle(r)))
+    at = run_app(DASHBOARD)
+    assert not at.exception and texts(at.error) and len(at.dataframe[0].value) == 2
+    assert '<div class="tiles kpi">' not in html_blocks(at)

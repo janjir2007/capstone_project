@@ -17,7 +17,7 @@ SEGMENT_LABELS: dict[str, str] = {
     "new": "Шинэ",
     "returning": "Давтан",
     "loyal": "Байнгын",
-    "at_risk": "Эрсдэлтэй",
+    "at_risk": "Эргэж ирээгүй",  # 9.12: was «Эрсдэлтэй» (API value stays at_risk)
 }
 # small colored dot next to the segment word (T7: the word carries the meaning, the dot is a hint)
 SEGMENT_DOTS: dict[str, str] = {
@@ -296,14 +296,50 @@ def recognize_error_message(status: int) -> str:
 SEGMENT_ORDER = ("new", "returning", "loyal", "at_risk")
 
 
+# --- «Хяналтын самбар» 9.12: period KPIs + segment cards ------------------------------
+
+PERIOD_LABELS: dict[str, str] = {"today": "Өнөөдөр", "week": "Энэ 7 хоног", "month": "Энэ сар"}
+SEGMENT_CARDS = (None, "loyal", "new", "at_risk")  # None = «Бүгд»; «Давтан» only in «Шүүлтүүр» (approved plan)
+ALL_LABEL = "Бүгд"
+
+
+def period_tiles(stats: dict) -> list[tuple[str, str, str]]:
+    """GET /stats/period -> 4 KPI tiles (value, small unit, label): services, first-ever trucks,
+    liters, reminders marked sent."""
+    return [
+        (format_number(stats.get("services", 0)), "", "Үйлчилгээ"),
+        (format_number(stats.get("new_vehicles", 0)), "", "Шинэ машин"),
+        (format_number(stats.get("liters", 0)), "л", "Литр"),
+        (format_number(stats.get("reminders_sent", 0)), "", "Сануулга илгээсэн"),
+    ]
+
+
+def period_range_text(stats: dict) -> str:
+    """'2026-10-08' (one day) or '2026-10-06 – 2026-10-08'."""
+    start, end = stats.get("date_from", ""), stats.get("date_to", "")
+    return end if start == end else f"{start} – {end}"
+
+
+def segment_cards(stats: dict) -> list[dict[str, Any]]:
+    """GET /stats/segments -> the 4 cards: «Бүгд» (hint: how many came twice), «Байнгын»,
+    «Шинэ», «Эргэж ирээгүй» (hint: AT_RISK_DAYS+ days, from the API). Count = what the table
+    shows after the tap (same API rule, tested in tests/test_api_stats_period.py)."""
+    counts = stats.get("counts") or {}
+    hints = {None: f"{counts.get('returning', 0)} нь 2 удаа", "loyal": "3+ удаа", "new": "1 удаа",
+             "at_risk": f"{stats.get('at_risk_days', 150)}+ хоног"}
+    return [{"segment": s, "label": ALL_LABEL if s is None else SEGMENT_LABELS[s],
+             "count": stats.get("total", 0) if s is None else counts.get(s, 0),
+             "hint": hints[s], "dot": SEGMENT_DOTS.get(s or "")} for s in SEGMENT_CARDS]
+
+
 # Task 9.5c: one reminder per service; the pill says whether the truck is also at risk (API `segment`).
 # (label, text color, tint) = the same AA pairs as the status pills.
 REMINDER_PILL_DUE = ("Сануулах", *STATUS_COLORS["due_soon"])
-REMINDER_PILL_AT_RISK = (SEGMENT_LABELS["at_risk"], *STATUS_COLORS["overdue"])  # «Эрсдэлтэй»
+REMINDER_PILL_AT_RISK = (SEGMENT_LABELS["at_risk"], *STATUS_COLORS["overdue"])  # «Эргэж ирээгүй»
 
 
 def reminder_pill(reminder: dict) -> tuple[str, str, str]:
-    """(label, color, tint) of a due reminder: «Эрсдэлтэй» (red) when at risk, else «Сануулах»."""
+    """(label, color, tint) of a due reminder: «Эргэж ирээгүй» (red) when at risk, else «Сануулах»."""
     return REMINDER_PILL_AT_RISK if is_at_risk(reminder) else REMINDER_PILL_DUE
 
 
@@ -313,7 +349,7 @@ def days_since_text(days: int | None) -> str:
 
 
 def is_at_risk(reminder: dict) -> bool:
-    """True if this due reminder belongs to «Эрсдэлтэй». The API decides (`segment`, D-074;
+    """True if this due reminder belongs to «Эргэж ирээгүй». The API decides (`segment`, D-074;
     9.5c: AT_RISK_DAYS (150)+ days since the latest service)."""
     return reminder.get("segment") == "at_risk"
 
@@ -327,7 +363,7 @@ def today_text(day: date) -> str:
 
 
 def split_reminders(reminders: list[dict]) -> tuple[list[dict], list[dict]]:
-    """(«Илгээх», «Эрсдэлтэй») keeping the API order (oldest send_on first)."""
+    """(«Илгээх», «Эргэж ирээгүй») keeping the API order (oldest send_on first)."""
     to_send = [r for r in reminders if not is_at_risk(r)]
     at_risk = [r for r in reminders if is_at_risk(r)]
     return to_send, at_risk
@@ -447,7 +483,8 @@ def search_table_rows(vehicles: list[dict]) -> list[dict[str, Any]]:
 
 
 FILTER_KEYS = ("date_from", "date_to", "company_id", "route", "oil_grade",
-               "payment_status")  # GET /vehicles/search params; payment_status: 9.6b-5, only when connected
+               "payment_status",  # GET /vehicles/search params; payment_status: 9.6b-5, only when connected
+               "segment")         # 9.12: a segment card or the «Сегмент» filter (?segment=)
 FILTER_ORDER_ERROR = "«Хэднээс» огноо «хэдийг хүртэл»-ээс хойш байна."
 
 
@@ -476,6 +513,8 @@ def filters_text(query: str, filters: dict[str, Any], company_names: dict[int, s
         parts.append(f"Тос: {filters['oil_grade']}")
     if filters.get("payment_status"):
         parts.append(f"Төлбөр: {PAYMENT_LABELS.get(filters['payment_status'], filters['payment_status'])}")
+    if filters.get("segment"):
+        parts.append(f"Сегмент: {segment_label(filters['segment'])}")
     return " · ".join(parts) or "Шүүлтүүргүй — бүх машин"
 
 

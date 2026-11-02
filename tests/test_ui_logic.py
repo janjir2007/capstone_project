@@ -50,8 +50,18 @@ CARD = {
 
 def test_segment_labels_match_pm_list() -> None:
     assert [logic.segment_label(s) for s in ("new", "returning", "loyal", "at_risk")] == [
-        "Шинэ", "Давтан", "Байнгын", "Эрсдэлтэй"]
+        "Шинэ", "Давтан", "Байнгын", "Эргэж ирээгүй"]   # 9.12: was «Эрсдэлтэй»; the API value stays at_risk
     assert logic.segment_label(None) == logic.NOT_GIVEN
+
+
+def test_old_at_risk_word_is_gone_from_every_ui_file() -> None:
+    """9.12: «Эрсдэлтэй» -> «Эргэж ирээгүй» in ALL UI text (home, reminders, dashboard, card chip)."""
+    from pathlib import Path
+    ui = Path(logic.__file__).parent
+    left = [f"{f.relative_to(ui)}:{n}" for f in sorted(ui.rglob("*.py"))
+            for n, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1)
+            if "Эрсдэлтэй" in line and "was «Эрсдэлтэй»" not in line]
+    assert left == []
 
 
 def test_destination_label_prefers_name_mn() -> None:
@@ -520,7 +530,7 @@ def test_reminder_counts() -> None:
 
 def test_reminder_pill_and_days_since() -> None:
     assert logic.reminder_pill({"segment": "loyal"}) == ("Сануулах", *logic.STATUS_COLORS["due_soon"])
-    assert logic.reminder_pill({"segment": "at_risk"}) == ("Эрсдэлтэй", *logic.STATUS_COLORS["overdue"])  # AA red
+    assert logic.reminder_pill({"segment": "at_risk"}) == ("Эргэж ирээгүй", *logic.STATUS_COLORS["overdue"])  # AA red
     assert logic.days_since_text(65) == "65 хоногийн өмнө" and logic.days_since_text(None) == "—"
 
 
@@ -726,3 +736,34 @@ def test_sync_view_quiet_hours(now, ok, red):
     """PM 9.6b-5 review: 22:00-07:00 UB only a failed latest run is red, not the age."""
     runs = [_run("bills", "2026-10-12T18:30:00+08:00", ok, "2026-10-12T18:31:00+08:00")]
     assert logic.sync_view({"connected": True, "runs": runs}, _dt.fromisoformat(now))["red"] is red
+
+
+# --- «Хяналтын самбар» 9.12: period KPIs + segment cards ----------------------------------
+
+def test_period_tiles_and_range() -> None:
+    stats = {"period": "week", "date_from": "2026-10-05", "date_to": "2026-10-08", "services": 2,
+             "new_vehicles": 2, "liters": 78.0, "reminders_sent": 1200}
+    assert logic.period_tiles(stats) == [("2", "", "Үйлчилгээ"), ("2", "", "Шинэ машин"), ("78", "л", "Литр"),
+                                         ("1 200", "", "Сануулга илгээсэн")]
+    assert logic.period_tiles({**stats, "liters": 40.5})[2] == ("40.5", "л", "Литр")
+    assert logic.period_range_text(stats) == "2026-10-05 – 2026-10-08"
+    assert logic.period_range_text({"date_from": "2026-10-08", "date_to": "2026-10-08"}) == "2026-10-08"
+    assert list(logic.PERIOD_LABELS.values()) == ["Өнөөдөр", "Энэ 7 хоног", "Энэ сар"]
+
+
+def test_segment_cards_order_counts_and_hints() -> None:
+    """Approved plan: Бүгд · Байнгын · Шинэ · Эргэж ирээгүй; «Давтан» is under «Бүгд» as a hint only."""
+    stats = {"as_of": "2026-10-08", "total": 40, "at_risk_days": 150,
+             "counts": {"new": 9, "returning": 12, "loyal": 19, "at_risk": 0}}
+    cards = logic.segment_cards(stats)
+    assert [(c["segment"], c["label"], c["count"], c["hint"]) for c in cards] == [
+        (None, "Бүгд", 40, "12 нь 2 удаа"), ("loyal", "Байнгын", 19, "3+ удаа"),
+        ("new", "Шинэ", 9, "1 удаа"), ("at_risk", "Эргэж ирээгүй", 0, "150+ хоног")]
+    assert cards[0]["dot"] is None and cards[3]["dot"] == logic.SEGMENT_DOTS["at_risk"]
+    assert logic.segment_cards({**stats, "at_risk_days": 120})[3]["hint"] == "120+ хоног"  # from the API
+
+
+def test_segment_filter_counts_and_names_the_excel_line() -> None:
+    assert "segment" in logic.FILTER_KEYS
+    assert logic.active_filter_count({"segment": "loyal"}) == 1
+    assert logic.filters_text("", {"segment": "at_risk"}, {}) == "Сегмент: Эргэж ирээгүй"
