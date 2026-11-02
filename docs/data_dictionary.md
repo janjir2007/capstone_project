@@ -179,9 +179,11 @@ Not stored (computed at read time): `days_left`, `status` (OK / due soon / overd
 | `created_at` | TIMESTAMPTZ | no | Asia/Ulaanbaatar | default `now()` | system |
 | `sent_at` | TIMESTAMPTZ | yes | Asia/Ulaanbaatar | **filled exactly when `status = 'sent'`** | system |
 
-### 2.6 `reminders_sent` — a reminder that went out (migration 003, task 4.4)
+### 2.6 `reminders_sent` — a reminder that went out (migrations 003, 006, 007)
 
-One row per (vehicle, newest service): the oil changer sent the reminder for that service.
+One row = the oil changer sent the reminder for that (vehicle, newest service). Since task 9.5c
+(D-119) one `'single'` row per service; rows of 9.5b (`1m`/`2m`/`3m`) and 4.4 (prediction, stage
+NULL) stay as history.
 The due list itself is computed by the API (`GET /reminders/due`), not stored. Used instead of
 `reminders` (2.5), which needs a stored prediction; the API does not store predictions.
 
@@ -189,13 +191,15 @@ The due list itself is computed by the API (`GET /reminders/due`), not stored. U
 |---|---|---|---|---|---|
 | `id` | BIGINT | no | 1 | identity PK | DB |
 | `vehicle_id` | BIGINT | no | 4 | FK → `vehicles.id` | API |
-| `service_id` | BIGINT | no | 7 | the vehicle's newest service when sent; FK (`service_id`, `vehicle_id`) → `service_records (id, vehicle_id)`; **UNIQUE** (one reminder per service) | API |
+| `service_id` | BIGINT | no | 7 | the vehicle's newest service when sent; FK (`service_id`, `vehicle_id`) → `service_records (id, vehicle_id)`; **UNIQUE** (`service_id`, `stage`) since 006 | API |
+| `stage` | TEXT | yes | `single` | `single` (9.5c) / `1m` / `2m` / `3m` (9.5b); NULL = 4.4 prediction row (then `method` is set) | API |
+| `channel` | TEXT | no | `manual` | `manual` (sent by hand) / `sms` (not used yet); default `manual` (007) | API / DB |
 | `phone` | TEXT | yes | `99110005` | 8 digits; `driver_phone` of that service; NULL = no phone recorded | API |
 | `message_text` | TEXT | no | `Сайн байна уу! …` | not blank; the exact text sent | API |
-| `method` | TEXT | no | `b0` | `ridge` / `b1` / `b0` — which predictor gave the date | API |
-| `model_version` | TEXT | no | `ridge-c8b211cb` | not blank | API |
-| `predicted_date` | DATE | no | 2026-07-07 | | API |
-| `send_on` | DATE | no | 2026-06-25 | predicted_date − buffer of the method | API |
+| `method` | TEXT | yes | `b0` | `ridge` / `b1` / `b0` — 4.4 rows only (nullable since 006) | API |
+| `model_version` | TEXT | yes | `ridge-c8b211cb` | not blank; 4.4 rows only | API |
+| `predicted_date` | DATE | yes | 2026-07-07 | 4.4 rows only | API |
+| `send_on` | DATE | no | 2026-10-24 | 9.5c: latest service + `REMINDER_DAYS`; 9.5b: + 30/60/90; 4.4: predicted_date − buffer | API |
 | `sent_at` | TIMESTAMPTZ | no | now() | when it was marked sent | DB |
 
 ## 3. Computed objects (not stored)
@@ -211,7 +215,13 @@ One row per vehicle with ≥ 1 service.
 | `last_service_id` | id of the newest service (ties on the same day → higher id) |
 | `last_odometer_km`, `last_engine_hours`, `last_oil_grade`, `last_liters`, `last_route`, `last_driver_name`, `last_driver_phone` | fields of the newest service. Used to pre-fill the form and for the vehicle card |
 
-### `vehicle_segments(as_of DATE = CURRENT_DATE, grace_days INTEGER = 7)` (function)
+### `vehicle_segments(as_of DATE = CURRENT_DATE, grace_days INTEGER = 7)` (function) — DEPRECATED
+> **Deprecated (task 9.5c).** Not used by the API or the UI: segments come from
+> `src/api/reminders.segment_of` (at_risk = `AT_RISK_DAYS`, default 150, days since the latest
+> service). This function still uses the old D-007 rule (stored predictions + 7 days) and is kept
+> only so `schema.sql` and its own tests (`tests/test_schema.py`, `example_queries.sql`) keep
+> working. Do not use it for new code.
+
 One row per vehicle with ≥ 1 service on or before `as_of`. Only services and
 predictions that existed by `as_of` are used, so past dates give past answers.
 
@@ -232,8 +242,8 @@ Segment rules (checked top to bottom, first match wins):
 | `returning` | 2 services | §1 scope |
 | `loyal` | 3+ services | §1 scope |
 
-### `v_vehicle_segment` (view)
-`vehicle_segments(CURRENT_DATE)`: today's segments, for the app.
+### `v_vehicle_segment` (view) — DEPRECATED
+`vehicle_segments(CURRENT_DATE)`: today's segments by the old D-007 rule. Not used by the app (task 9.5c).
 
 ## 4. Constraints summary
 
@@ -254,6 +264,11 @@ Segment rules (checked top to bottom, first match wins):
 | `sent_at` set ⇔ `status = 'sent'` | `reminders_sent_at_matches_status` | CheckViolation |
 
 ## 5. Sample data and expected query results
+
+> `segment_per_vehicle` and `segment_counts` below are results of the **deprecated** SQL function
+> `vehicle_segments()` (D-007 rule, §3). The API gives different answers (task 9.5c, at_risk =
+> 150+ days): on 2026-09-30 vehicle 4 is `new`, not `at_risk` (143 days), so `GET /stats/segments`
+> = new 2 · returning 3 · loyal 1 · at_risk 0 (`tests/test_api_data.py`).
 
 [`src/data/sample_data.sql`](../src/data/sample_data.sql): 4 companies, 6 vehicles,
 11 service records, 4 predictions, 2 reminders. **All synthetic**, with phones in
@@ -284,6 +299,7 @@ databases use synthetic rows only.
 | 0.3 | 2026-10-12 | Task 4.4, migration 003: new table `reminders_sent`. Segments in the API use the served prediction for `at_risk` (same D-007 rule as `vehicle_segments`) |
 | 0.4 | 2026-10-12 | Task 1.1c, migration 002: `destinations.name_mn` (Mongolian label, 5 road destinations filled). Demo database: `src/data/seed_demo.py`, [`demo_data.md`](demo_data.md) |
 | 0.5 | 2026-10-17 | Task 6.1, migration 004: `name_mn` for `Ulaanbaatar city (local work)` (`Улаанбаатар хот`) and `Other / several / unknown` (`Бусад`). New bookkeeping table `schema_migrations` + runner `scripts/migrate.py` (§8) |
+| 0.6 | 2026-11-02 | Task 9.5c, migration 007: `reminders_sent.stage` `'single'`, new column `channel`; §2.6 updated for 006 + 007. API `at_risk` = `AT_RISK_DAYS` (150)+ days (§5 lists the SQL function `vehicle_segments()`, D-007, now marked deprecated in §3 / §5) |
 
 ## 8. Migrations
 
@@ -304,6 +320,7 @@ A second run changes nothing. `--dry-run` lists what would run. A database migra
 | 002 | `002_destinations_name_mn.up.sql` / `.down.sql` | `destinations.name_mn` + the 5 Mongolian labels (task 1.1c, D-040); stops if a label's destination is missing. Tested by `tests/test_migration_002_name_mn.py` |
 | 003 | `003_reminders_sent.up.sql` / `.down.sql` | `reminders_sent` table (task 4.4). Tested by `tests/test_reminders.py` (up → down → up, constraints) |
 | 006 | `006_reminder_stages.up.sql` / `.down.sql` | Task 9.5b: `reminders_sent.stage` ('1m'/'2m'/'3m'), UNIQUE (`service_id`, `stage`) replaces UNIQUE (`service_id`); `method`, `model_version`, `predicted_date` nullable (old rows keep them; CHECK: a row has a stage or a method); new table `reminder_stops(phone PK, created_at)`. Down deletes month rows. Tested by `tests/test_reminders.py` |
+| 007 | `007_single_reminder.up.sql` / `.down.sql` | Task 9.5c (D-119): `stage` may be `'single'` (one reminder per service; UNIQUE (`service_id`, `stage`) kept); new column `channel` TEXT NOT NULL DEFAULT `'manual'` CHECK (`'manual'`, `'sms'`). No existing row changed (old 1m/2m/3m rows count as sent in the API). Down turns `'single'` into `'3m'` (no row deleted) and drops `channel`. Tested by `tests/test_reminders.py` |
 | 004 | `004_destinations_name_mn_rest.up.sql` / `.down.sql` | `name_mn` for UB city + Other (task 6.1); stops if one is missing. Tested by `tests/test_migrate.py` |
 | 005 | `005_destinations_cross_border.up.sql` / `.down.sql` | 4 cross-border destinations (task 1.6, D-081). Tested by `tests/test_migration_005.py` |
 

@@ -152,9 +152,9 @@ def test_segment_stats_and_reminders_due_paths(requests_seen) -> None:
 def test_mark_reminder_sent_already_sent(requests_seen) -> None:
     seen, set_reply = requests_seen
     set_reply(httpx.Response(200, json={"id": 1, "service_id": 7, "already_sent": True}))
-    row = api_client.mark_reminder_sent(7, "2m")
+    row = api_client.mark_reminder_sent(7)
     assert row["already_sent"] is True
-    assert (seen[0].method, seen[0].url.path, seen[0].url.params["stage"]) == ("POST", "/reminders/7/sent", "2m")
+    assert (seen[0].method, seen[0].url.path, dict(seen[0].url.params)) == ("POST", "/reminders/7/sent", {})  # v0.15
 
 
 def test_stop_phone_calls(requests_seen) -> None:
@@ -195,4 +195,4 @@ def test_mark_reminder_not_latest(requests_seen) -> None:
     set_reply(httpx.Response(409, json={"detail": {"code": "not_latest_service", "message": "newer",
                                                    "latest_service_id": 9}}))
     with pytest.raises(api_client.NotLatestService):
-        api_client.mark_reminder_sent(7, "1m")
+        api_client.mark_reminder_sent(7)

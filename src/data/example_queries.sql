@@ -54,7 +54,8 @@ JOIN v_vehicle_service_summary s ON s.vehicle_id = v.id
 ORDER BY v.id;
 
 -- name: segment_per_vehicle
--- Fixed date so the result is reproducible. The app uses v_vehicle_segment (today).
+-- Fixed date so the result is reproducible. DEPRECATED rule (D-007): the app does not use
+-- vehicle_segments() / v_vehicle_segment since task 9.5c (data_dictionary §3).
 SELECT vehicle_id, service_count, last_service_date, latest_predicted_date, segment
 FROM vehicle_segments(DATE '2026-09-30')
 ORDER BY vehicle_id;

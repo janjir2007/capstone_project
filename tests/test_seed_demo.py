@@ -8,7 +8,7 @@ checked against the SERVED buffers (task 2.9: ridge 16, b0 13, b1 4), and, when
 models/ exists, built with the real served model (task 7.2).
 
 Part 2 writes the demo into a throwaway schema of the local Postgres
-(schema + migrations 001–005, nothing else) and calls the real endpoints.
+(schema + migrations 001–007, nothing else) and calls the real endpoints.
 SKIPPED if Postgres is not running.
 """
 
@@ -45,7 +45,7 @@ SQL_DIR = ROOT / "src" / "data"
 SQL_FILES = ["schema.sql", "migrations/001_destinations.up.sql", "migrations/002_destinations_name_mn.up.sql",
              "migrations/003_reminders_sent.up.sql", "migrations/004_destinations_name_mn_rest.up.sql",
              "migrations/005_destinations_cross_border.up.sql",
-             "migrations/006_reminder_stages.up.sql"]
+             "migrations/006_reminder_stages.up.sql", "migrations/007_single_reminder.up.sql"]
 TODAY = date(2026, 10, 12)
 CONTACT = Contact(name="Geo-Expert", phone="99000001", is_placeholder=False)
 
@@ -78,7 +78,7 @@ def test_plan_is_about_40_trucks_with_1_to_5_services() -> None:
 
 
 @pytest.mark.parametrize("today", [TODAY, date(2026, 10, 20), date(2027, 1, 15), date(2027, 7, 1)])
-def test_every_segment_status_and_stage(clean: pd.DataFrame, predictor: P.Predictor,  # noqa: F811
+def test_every_segment_status_and_reminder_kind(clean: pd.DataFrame, predictor: P.Predictor,  # noqa: F811
                                               today: date) -> None:
     """The brief's 'done when', on several seed days (summer, autumn, winter)."""
     trucks = D.build_demo(clean, predictor, today)
@@ -100,16 +100,18 @@ def test_real_served_model_builds_a_seedable_demo(clean: pd.DataFrame) -> None:
     built = D.build_demo(clean, real, TODAY)
     assert D.problems(D.summary(built, real, TODAY)) == []
     overdue = by_plate(built, D.PLATE_OVERDUE)
-    assert overdue.prediction.status == "overdue" and D.is_due(overdue, real, TODAY)
+    assert overdue.prediction.status == "overdue" and not D.is_due(overdue, real, TODAY)  # 9.5c: < 75 days
 
 
 def test_problems_reports_what_is_missing() -> None:
     from collections import Counter
-    s = {"segments": Counter(new=3, loyal=1), "statuses": Counter(ok=4), "methods": Counter(), "due": 2,
-         "stages": Counter({"1m": 2})}
+    s = {"segments": Counter(new=3, loyal=1), "statuses": Counter(ok=4), "methods": Counter(), "due": 0,
+         "due_at_risk": 0}
     assert D.problems(s) == ["segment returning is empty", "segment at_risk is empty",
                              "status due_soon is empty", "status overdue is empty",
-                             "no 2m reminder on the due list", "no 3m reminder on the due list"]
+                             "no reminder in the queue (due, not at risk)", "no at-risk reminder on the due list"]
+    assert D.problems(s | {"due": 2, "due_at_risk": 2})[-1] == "no reminder in the queue (due, not at risk)"
+    assert "no at-risk reminder on the due list" not in D.problems(s | {"due": 3, "due_at_risk": 1})
 
 
 def test_identities_are_fake_and_in_real_format(trucks: list[D.DemoTruck]) -> None:
@@ -145,7 +147,7 @@ def test_documented_plates(trucks: list[D.DemoTruck], predictor: P.Predictor) ->
     new, at_risk = by_plate(trucks, D.PLATE_NEW), by_plate(trucks, D.PLATE_AT_RISK)
     assert (D.segment(loyal, TODAY), loyal.prediction.status, loyal.prediction.method) == ("loyal", "ok", "ridge")
     assert len(loyal.services) == 5
-    assert (overdue.prediction.status, D.is_due(overdue, predictor, TODAY)) == ("overdue", True)
+    assert (overdue.prediction.status, D.is_due(overdue, predictor, TODAY)) == ("overdue", False)  # 9.5c: < 75 d
     assert (D.segment(new, TODAY), new.prediction.method) == ("new", "b1")   # first visit -> B1
     assert D.segment(at_risk, TODAY) == "at_risk"
     assert at_risk.reminder_sent and not D.is_due(at_risk, predictor, TODAY)
@@ -186,7 +188,7 @@ def test_fit_dates_never_puts_a_service_in_the_future(trucks: list[D.DemoTruck],
 
 @pytest.fixture(scope="module")
 def empty_pg() -> Iterator[Connection]:
-    """Throwaway schema with schema.sql + migrations 001–005 and NO rows (like a fresh compose)."""
+    """Throwaway schema with schema.sql + migrations 001–007 and NO rows (like a fresh compose)."""
     engine = create_db_engine(to_sqlalchemy_url(database_url()))
     if not database_is_up(engine):
         engine.dispose()
@@ -239,12 +241,12 @@ def test_segments_all_four(client: TestClient) -> None:
 
 def test_due_list_matches_the_build(client: TestClient, trucks: list[D.DemoTruck],
                                     predictor: P.Predictor) -> None:  # noqa: F811
-    """9.5b: the API's month stages are exactly what the demo plan says, every stage shows."""
+    """9.5c: the API's due list is exactly what the demo plan says, with queue and at-risk trucks."""
     due = client.get("/reminders/due").json()["reminders"]
-    expected = {t.plate_normalized: D.due_stage_of(t, TODAY) for t in trucks if D.is_due(t, predictor, TODAY)}
-    assert {r["plate_normalized"]: r["stage"] for r in due} == expected
-    assert {"1m", "2m", "3m"} <= set(expected.values())
-    assert D.PLATE_AT_RISK not in expected  # its 3m reminder is stored as sent
+    expected = {t.plate_normalized: D.segment(t, TODAY) for t in trucks if D.is_due(t, predictor, TODAY)}
+    assert {r["plate_normalized"]: r["segment"] for r in due} == expected
+    assert "at_risk" in expected.values() and set(expected.values()) - {"at_risk"}
+    assert D.PLATE_AT_RISK not in expected  # its reminder is stored as sent
 
 
 @pytest.mark.parametrize("q", ["1001 УБА", "1001уба", "1002 УБЕ", "1003 УНА", "1004 УБВ"])
@@ -278,8 +280,8 @@ def test_sent_reminders_stored_like_the_api_would(seeded: Connection, trucks: li
     with Session(bind=seeded) as session:
         rows = session.scalars(select(ReminderSent)).all()
         assert len(rows) == sum(t.reminder_sent for t in trucks) == 2
-        for row in rows:  # 9.5b: the 3m stage, as POST /reminders/{id}/sent?stage=3m stores it
-            assert (row.stage, row.method, row.predicted_date) == ("3m", None, None)
+        for row in rows:  # 9.5c: as POST /reminders/{id}/sent stores it
+            assert (row.stage, row.channel, row.method, row.predicted_date) == ("single", "manual", None, None)
             assert row.sent_at.date() == row.send_on and row.message_text.endswith(" 99000001")
 
 

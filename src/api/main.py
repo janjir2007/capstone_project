@@ -20,7 +20,7 @@ from fastapi import FastAPI
 from sqlalchemy import Engine
 
 from src.api.auth import LoginLimiter, load_auth_config
-from src.api.config import load_settings, oil_interval_km
+from src.api.config import load_settings, oil_interval_km, reminder_rules
 from src.api.config import model_dir as model_dir_from_env
 from src.api.db import create_db_engine
 from src.api.prediction import load_predictor
@@ -52,6 +52,7 @@ def create_app(engine: Engine | None = None, model_dir: Path | None = None) -> F
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         oil_interval_km()  # 9.5a: a bad OIL_INTERVAL_KM stops the start here, not every card request
+        reminder_rules()   # 9.5c: bad REMINDER_DAYS / AT_RISK_DAYS, or AT_RISK_DAYS <= REMINDER_DAYS, stop it too
         # 8.5r: UI_PASSWORD + AUTH_SECRET read once; UI_PASSWORD set without AUTH_SECRET stops the start
         app.state.auth = load_auth_config()
         app.state.engine = engine if engine is not None else create_db_engine(load_settings().database_url)

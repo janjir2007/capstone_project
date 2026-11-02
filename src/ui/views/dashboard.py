@@ -246,9 +246,8 @@ def due_list() -> None:
             common.html_block('<span class="muted">Өнөөдөр сануулах машин алга.</span>')
             return
         rows = []
-        for i, r in enumerate(reminders):  # 9.5b: month stage pill, days since the latest change
-            fg, bg = logic.STAGE_COLORS.get(r.get("stage"), logic.PENDING_COLORS)
-            label = logic.stage_label(r.get("stage"))
+        for i, r in enumerate(reminders):  # 9.5c: «Сануулах» / «Эрсдэлтэй» pill, days since the latest change
+            label, fg, bg = logic.reminder_pill(r)
             meta = " · ".join(t.replace(" ", " ") for t in
                               (logic.days_since_text(r.get("days_since")), logic.phone_text(r.get("phone")) or "утасгүй"))
             rows.append(

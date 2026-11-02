@@ -512,16 +512,15 @@ def test_prev_visit_text() -> None:
 
 
 def test_reminder_counts() -> None:
-    """9.5b: every due item is a message to send; per stage; at risk = 3m (90+ days, API segment)."""
-    rows = [{"stage": "1m", "segment": "loyal"}, {"stage": "1m", "segment": "new"},
-            {"stage": "2m", "segment": "returning"}, {"stage": "3m", "segment": "at_risk"}]
-    assert logic.reminder_counts(rows) == {"to_send": 4, "at_risk": 1, "1m": 2, "2m": 1, "3m": 1}
-    assert logic.reminder_counts([]) == {"to_send": 0, "at_risk": 0, "1m": 0, "2m": 0, "3m": 0}
+    """9.5c: every due item is a message to send; queue + at risk (API segment, 150+ days)."""
+    rows = [{"segment": "loyal"}, {"segment": "new"}, {"segment": "returning"}, {"segment": "at_risk"}]
+    assert logic.reminder_counts(rows) == {"to_send": 4, "queue": 3, "at_risk": 1}
+    assert logic.reminder_counts([]) == {"to_send": 0, "queue": 0, "at_risk": 0}
 
 
-def test_stage_label_colors_and_days_since() -> None:
-    assert [logic.stage_label(s) for s in ("1m", "2m", "3m", None)] == ["1 сар", "2 сар", "3 сар", "—"]
-    assert logic.STAGE_COLORS["3m"] == logic.STATUS_COLORS["overdue"]  # AA pair, red = time to change
+def test_reminder_pill_and_days_since() -> None:
+    assert logic.reminder_pill({"segment": "loyal"}) == ("Сануулах", *logic.STATUS_COLORS["due_soon"])
+    assert logic.reminder_pill({"segment": "at_risk"}) == ("Эрсдэлтэй", *logic.STATUS_COLORS["overdue"])  # AA red
     assert logic.days_since_text(65) == "65 хоногийн өмнө" and logic.days_since_text(None) == "—"
 
 

@@ -224,6 +224,7 @@ AS $$
     LEFT JOIN latest_pred lp ON lp.vehicle_id = s.vehicle_id;
 $$;
 
--- Today's segments (what the app and GET /stats/segments would use).
+-- Today's segments by the D-007 rule. DEPRECATED (task 9.5c): the API does not use this view or
+-- vehicle_segments(); segments come from src/api/reminders.segment_of (AT_RISK_DAYS).
 CREATE VIEW v_vehicle_segment AS
 SELECT * FROM vehicle_segments(CURRENT_DATE);

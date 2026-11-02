@@ -6,7 +6,8 @@ the column names follow docs/data_dictionary.md (the contract).
 
 Not mapped: predictions, reminders (schema.sql) — predictions are computed at read
 time (task 4.3), and sent reminders live in reminders_sent (migration 003, task 4.4).
-Computed objects (v_vehicle_service_summary, vehicle_segments()) are queried with SQL directly.
+Computed objects (v_vehicle_service_summary, vehicle_segments()) are not mapped; vehicle_segments() is
+deprecated (task 9.5c): the API's segments come from src/api/reminders.segment_of.
 
 server_default=func.now() / identity primary keys: the database fills these,
 so SQLAlchemy leaves them out of the INSERT and reads them back.
@@ -92,7 +93,8 @@ class ServiceRecord(Base):
 
 class ReminderSent(Base):
     """reminders_sent: a reminder that went out for one (vehicle, newest service) (migration 003).
-    Task 9.5b (migration 006): one row per (service, month stage); old prediction rows have stage None."""
+    Task 9.5b (migration 006): one row per (service, month stage); old prediction rows have stage None.
+    Task 9.5c (migration 007): new rows have stage 'single' (one per service) and a channel."""
 
     __tablename__ = "reminders_sent"
 
@@ -101,7 +103,8 @@ class ReminderSent(Base):
     service_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("service_records.id"))
     phone: Mapped[str | None] = mapped_column(Text)
     message_text: Mapped[str] = mapped_column(Text)
-    stage: Mapped[str | None] = mapped_column(Text)  # '1m' / '2m' / '3m' (9.5b); None = old prediction row
+    stage: Mapped[str | None] = mapped_column(Text)  # 'single' (9.5c); '1m'/'2m'/'3m' (9.5b); None = prediction row
+    channel: Mapped[str] = mapped_column(Text, server_default="manual")  # 'manual' / 'sms' (migration 007)
     method: Mapped[str | None] = mapped_column(Text)
     model_version: Mapped[str | None] = mapped_column(Text)
     predicted_date: Mapped[date | None]

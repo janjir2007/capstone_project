@@ -26,9 +26,9 @@ Docker Desktop must be running.
 docker compose down -v                  # WARNING: deletes the local dev DB (demo data only)
 docker compose up -d --build
 curl http://localhost:8000/health       # {"status":"ok","db":"ok"}
-POSTGRES_PASSWORD=oil_dev_password .venv/bin/python -m scripts.migrate     # applies 001–005
+POSTGRES_PASSWORD=oil_dev_password .venv/bin/python -m scripts.migrate     # applies 001–007
 POSTGRES_PASSWORD=oil_dev_password .venv/bin/python -m src.data.seed_demo
-#   expect: 40 trucks · due reminders: ~24 (1m / 2m / 3m, task 9.5b) · 1001 УБА ridge · 1002 УБЕ overdue · 1003 УНА b1
+#   expect: 40 trucks · due reminders: 3 (at risk: 1), task 9.5c · 1001 УБА ridge · 1002 УБЕ overdue · 1003 УНА b1
 
 # terminal 2: UI (start FROM src/ui so the theme loads)
 cd src/ui

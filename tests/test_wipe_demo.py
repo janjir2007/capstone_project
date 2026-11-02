@@ -1,6 +1,6 @@
 """Tests for scripts/wipe_demo.py (task 8.2d) on a throwaway PostgreSQL schema.
 
-Schema = schema.sql + migrations 001–005 + schema_migrations + sample_data.sql + one sent reminder,
+Schema = schema.sql + migrations 001–007 + schema_migrations + sample_data.sql + one sent reminder,
 so every table the real database has is filled. Skips without PostgreSQL (CI has it).
 """
 
@@ -19,7 +19,8 @@ SQL_DIR = Path(__file__).resolve().parent.parent / "src" / "data"
 SQL_FILES = ["schema.sql", "migrations/001_destinations.up.sql", "migrations/002_destinations_name_mn.up.sql",
              "migrations/003_reminders_sent.up.sql", "migrations/004_destinations_name_mn_rest.up.sql",
              "migrations/005_destinations_cross_border.up.sql",
-             "migrations/006_reminder_stages.up.sql", "sample_data.sql"]
+             "migrations/006_reminder_stages.up.sql", "migrations/007_single_reminder.up.sql",
+             "sample_data.sql"]
 EMPTIED = ["companies", "predictions", "reminder_stops", "reminders", "reminders_sent", "service_records", "vehicles"]
 
 

@@ -11,7 +11,7 @@ from src.ui import api_client, common, logic
 
 
 def reminder_counts() -> dict[str, int] | None:
-    """Counts from GET /reminders/due (9.5b month stages); None when the API is down."""
+    """Counts from GET /reminders/due (9.5c: one reminder per service); None when the API is down."""
     try:
         due = api_client.reminders_due()
     except api_client.ApiError:
@@ -43,7 +43,7 @@ def _num(value: int | None) -> str:
     return logic.NOT_GIVEN if value is None else str(value)
 
 
-at_risk = None if counts is None else counts["at_risk"]  # 9.5b: 90+ days (was «Хэтэрсэн», predicted date)
+at_risk = None if counts is None else counts["at_risk"]  # 9.5c: at-risk trucks on the due list (150+ days)
 red = ' style="color:#B42318"' if at_risk else ""
 common.html_block(
     '<div class="stats">'

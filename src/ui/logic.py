@@ -296,14 +296,15 @@ def recognize_error_message(status: int) -> str:
 SEGMENT_ORDER = ("new", "returning", "loyal", "at_risk")
 
 
-# Task 9.5b month stages: label + (text color, tint), the same AA pairs as the status pills.
-STAGE_LABELS: dict[str, str] = {"1m": "1 сар", "2m": "2 сар", "3m": "3 сар"}
-STAGE_COLORS: dict[str, tuple[str, str]] = {"1m": STATUS_COLORS["ok"], "2m": STATUS_COLORS["due_soon"],
-                                            "3m": STATUS_COLORS["overdue"]}
+# Task 9.5c: one reminder per service; the pill says whether the truck is also at risk (API `segment`).
+# (label, text color, tint) = the same AA pairs as the status pills.
+REMINDER_PILL_DUE = ("Сануулах", *STATUS_COLORS["due_soon"])
+REMINDER_PILL_AT_RISK = (SEGMENT_LABELS["at_risk"], *STATUS_COLORS["overdue"])  # «Эрсдэлтэй»
 
 
-def stage_label(stage: str | None) -> str:
-    return STAGE_LABELS.get(stage or "", NOT_GIVEN)
+def reminder_pill(reminder: dict) -> tuple[str, str, str]:
+    """(label, color, tint) of a due reminder: «Эрсдэлтэй» (red) when at risk, else «Сануулах»."""
+    return REMINDER_PILL_AT_RISK if is_at_risk(reminder) else REMINDER_PILL_DUE
 
 
 def days_since_text(days: int | None) -> str:
@@ -313,7 +314,7 @@ def days_since_text(days: int | None) -> str:
 
 def is_at_risk(reminder: dict) -> bool:
     """True if this due reminder belongs to «Эрсдэлтэй». The API decides (`segment`, D-074;
-    9.5b: 90+ days since the latest service)."""
+    9.5c: AT_RISK_DAYS (150)+ days since the latest service)."""
     return reminder.get("segment") == "at_risk"
 
 
@@ -392,10 +393,9 @@ def arrival_view(prediction: dict | None) -> dict[str, str] | None:
 
 
 def reminder_counts(reminders: list[dict]) -> dict[str, int]:
-    """Home / «Сануулга» numbers (9.5b): every message to send today, at risk, and per stage."""
-    counts = {"to_send": len(reminders), "at_risk": len(split_reminders(reminders)[1])}
-    counts.update({s: sum(1 for r in reminders if r.get("stage") == s) for s in STAGE_LABELS})
-    return counts
+    """Home / «Сануулга» numbers (9.5c): every message to send today, the queue part and the at-risk part."""
+    queue, at_risk = split_reminders(reminders)
+    return {"to_send": len(reminders), "queue": len(queue), "at_risk": len(at_risk)}
 
 
 # --- «Хяналтын самбар» search (9.1) --------------------------------------------------------

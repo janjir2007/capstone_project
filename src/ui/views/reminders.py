@@ -1,17 +1,18 @@
-"""«Сануулга» (task 5.4, DESIGN v5 / T9 mockup; month stages since task 9.5b), contract v0.13.
+"""«Сануулга» (task 5.4, DESIGN v5 / T9 mockup; one reminder per service since task 9.5c), contract v0.15.
 
 - How it works card: the API sends nothing; the manager sends the text and taps «Илгээсэн».
-- Messages are built by the API: stage 1m / 2m / 3m = 30 / 60 / 90 days after the truck's latest
-  service, only the highest stage reached, each stage once; a new service starts again.
+- Messages are built by the API: one reminder REMINDER_DAYS (75) after the truck's latest service,
+  once; a new service starts a new cycle.
 - «Viber-ээр илгээх» (task 5.5, D-091): viber://forward link with the text pre-filled; the tap also
   reruns the app, so that row then asks «Илгээсэн үү?» -> «Тийм» marks it sent. No Viber API / auto send.
-- 3 numbers: messages per stage today («1 сар», «2 сар», «3 сар»).
-- «Өнөөдрийн дараалал» (1m, 2m) and «Эрсдэлтэй» (API `segment` = at_risk = 90+ days, 3m): a row per
-  truck = plate, driver, days since the change · phone, stage pill; the message text (st.code has a
-  copy button = desktop fallback); «Залгах» (tel:) and «Илгээсэн» -> POST /reminders/{id}/sent?stage=.
+- 2 numbers: «Илгээх» (queue) and «Эрсдэлтэй» (red when > 0).
+- «Өнөөдрийн дараалал» and «Эрсдэлтэй» (API `segment` = at_risk = AT_RISK_DAYS (150)+ days, stays
+  until sent or a new service): a row per truck = plate, driver, days since the change · phone,
+  «Сануулах» / «Эрсдэлтэй» pill; the message text (st.code has a copy button = desktop fallback);
+  «Залгах» (tel:) and «Илгээсэн» -> POST /reminders/{id}/sent. Oldest first (API order).
 - «Дахиж илгээхгүй» (the driver said stop) -> «Тийм» -> POST /reminders/stops: no more messages to
   that phone. «Мессеж хүсээгүй утас» lists them; «Буцаах» = DELETE (a mistaken tap).
-- «Удахгүй»: GET /reminders/due?as_of=<API today + 7> minus today's list = stages starting this week.
+- «Удахгүй»: GET /reminders/due?as_of=<API today + 7> minus today's list = reminders due this week.
 - Link to «Хяналтын самбар» (segment counts, views/dashboard.py).
 """
 
@@ -74,11 +75,11 @@ def on_unstop(phone: str) -> None:
         st.session_state["rem_msg"] = ("success", f"{logic.phone_text(phone)} утсанд дахин сануулга очно.")
 
 
-def on_sent(service_id: int, stage: str) -> None:
-    """«Илгээсэн» / «Тийм»: mark this stage in the API, keep the answer for the message, reload the list."""
+def on_sent(service_id: int) -> None:
+    """«Илгээсэн» / «Тийм»: mark it sent in the API, keep the answer for the message, reload the list."""
     viber_tapped().discard(service_id)
     try:
-        row = api_client.mark_reminder_sent(service_id, stage)
+        row = api_client.mark_reminder_sent(service_id)
     except api_client.NotLatestService:
         st.session_state["rem_msg"] = ("warning", "Энэ машин шинэ үйлчилгээтэй болсон — жагсаалтыг шинэчиллээ.")
     except api_client.ApiError as exc:
@@ -91,9 +92,7 @@ def on_sent(service_id: int, stage: str) -> None:
 
 
 def reminder_row(r: dict, first: bool) -> None:
-    stage = r.get("stage")
-    fg, bg = logic.STAGE_COLORS.get(stage, logic.PENDING_COLORS)
-    status = logic.stage_label(stage)
+    status, fg, bg = logic.reminder_pill(r)
     meta = " · ".join(t.replace(" ", "\u00a0") for t in  # number + unit / phone never split
                       (logic.days_since_text(r.get("days_since")), logic.phone_text(r.get("phone")) or "утасгүй"))
     common.html_block(
@@ -113,12 +112,12 @@ def reminder_row(r: dict, first: bool) -> None:
         if r.get("phone"):
             st.link_button("Залгах", f"tel:{r['phone']}", width="stretch", icon=":material/call:")
         if not asking:
-            st.button("Илгээсэн", key=f"sent_{sid}", on_click=on_sent, args=(sid, stage),
+            st.button("Илгээсэн", key=f"sent_{sid}", on_click=on_sent, args=(sid,),
                       width="stretch", icon=":material/check:")
     if asking:
         with st.container(horizontal=True, vertical_alignment="center", key=f"rem_ask_{sid}"):
             common.html_block('<span class="act-t">Илгээсэн үү?</span>')
-            st.button("Тийм", key=f"yes_{sid}", on_click=on_sent, args=(sid, stage), type="primary",
+            st.button("Тийм", key=f"yes_{sid}", on_click=on_sent, args=(sid,), type="primary",
                       icon=":material/check:")
             st.button("Үгүй", key=f"no_{sid}", on_click=on_not_sent, args=(sid,))
     phone = r.get("phone")
@@ -166,10 +165,11 @@ except api_client.ApiError as exc:
 if due is not None:
     reminders = due.get("reminders") or []
     counts = logic.reminder_counts(reminders)
-    red = ' style="color:#B42318"'  # 3 months: time to change the oil
-    common.html_block('<div class="tiles">' + "".join(
-        f'<div><div class="v"{red if s == "3m" and counts[s] else ""}>{counts[s]}</div>'
-        f'<div class="k">{logic.STAGE_LABELS[s]}</div></div>' for s in logic.STAGE_LABELS) + '</div>')
+    red = ' style="color:#B42318"' if counts["at_risk"] else ""  # at risk: the customer may be lost
+    common.html_block(
+        '<div class="tiles two">'
+        f'<div><div class="v">{counts["queue"]}</div><div class="k">Илгээх</div></div>'
+        f'<div><div class="v"{red}>{counts["at_risk"]}</div><div class="k">Эрсдэлтэй</div></div></div>')
     if due.get("contact_is_placeholder"):
         common.html_block('<div class="note-line"><i class="dot" style="background:#A05A00"></i>'
                           'Мессеж дэх утас түр дугаар байна (API-д CONTACT_PHONE тохируулаагүй).</div>')
@@ -192,7 +192,7 @@ if due is not None:
             rows = "".join(
                 f'<div><span class="k"><span class="plate">{html.escape(r["identifier"])}</span>'
                 f'&nbsp; {html.escape(logic.month_day_text(r.get("send_on")))}</span>'
-                f'<span class="v muted" style="font-weight:400">{html.escape(logic.stage_label(r.get("stage")))}</span></div>'
+                f'<span class="v muted" style="font-weight:400">{html.escape(logic.reminder_pill(r)[0])}</span></div>'
                 for r in soon
             )
             common.html_block(f'<div class="kv sm">{rows}</div>')

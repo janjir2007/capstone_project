@@ -166,16 +166,16 @@ def segment_stats(as_of: str | None = None) -> dict:
 
 
 def reminders_due(as_of: str | None = None) -> dict:
-    """GET /reminders/due -> {as_of, contact_is_placeholder, reminders: [DueReminder]} (9.5b: month stages)."""
+    """GET /reminders/due -> {as_of, contact_is_placeholder, reminders: [DueReminder]} (9.5c: one per service)."""
     return _request("GET", "/reminders/due", params={"as_of": as_of} if as_of else None)
 
 
-def mark_reminder_sent(service_id: int, stage: str) -> dict:
-    """POST /reminders/{service_id}/sent?stage=1m|2m|3m -> stored row with already_sent (201 new / 200 before).
+def mark_reminder_sent(service_id: int) -> dict:
+    """POST /reminders/{service_id}/sent -> stored row with already_sent (201 new / 200 before), contract v0.15.
 
     Raises NotLatestService (409) when the truck has a newer service. No SMS is sent.
     """
-    return _request("POST", f"/reminders/{service_id}/sent", params={"stage": stage})
+    return _request("POST", f"/reminders/{service_id}/sent")
 
 
 def reminder_stops() -> list[dict]:

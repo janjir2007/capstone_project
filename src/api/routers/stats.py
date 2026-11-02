@@ -1,7 +1,7 @@
-"""GET /stats/segments — how many vehicles are in each segment (tasks 4.2, 4.4, 9.5b).
+"""GET /stats/segments — how many vehicles are in each segment (tasks 4.2, 4.4, 9.5b, 9.5c).
 
-Segments: new (1 service), returning (2), loyal (3+); at_risk wins = 90+ days since the latest
-service without coming back (task 9.5b, src/api/reminders.segment_of — the same rule as the card,
+Segments: new (1 service), returning (2), loyal (3+); at_risk wins = AT_RISK_DAYS (150)+ days
+since the latest service without coming back (task 9.5c setting; 9.5b had 90, src/api/reminders.segment_of — the same rule as the card,
 the dashboard and the reminder list; it replaced the predicted date + 7 days rule of D-007).
 Counted as of ``as_of`` (only services up to that day). Needs no model files.
 """
@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from src.api.clock import get_today
+from src.api.config import reminder_rules
 from src.api.db import get_session
 from src.api.history import records_as_of
 from src.api.reminders import segment_of
@@ -24,8 +25,9 @@ router = APIRouter(prefix="/stats", tags=["stats"])
 def segment_counts(session: Session, as_of: date) -> dict[str, int]:
     """Vehicles per segment on as_of (vehicles without a service by then are not counted)."""
     counts: dict[str, int] = {}
+    rules = reminder_rules()
     for rs in records_as_of(session, as_of).values():  # services oldest first
-        segment = segment_of(len(rs), rs[-1].service_date, as_of)
+        segment = segment_of(len(rs), rs[-1].service_date, as_of, rules)
         counts[segment] = counts.get(segment, 0) + 1
     return counts
 

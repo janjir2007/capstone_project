@@ -43,7 +43,8 @@ SQL_DIR = Path(__file__).resolve().parent.parent / "src" / "data"
 SQL_FILES = ["schema.sql", "migrations/001_destinations.up.sql", "migrations/002_destinations_name_mn.up.sql",
              "migrations/003_reminders_sent.up.sql", "migrations/004_destinations_name_mn_rest.up.sql",
              "migrations/005_destinations_cross_border.up.sql",
-             "migrations/006_reminder_stages.up.sql", "sample_data.sql"]
+             "migrations/006_reminder_stages.up.sql", "migrations/007_single_reminder.up.sql",
+             "sample_data.sql"]
 TODAY = date(2026, 9, 30)
 
 
@@ -477,10 +478,11 @@ def test_vehicle_card_fields(client: TestClient) -> None:
 
 @pytest.mark.parametrize(
     ("vehicle_id", "segment"),
-    [(1, "loyal"), (2, "returning"), (3, "new"), (4, "at_risk"), (5, "returning"), (6, "returning")],
+    [(1, "loyal"), (2, "returning"), (3, "new"), (4, "new"), (5, "returning"), (6, "returning")],
 )
 def test_vehicle_card_segment(client: TestClient, vehicle_id: int, segment: str) -> None:
-    """Same segments as data_dictionary §5 (as of 2026-09-30)."""
+    """As of 2026-09-30, API rule (9.5c): at_risk = 150+ days, so v4 (05-10, 143 days) is still new.
+    data_dictionary §5 lists the SQL function vehicle_segments() (D-007), which is not this rule."""
     assert client.get(f"/vehicles/{vehicle_id}").json()["segment"] == segment
 
 
@@ -499,13 +501,15 @@ def test_vehicle_card_unknown_id_404(client: TestClient) -> None:
 # ---------------- GET /stats/segments ----------------
 
 def test_segment_stats_sample_data(client: TestClient) -> None:
-    """Expected counts from data_dictionary §5."""
+    """Same rule as the cards (9.5c: v4 not at risk before day 150 = 2026-10-07)."""
     stats = client.get("/stats/segments", params={"as_of": "2026-09-30"}).json()
     assert stats == {
         "as_of": "2026-09-30",
         "total": 6,
-        "counts": {"new": 1, "returning": 3, "loyal": 1, "at_risk": 1},
+        "counts": {"new": 2, "returning": 3, "loyal": 1, "at_risk": 0},
     }
+    later = client.get("/stats/segments", params={"as_of": "2026-10-07"}).json()["counts"]
+    assert (later["new"], later["at_risk"]) == (1, 1)
 
 
 def test_segment_stats_default_is_today(client: TestClient) -> None:

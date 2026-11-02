@@ -250,8 +250,8 @@ class VehicleCard(BaseModel):
     vehicle_model: str | None
     company: CompanyOut
     service_count: int
-    segment: Segment | None = Field(description="Today's segment (9.5b: at_risk = 90+ days since the latest "
-                                                "service); None only without services")
+    segment: Segment | None = Field(description="Today's segment (9.5c: at_risk = AT_RISK_DAYS (150)+ days since "
+                                                "the latest service); None only without services")
     usual_liters: float | None = Field(description="Most frequent liters over all services; tie -> most recent")
     last_service: ServiceOut | None = Field(description="Pre-fills the recording form")
     history: list[ServiceOut] = Field(description="All services, newest first")
@@ -287,7 +287,7 @@ class VehicleRow(BaseModel):
     company: CompanyOut
     service_count: int
     last_service: ServiceOut | None = Field(description="Newest service (date, odometer, oil, liters, driver, phone)")
-    segment: Segment | None = Field(description="Same rule as the card (9.5b: at_risk = 90+ days since the latest service)")
+    segment: Segment | None = Field(description="Same rule as the card (9.5c: at_risk = AT_RISK_DAYS+ days since the latest service)")
     status: Status | None = Field(description="Prediction status (D-007); null when the model is not loaded")
     days_left: int | None = Field(description="Predicted date − today; null when the model is not loaded")
     matched_on: list[SearchMatch] = Field(description="Why the truck matched q; [] when q is blank (all trucks)")
@@ -333,11 +333,13 @@ class SegmentStats(BaseModel):
 # Reminders (task 4.4)
 # --------------------------------------------------------------------------
 
-ReminderStage = Literal["1m", "2m", "3m"]
+# 9.5c stores 'single'; '1m' / '2m' / '3m' only on rows from 9.5b (kept as history).
+ReminderStage = Literal["single", "1m", "2m", "3m"]
+ReminderChannel = Literal["manual", "sms"]
 
 
 class DueReminder(BaseModel):
-    """One truck to remind today: GET /reminders/due (task 9.5b: month stages, not the prediction)."""
+    """One truck to remind today: GET /reminders/due (task 9.5c: one reminder per service, D-119)."""
 
     service_id: int = Field(description="Latest service = the reminder's id: POST /reminders/{service_id}/sent")
     vehicle_id: int
@@ -352,12 +354,11 @@ class DueReminder(BaseModel):
     liters: float
     odometer_km: int = Field(description="Odometer at the latest service (trucks without one get no reminders)")
     target_km: int = Field(description="odometer_km + OIL_INTERVAL_KM (task 9.5a)")
-    stage: ReminderStage = Field(description="Highest month stage reached and not sent yet: 1m = 30, 2m = 60, "
-                                             "3m = 90 days after the latest service")
     days_since: int = Field(description="Days from the latest service to as_of")
-    send_on: date = Field(description="Day the stage started: last_change_date + 30 / 60 / 90")
-    segment: Segment = Field(description="Segment on as_of; at_risk = 90+ days since the latest service (9.5b)")
-    message_mn: str = Field(description="Mongolian text of this stage (copy into Viber)")
+    send_on: date = Field(description="Day the reminder became due: last_change_date + REMINDER_DAYS (75)")
+    segment: Segment = Field(description="Segment on as_of; at_risk = AT_RISK_DAYS (150)+ days since the latest "
+                                         "service: shown as «Эрсдэлтэй» (9.5c)")
+    message_mn: str = Field(description="Mongolian reminder text (copy into Viber)")
 
 
 class DueReminders(BaseModel):
@@ -377,7 +378,8 @@ class ReminderSentOut(BaseModel):
     id: int
     service_id: int
     vehicle_id: int
-    stage: ReminderStage | None = Field(description="9.5b month stage; null only on rows from before 9.5b")
+    stage: ReminderStage | None = Field(description="'single' (9.5c); 1m/2m/3m = a 9.5b row; null = before 9.5b")
+    channel: ReminderChannel = Field(description="How it went out (migration 007): 'manual' = the manager sent it")
     phone: str | None
     message_text: str
     method: PredictionMethod | None = Field(default=None, description="Rows from before 9.5b only")

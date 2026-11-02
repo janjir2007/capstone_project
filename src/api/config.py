@@ -118,6 +118,49 @@ def oil_interval_km(env: Mapping[str, str] | None = None) -> int:
     return value
 
 
+# Task 9.5c (D-119): one reminder REMINDER_DAYS after the latest service; «Эрсдэлтэй» (at_risk)
+# AT_RISK_DAYS after it without a new service.
+DEFAULT_REMINDER_DAYS = 75
+DEFAULT_AT_RISK_DAYS = 150
+
+
+@dataclass(frozen=True)
+class ReminderRules:
+    """Day counts of the reminder rule, both counted from the truck's latest service."""
+
+    reminder_days: int
+    at_risk_days: int
+
+
+def _whole_days(env: Mapping[str, str], name: str, default: int) -> int:
+    """A whole number of days > 0 from env[name]; empty -> default; anything else -> ConfigError."""
+    raw = env.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 0
+    if value <= 0:
+        raise ConfigError(f"{name} must be a whole number of days > 0, got {raw!r}")
+    return value
+
+
+def reminder_rules(env: Mapping[str, str] | None = None) -> ReminderRules:
+    """REMINDER_DAYS (default 75) and AT_RISK_DAYS (default 150) from the environment.
+
+    ConfigError if one is not a whole number > 0, or AT_RISK_DAYS <= REMINDER_DAYS (a truck would
+    be at risk before its reminder is due). main.py calls this at startup, so a bad value stops it.
+    """
+    env = os.environ if env is None else env
+    rules = ReminderRules(reminder_days=_whole_days(env, "REMINDER_DAYS", DEFAULT_REMINDER_DAYS),
+                          at_risk_days=_whole_days(env, "AT_RISK_DAYS", DEFAULT_AT_RISK_DAYS))
+    if rules.at_risk_days <= rules.reminder_days:
+        raise ConfigError(f"AT_RISK_DAYS ({rules.at_risk_days}) must be greater than "
+                          f"REMINDER_DAYS ({rules.reminder_days})")
+    return rules
+
+
 def reminder_contact(env: Mapping[str, str] | None = None) -> Contact:
     """Contact at the end of every reminder (needs no database settings).
 

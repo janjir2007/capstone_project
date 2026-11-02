@@ -7,7 +7,7 @@ of a truck's dates are shifted by the same number of days, so that the
 SERVED model (models/, the same Predictor the API uses) puts its next oil
 change where the plan below wants it, counted from today. That gives, as of
 today: every status (ok / due_soon / overdue), every segment (new /
-returning / loyal / at_risk) and 5–10 trucks on the due-reminder list.
+returning / loyal / at_risk) and due reminders, in the queue and at risk.
 
 Nothing is real (RISK-06): plates are random in the real format (4 digits +
 3 letters of plates.PLATE_LETTERS), companies are "Демо …", phones are
@@ -17,7 +17,7 @@ generator's fake names. Oil grade and liters are demo values, not facts.
 The dates are relative to the seed day, so the demo slowly goes stale:
 re-seed on the demo day (docs/demo_data.md).
 
-Run on an EMPTY database (schema.sql + migrations 001–005), model files in models/:
+Run on an EMPTY database (schema.sql + migrations 001–007), model files in models/:
     POSTGRES_PASSWORD=oil_dev_password python -m src.data.seed_demo [--as-of 2026-10-20]
 The script refuses to write into a database that already has companies,
 vehicles or service records (it must never mix with real data).
@@ -39,11 +39,11 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from src.api.clock import ULAANBAATAR, today_ulaanbaatar
-from src.api.config import Contact, load_settings, model_dir, oil_interval_km, reminder_contact
+from src.api.config import Contact, ReminderRules, load_settings, model_dir, reminder_contact, reminder_rules
 from src.api.db import create_db_engine
 from src.api.models import Company, Destination, ReminderSent, ServiceRecord, Vehicle
 from src.api.prediction import Prediction, Predictor, Visit, load_predictor
-from src.api.reminders import due_stage, message_mn, segment_of, stage_day, stage_reached
+from src.api.reminders import STAGE, is_due as reminder_is_due, message_mn, reminder_day, segment_of
 from src.common.plates import normalize_plate
 from src.data.generator import DEFAULT_CONFIG, generate_clean, load_config
 
@@ -88,8 +88,9 @@ SHARED_DRIVER_PLATE = PLATE_OVERDUE
 
 PLAN: tuple[Slot, ...] = (
     # days_left = the model's predicted date − today (prediction statuses for the model API).
-    # Since 9.5b the due list follows month stages (30 / 60 / 90 days after the latest service),
-    # not this number: with ~35–60-day predicted intervals most trucks show 1m, a few 2m / 3m.
+    # Since 9.5c the due list = REMINDER_DAYS (75) after the latest service, at risk = AT_RISK_DAYS (150),
+    # not this number. With ~35–60-day predicted intervals, days_left -50…-60 is ~85–120 days after
+    # the latest service (due, not at risk) and -120 is ~155–180 days (at risk).
     # --- new: 1 service, first visit -> B1 (buffer 4 days)
     Slot(1, 10, plate=PLATE_NEW),             # due_soon, not due yet
     Slot(1, 20), Slot(1, 28), Slot(1, 24), Slot(1, 22), Slot(1, 25),  # ok
@@ -98,7 +99,7 @@ PLAN: tuple[Slot, ...] = (
     # --- returning: 2 services -> Ridge (buffer 16 days)
     Slot(2, -4, plate=PLATE_OVERDUE),         # overdue, on the due list
     Slot(2, 20), Slot(2, 25), Slot(2, 29), Slot(2, 21), Slot(2, 27),  # ok
-    Slot(2, 23), Slot(2, 19),                 # ok
+    Slot(2, 23),                              # ok
     Slot(2, 3),                               # due_soon, on the due list
     # --- loyal: 3–5 services -> Ridge
     Slot(5, 26, plate=PLATE_LOYAL),           # ok; older services had another driver (phone lookup)
@@ -109,12 +110,13 @@ PLAN: tuple[Slot, ...] = (
     Slot(4, 28), Slot(4, 25),                 # ok
     Slot(3, 5),                               # due_soon, on the due list
     Slot(4, -6),                              # overdue (not yet at risk), on the due list
-    # --- at_risk (9.5b): 90+ days since the latest service, not back. Predicted intervals are
-    # ~35–60 days, so days_left -45…-60 puts the latest service 90+ days ago.
-    Slot(3, -50, plate=PLATE_AT_RISK, reminder_sent=True),  # 3m reminder sent, did not come back
-    Slot(4, -60, reminder_sent=True),
-    Slot(2, -50),                             # 3m on the due list
-    Slot(1, -60),                             # 3m on the due list
+    # --- reminder due (9.5c): 75–149 days since the latest service, not sent -> «Өнөөдрийн дараалал»
+    Slot(2, -50),
+    Slot(1, -60),
+    # --- at_risk (9.5c): 150+ days since the latest service, not back
+    Slot(3, -120, plate=PLATE_AT_RISK, reminder_sent=True),  # reminder sent, did not come back
+    Slot(4, -120, reminder_sent=True),
+    Slot(2, -120),                            # not sent: on the due list as «Эрсдэлтэй»
     # --- B0 fallback (route not modelled / typed by hand), ok, buffer 13 days -> not due yet
     Slot(3, 25, newest_destination=UB_CITY),
     Slot(2, 22, newest_raw=RAW_DESTINATION),
@@ -285,45 +287,46 @@ def share_driver(trucks: list[DemoTruck]) -> list[DemoTruck]:
 # What the demo shows
 # ---------------------------------------------------------------------------
 
-def segment(truck: DemoTruck, today: date) -> str:
-    """Segment, the same rule as GET /stats/segments (9.5b: at_risk = 90+ days since the latest service)."""
-    return segment_of(len(truck.services), truck.services[-1].service_date, today)
+def segment(truck: DemoTruck, today: date, rules: ReminderRules | None = None) -> str:
+    """Segment, the same rule as GET /stats/segments (9.5c: at_risk = AT_RISK_DAYS+ since the latest service)."""
+    return segment_of(len(truck.services), truck.services[-1].service_date, today, rules or reminder_rules())
 
 
-def sent_stage(truck: DemoTruck, today: date) -> str | None:
-    """9.5b: a 'reminder_sent' truck has its highest stage reached marked sent (None before day 30)."""
-    return stage_reached(truck.services[-1].service_date, today) if truck.reminder_sent else None
+def is_sent(truck: DemoTruck, today: date, rules: ReminderRules | None = None) -> bool:
+    """9.5c: a 'reminder_sent' truck has its reminder marked sent once its reminder day has come."""
+    rules = rules or reminder_rules()
+    return truck.reminder_sent and reminder_day(truck.services[-1].service_date, rules) <= today
 
 
-def is_due(truck: DemoTruck, predictor: Predictor, today: date) -> bool:
-    """On GET /reminders/due (9.5b): a month stage is reached and not marked sent (demo trucks all
-    have an odometer and no stopped phone). ``predictor`` is unused since 9.5b (kept for callers)."""
-    sent = {sent_stage(truck, today)} - {None}
-    return due_stage(truck.services[-1].service_date, today, sent) is not None
-
-
-def due_stage_of(truck: DemoTruck, today: date) -> str | None:
-    """The month stage this truck shows on GET /reminders/due today (9.5b), or None."""
-    return due_stage(truck.services[-1].service_date, today, {sent_stage(truck, today)} - {None})
+def is_due(truck: DemoTruck, predictor: Predictor, today: date, rules: ReminderRules | None = None) -> bool:
+    """On GET /reminders/due (9.5c): the reminder day has come and it is not marked sent (demo trucks
+    all have an odometer and no stopped phone). ``predictor`` is unused since 9.5b (kept for callers)."""
+    rules = rules or reminder_rules()
+    return reminder_is_due(truck.services[-1].service_date, today, is_sent(truck, today, rules), rules)
 
 
 def summary(trucks: Sequence[DemoTruck], predictor: Predictor, today: date) -> dict[str, Counter | int]:
-    """Counts the acceptance check needs: segments, statuses, methods, due list size + its stages."""
+    """Counts the acceptance check needs: segments, statuses, methods, due list size + at risk on it."""
+    rules = reminder_rules()
+    due = [t for t in trucks if is_due(t, predictor, today, rules)]
     return {
-        "segments": Counter(segment(t, today) for t in trucks),
+        "segments": Counter(segment(t, today, rules) for t in trucks),
         "statuses": Counter(t.prediction.status for t in trucks),
         "methods": Counter(t.prediction.method for t in trucks),
-        "due": sum(is_due(t, predictor, today) for t in trucks),
-        "stages": Counter(s for s in (due_stage_of(t, today) for t in trucks) if s),
+        "due": len(due),
+        "due_at_risk": sum(segment(t, today, rules) == "at_risk" for t in due),
     }
 
 
 def problems(summary_: dict) -> list[str]:
     """What is missing for the demo (empty list = all good): every segment, every prediction status
-    (model API), and since 9.5b every month stage on the due list (was: 5–10 due trucks)."""
+    (model API), and since 9.5c both kinds of due reminder: «Өнөөдрийн дараалал» and «Эрсдэлтэй»."""
     out = [f"segment {s} is empty" for s in ("new", "returning", "loyal", "at_risk") if not summary_["segments"][s]]
     out += [f"status {s} is empty" for s in ("ok", "due_soon", "overdue") if not summary_["statuses"][s]]
-    out += [f"no {s} reminder on the due list" for s in ("1m", "2m", "3m") if not summary_["stages"][s]]
+    if summary_["due"] - summary_["due_at_risk"] <= 0:
+        out.append("no reminder in the queue (due, not at risk)")
+    if summary_["due_at_risk"] <= 0:
+        out.append("no at-risk reminder on the due list")
     return out
 
 
@@ -362,19 +365,17 @@ def insert_demo(session: Session, trucks: Sequence[DemoTruck], predictor: Predic
                                  driver_phone=s.driver_phone, oil_changer=OIL_CHANGER)
                    for s in truck.services]
         session.add_all([vehicle, *records])
-        stage = sent_stage(truck, truck.prediction.today)  # the seed day
-        if stage is not None:
+        if is_sent(truck, truck.prediction.today):  # the seed day
             session.flush()  # ids for the reminder row
-            session.add(sent_reminder(vehicle, records[-1], stage, contact))
+            session.add(sent_reminder(vehicle, records[-1], contact))
     session.flush()
 
 
-def sent_reminder(vehicle: Vehicle, newest: ServiceRecord, stage: str, contact: Contact) -> ReminderSent:
-    """The row POST /reminders/{id}/sent?stage= would have stored on the stage day (10:00 UB), 9.5b."""
-    send_on = stage_day(newest.service_date, stage)
-    return ReminderSent(vehicle_id=vehicle.id, service_id=newest.id, stage=stage, phone=newest.driver_phone,
-                        message_text=message_mn(stage, vehicle.identifier, newest.service_date, newest.oil_grade,
-                                                newest.odometer_km + oil_interval_km(), contact),
+def sent_reminder(vehicle: Vehicle, newest: ServiceRecord, contact: Contact) -> ReminderSent:
+    """The row POST /reminders/{id}/sent would have stored on the reminder day (10:00 UB), 9.5c."""
+    send_on = reminder_day(newest.service_date, reminder_rules())
+    return ReminderSent(vehicle_id=vehicle.id, service_id=newest.id, stage=STAGE, phone=newest.driver_phone,
+                        message_text=message_mn(vehicle.identifier, newest.service_date, newest.oil_grade, contact),
                         send_on=send_on, sent_at=datetime.combine(send_on, time(10, 0), tzinfo=ULAANBAATAR))
 
 
@@ -388,7 +389,7 @@ def print_summary(trucks: Sequence[DemoTruck], predictor: Predictor, today: date
     print(f"as of {today}: {len(trucks)} trucks, {sum(len(t.services) for t in trucks)} services")
     for key in ("segments", "statuses", "methods"):
         print(f"  {key}: {dict(sorted(s[key].items()))}")
-    print(f"  due reminders: {s['due']} {dict(sorted(s['stages'].items()))}")
+    print(f"  due reminders: {s['due']} (at risk: {s['due_at_risk']})")
     for plate in (PLATE_LOYAL, PLATE_OVERDUE, PLATE_NEW, PLATE_AT_RISK):
         t = next(t for t in trucks if t.plate_normalized == plate)
         print(f"  {t.identifier}: {segment(t, today)}, {t.prediction.status}, {t.prediction.method}, "

@@ -1,6 +1,6 @@
 # API contract — data, model and reminder endpoints (tasks 4.2, 4.2b, 4.3, 4.4)
 
-- **Version:** 0.14 (task 8.5r, 2026-10-30) · **Owner:** Backend Engineer
+- **Version:** 0.15 (task 9.5c, 2026-11-02) · **Owner:** Backend Engineer
 - Extends PROJECT_STATE §8 "API contract" with exact fields. The live, always
   current version is the OpenAPI page of the running API: `http://localhost:8000/docs`.
 - Field names follow [`data_dictionary.md`](data_dictionary.md). Code:
@@ -40,7 +40,7 @@
 | `vehicle_model` | string \| null | |
 | `company` | `{id, name}` | |
 | `service_count` | int | |
-| `segment` | `new` \| `returning` \| `loyal` \| `at_risk` \| null | today; `at_risk` from the card's `prediction` (same rule as `GET /stats/segments`); without the model: `vehicle_segments()` |
+| `segment` | `new` \| `returning` \| `loyal` \| `at_risk` \| null | today; same rule as `GET /stats/segments` (`at_risk` = `AT_RISK_DAYS`+ days since the latest service, v0.15); needs no model |
 | `usual_liters` | number \| null | most frequent liters; tie → most recent |
 | `last_service` | ServiceOut \| null | pre-fills the recording form |
 | `history` | ServiceOut[] | newest first |
@@ -102,7 +102,7 @@ separators allowed). A valid phone is searched as a phone; anything else as a pl
   at most `limit`, newest last service first.
 - VehicleRow: `id, identifier_type, identifier, vehicle_model, company{id,name}, service_count,
   last_service` (ServiceOut | null), `segment, status, days_left` (status/days_left null without the
-  model; segment then count-based, no `at_risk`), `matched_on` (list of `plate | fleet_no | company | phone`).
+  model; `segment` = the card's rule, also without the model), `matched_on` (list of `plate | fleet_no | company | phone`).
 - Full history of one truck: `GET /vehicles/{id}`.
 - **Filters (v0.11, step 2)**, all optional: `company_id` (the truck's owner); `date_from`, `date_to`
   (YYYY-MM-DD, both ends included), `route` (Route), `oil_grade` (case + spaces ignored). The last
@@ -189,19 +189,22 @@ List for the "where are you heading next?" picker; send the chosen `id` as `dest
 `as_of` optional (default today).
 
 - **200** `{as_of, total, counts: {new, returning, loyal, at_risk}}`. All four keys are always present.
-- v0.13 (task 9.5b): `new` 1 service · `returning` 2 · `loyal` 3+ · **`at_risk`** (wins) = **90+ days**
-  since the latest service up to `as_of` (replaces predicted date + 7 days, D-007). The same rule
-  gives the card's and the search rows' `segment`. Needs no model files.
+- v0.15 (task 9.5c, D-119): `new` 1 service · `returning` 2 · `loyal` 3+ · **`at_risk`** (wins) =
+  **`AT_RISK_DAYS` (default 150)+ days** since the latest service up to `as_of` (v0.13: 90 days;
+  before that predicted date + 7 days, D-007). The same rule gives the card's and the search rows'
+  `segment`. Needs no model files.
 
-### `GET /reminders/due?as_of=` (v0.13, task 9.5b: month stages)
-Trucks to remind on `as_of`: stage **1m / 2m / 3m = 30 / 60 / 90 days** after the truck's latest
-service. Only the **highest stage reached** is offered, and only if that stage was not marked sent for
-that service (lower stages that were missed are skipped: day 65 → only 2m). A new service = new
-`service_id` → stages start again. Left out: trucks whose latest service has no `odometer_km` (mine
-trucks, engine hours only) and phones in `GET /reminders/stops`. `as_of` optional (default today);
-only services up to `as_of` are used. **The ML model is not used** (no 503).
+### `GET /reminders/due?as_of=` (v0.15, task 9.5c: one reminder per service)
+Trucks to remind on `as_of`: **one reminder per service**, due on the truck's latest service date +
+**`REMINDER_DAYS` (default 75)**, if nothing was marked sent for that service yet. A row of the old
+1m / 2m / 3m stages (v0.13) for that service also counts as sent. A new service = new `service_id`
+→ a new cycle (the old reminder is no longer due). A truck `AT_RISK_DAYS`+ days out stays on the list
+with `segment: at_risk` («Эрсдэлтэй») until it is marked sent or comes back. Left out: trucks whose
+latest service has no `odometer_km` (mine trucks, engine hours only) and phones in
+`GET /reminders/stops`. `as_of` optional (default today); only services up to `as_of` are used.
+**The ML model is not used** (no 503).
 
-- **200** `{as_of, contact_is_placeholder, reminders: DueReminder[]}`, oldest `send_on` first.
+- **200** `{as_of, contact_is_placeholder, reminders: DueReminder[]}`, oldest `send_on` first (then `vehicle_id`).
   `contact_is_placeholder: true` = neither `CONTACT_PHONE` nor `GEO_EXPERT_PHONE` is set (fake number).
 
 **DueReminder**
@@ -215,24 +218,24 @@ only services up to `as_of` are used. **The ML model is not used** (no 503).
 | `phone`, `driver_name` | string \| null | from the latest service (D-004); null = not recorded |
 | `last_change_date`, `oil_grade`, `liters`, `odometer_km` | | the latest service |
 | `target_km` | int | `odometer_km` + `OIL_INTERVAL_KM` (v0.12) |
-| `stage` | `1m` \| `2m` \| `3m` | the stage to send |
 | `days_since` | int | `as_of − last_change_date` |
-| `send_on` | date | the day the stage started (`last_change_date` + 30 / 60 / 90) |
-| `segment` | `new` \| `returning` \| `loyal` \| `at_risk` | segment on `as_of` (the rule above); the UI groups «Эрсдэлтэй» by it |
-| `message_mn` | string | the stage's Mongolian text (Ari's wording, `src/api/reminders.py`); ends with `CONTACT_PHONE` |
+| `send_on` | date | the day the reminder became due (`last_change_date` + `REMINDER_DAYS`) |
+| `segment` | `new` \| `returning` \| `loyal` \| `at_risk` | segment on `as_of` (the rule above); the UI shows «Эрсдэлтэй» by it |
+| `message_mn` | string | the Mongolian text (`src/api/reminders.py`): plate, last change date, oil, "Wolf Oil - Гео-Эксперт: " + `CONTACT_PHONE` (approved by PM + Ari); ≤ 160 characters with a usual plate / oil grade |
 
-Removed in v0.13: `method`, `buffer_days`, `predicted_date`, `days_left`, `status`.
+Removed in v0.15: `stage`. Removed in v0.13: `method`, `buffer_days`, `predicted_date`, `days_left`, `status`.
 
-### `POST /reminders/{service_id}/sent?stage=1m|2m|3m`
-Marks that stage as sent for this (truck, latest service); stores phone, exact message and the stage
-day (`reminders_sent`, migrations 003 + 006: UNIQUE (`service_id`, `stage`)). No SMS is sent by the API.
+### `POST /reminders/{service_id}/sent`
+Marks the reminder of this (truck, latest service) as sent; stores phone, exact message and the
+reminder day (`reminders_sent`, migrations 003 + 006 + 007: `stage = 'single'`, UNIQUE (`service_id`,
+`stage`), `channel = 'manual'`). No SMS is sent by the API. v0.15: **no `?stage=`** (an extra one is ignored).
 
-- **201** stored → `{id, service_id, vehicle_id, stage, phone, message_text, method: null, model_version: null, predicted_date: null, send_on, sent_at, already_sent: false}`
-  (rows from before v0.13 have `stage: null` and the prediction fields)
-- **200** this stage was marked before → the same stored row, `already_sent: true` (idempotent)
+- **201** stored → `{id, service_id, vehicle_id, stage: "single", channel: "manual", phone, message_text, method: null, model_version: null, predicted_date: null, send_on, sent_at, already_sent: false}`
+  (rows from v0.13 have `stage` `1m` / `2m` / `3m`; rows from before v0.13 have `stage: null` and the prediction fields)
+- **200** already marked for this service (also by a v0.13 `1m` / `2m` / `3m` row) → that stored row, `already_sent: true` (idempotent)
 - **404** unknown service · **409** `{code: "not_latest_service", message, latest_service_id}` — the
-  truck has a newer service (reload the due list) · **422** `stage` missing / unknown, the stage has
-  not started yet, the truck has no odometer, or its phone asked to stop
+  truck has a newer service (reload the due list) · **422** the reminder is not due yet, the truck has
+  no odometer, or its phone asked to stop
 
 ### `GET /reminders/stops` · `POST /reminders/stops` · `DELETE /reminders/stops/{phone}` (v0.13)
 Phones that asked for no more messages (`reminder_stops`, migration 006).
@@ -275,3 +278,4 @@ The only API routes besides `/health` that Caddy makes public. Not used by the U
 | 0.12 | 2026-10-29 | Task 9.5a: `target_km` added to ServiceOut (additive, everywhere a service appears: card `last_service` / `history`, search rows, `POST /services` answer); `POST /services` destination optional (at most one of `destination_id` / `destination_raw`). New API setting `OIL_INTERVAL_KM` (default 15000; not a whole number > 0 → the API does not start) |
 | 0.13 | 2026-10-29 | Task 9.5b: **breaking** for `GET /reminders/due` (month stages: `stage`, `days_since`, `odometer_km`, `target_km` added; `method`, `buffer_days`, `predicted_date`, `days_left`, `status` removed; no 503). `POST /reminders/{id}/sent` needs `?stage=`. New `GET/POST/DELETE /reminders/stops`. `at_risk` = 90+ days since the latest service everywhere (card, search, stats, reminders). New setting `CONTACT_PHONE` (falls back to `GEO_EXPERT_PHONE`). Migration 006 |
 | 0.14 | 2026-10-30 | Task 8.5r (D-117): `/auth/login`, `/auth/logout`, `/auth/check` (additive; data endpoints unchanged and still private). API settings `UI_PASSWORD` + `AUTH_SECRET` |
+| 0.15 | 2026-11-02 | Task 9.5c (D-119): **breaking** — one reminder per service at `REMINDER_DAYS` (75) after the latest service replaces the 1m/2m/3m stages: `stage` removed from `GET /reminders/due` items; `POST /reminders/{id}/sent` takes no `?stage=` (stores `single`); old 1m/2m/3m rows count as sent. `channel` added to the sent row (additive). `at_risk` = `AT_RISK_DAYS` (150)+ days everywhere. New settings `REMINDER_DAYS`, `AT_RISK_DAYS` (bad value or `AT_RISK_DAYS <= REMINDER_DAYS` → the API does not start). Migration 007 |

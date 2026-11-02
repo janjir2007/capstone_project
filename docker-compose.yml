@@ -61,6 +61,9 @@ services:
       CONTACT_PHONE: ${CONTACT_PHONE:-}
       # Task 9.5a: target km of the next oil change = odometer at the last change + this.
       OIL_INTERVAL_KM: ${OIL_INTERVAL_KM:-15000}
+      # Task 9.5c: reminder REMINDER_DAYS after the latest service; at risk after AT_RISK_DAYS.
+      REMINDER_DAYS: ${REMINDER_DAYS:-75}
+      AT_RISK_DAYS: ${AT_RISK_DAYS:-150}
     volumes:
       - ./models:/app/models:ro
     ports:

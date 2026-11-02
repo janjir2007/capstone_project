@@ -22,6 +22,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from src.api.clock import get_today
+from src.api.config import reminder_rules
 from src.api.db import get_session
 from src.api.history import records_as_of, service_records, to_visit, visits_oldest_first
 from src.api.matching import clean_company_name, company_key, fleet_no_key, search_matches
@@ -74,8 +75,8 @@ def build_card(session: Session, vehicle: Vehicle, today: date, predictor: Predi
     history = [ServiceOut.model_validate(record) for record in records]
     liters = usual_liters([record.liters for record in records])
     prediction = predict(predictor, vehicle.id, records, today)
-    # 9.5b: one rule everywhere (src/api/reminders.py): at_risk = 90+ days since the latest service.
-    segment = segment_of(len(records), records[0].service_date, today) if records else None
+    # One rule everywhere (src/api/reminders.py): at_risk = AT_RISK_DAYS (150)+ days since the latest service.
+    segment = segment_of(len(records), records[0].service_date, today, reminder_rules()) if records else None
     return VehicleCard(
         id=vehicle.id,
         identifier_type=vehicle.identifier_type,
@@ -245,6 +246,7 @@ def search_rows(session: Session, query: str, today: date, predictor: Predictor 
     histories = {v.id: [to_visit(r) for r in records[v.id]] for v, _ in rows if v.id in records}
     predictions = predictor.predict_many(histories, today) if predictor is not None else {}
     out = []
+    rules = reminder_rules()
     for vehicle, matched in rows:
         own = records.get(vehicle.id, [])
         prediction = predictions.get(vehicle.id)
@@ -256,7 +258,7 @@ def search_rows(session: Session, query: str, today: date, predictor: Predictor 
             company=CompanyOut.model_validate(vehicle.company),
             service_count=len(own),
             last_service=ServiceOut.model_validate(own[-1]) if own else None,
-            segment=segment_of(len(own), own[-1].service_date, today) if own else None,
+            segment=segment_of(len(own), own[-1].service_date, today, rules) if own else None,
             status=prediction.status if prediction else None,
             days_left=prediction.days_left if prediction else None,
             matched_on=matched,
