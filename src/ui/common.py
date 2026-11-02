@@ -290,6 +290,8 @@ a.logout:hover {color: var(--pri-dark);}
 .tl .h {display: flex; justify-content: space-between; gap: 12px;}
 .tl .d {font-size: 16px; font-weight: 500;} .tl .km {font-size: 14px; color: var(--muted); white-space: nowrap;}
 .tl .s {font-size: 14px; color: var(--muted); margin-top: 2px;}
+/* 9.6b-5: payment pill under a service (card timeline, dashboard history) */
+.pill-st.pay {padding: 2px 10px; font-size: 12px; margin-top: 6px;}
 
 /* reminders / dashboard tiles */
 .tiles {display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 4px;}
@@ -665,8 +667,21 @@ def _history_sub(service: dict) -> str:
     return " · ".join(p for i, p in enumerate(parts) if i < 2 or p != logic.NOT_GIVEN)
 
 
+def payment_pill_html(service: dict) -> str:
+    """Task 9.6b-5: «Төлсөн» / «Төлөөгүй» / «Төлсөн (дараа)» / «Тодорхойгүй» pill; '' while payments
+    are not connected (the API sends null), so the screen stays exactly as before."""
+    badge = logic.payment_badge(service)
+    if badge is None:
+        return ""
+    label, fg, bg = badge
+    due = logic.money_text(service.get("amount_due")) if service.get("amount_due") else ""
+    text = f"{label} · {due}" if due else label
+    return f'<span class="pill-st pay" style="color:{fg};background:{bg}">{html.escape(text)}</span>'
+
+
 def render_history(history: list[dict]) -> None:
-    """«Түүх»: timeline, newest first (blue dot), date + km, then oil · liters · destination."""
+    """«Түүх»: timeline, newest first (blue dot), date + km, then oil · liters · destination,
+    then the payment pill (9.6b-5, only when payments are connected)."""
     st.subheader("Түүх")
     with st.container(key="card_history"):
         if not history:
@@ -675,7 +690,7 @@ def render_history(history: list[dict]) -> None:
         rows = "".join(
             f'<div><div class="h"><span class="d">{html.escape(s.get("service_date", ""))}</span>'
             f'<span class="km">{html.escape(logic.service_meter_text(s))}</span></div>'
-            f'<div class="s">{html.escape(_history_sub(s))}</div></div>'
+            f'<div class="s">{html.escape(_history_sub(s))}</div>{payment_pill_html(s)}</div>'
             for s in history
         )
         html_block(f'<div class="tl">{rows}</div>')

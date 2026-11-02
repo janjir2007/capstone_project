@@ -56,6 +56,9 @@ class FakeApi:
         # 8.5r login: False = API without UI_PASSWORD (local dev). True = only GOOD_TOKEN passes.
         self.login_required = False
         self.auth_status = 200                      # 503 -> the login check itself fails
+        # 9.6b-5: None -> 404 like an API without payments; set both to "connect" payments
+        self.sync_status: dict | None = None        # GET /payments/sync-status
+        self.unpaid: dict | None = None             # GET /payments/unpaid
 
     # -- data ---------------------------------------------------------------
     def add_vehicle(self, identifier: str, company: str, identifier_type: str = "plate", **service) -> dict:
@@ -170,6 +173,10 @@ class FakeApi:
                                 request.url.params.get("company_id"), request.url.params.get("with_services") == "true")
         if path == "/vehicles/lookup":
             return self._lookup(request.url.params["q"])
+        if path == "/payments/sync-status" and self.sync_status is not None:
+            return httpx.Response(200, json=self.sync_status)
+        if path == "/payments/unpaid" and self.unpaid is not None:
+            return httpx.Response(200, json=self.unpaid)
         if path == "/plates/recognize" and request.method == "POST":
             self.uploads.append(request.read())
             status, body = self.recognize
@@ -1352,3 +1359,140 @@ def test_dashboard_table_toolbar_hidden(fake_api) -> None:
     seed_two(fake_api)
     assert ('.st-key-dash_table_wrap [data-testid="stElementToolbar"] {display: none !important;}'
             in html_blocks(run_app(DASHBOARD)))
+
+
+# ==========================================================================
+# Task 9.6b-5: Artlab payments (view only). Not connected = the screens look exactly as before.
+# ==========================================================================
+
+def _fresh_sync(minutes_ago: int = 10, ok: bool = True) -> dict:
+    from datetime import datetime, timedelta
+    from src.ui import logic
+    done = (datetime.now(logic.UB) - timedelta(minutes=minutes_ago)).isoformat()
+    return {"connected": True, "runs": [{"kind": "bills", "account_code": None, "started_at": done,
+                                         "finished_at": done, "ok": ok, "bills_seen": 3, "transfers_seen": 0,
+                                         "error_class": None if ok else "ArtlabError",
+                                         "last_ok_at": done if ok else None, "zero_row_streak": None}]}
+
+
+UNPAID = {"connected": True, "total": 2, "total_due": 105000.0, "items": [
+    {"artlab_id": "12", "bill_date": "2026-08-24", "days_waiting": 49, "amount_due": 60000.0,
+     "total_gross": 80000.0, "match_confidence": "phone", "match_note": None, "service_id": 1, "vehicle_id": 1,
+     "identifier": "0002 ТЕС", "company_name": "Говь Тест ХХК", "plates": [], "phones": ["88119900"]},
+    {"artlab_id": "104400000000000001", "bill_date": "2026-10-07", "days_waiting": 5, "amount_due": 45000.0,
+     "total_gross": None, "match_confidence": None, "match_note": "multiple", "service_id": None,
+     "vehicle_id": None, "identifier": None, "company_name": None, "plates": ["7777ТЕС"], "phones": []},
+]}
+
+
+def connect_payments(fake: FakeApi, *, minutes_ago: int = 10, ok: bool = True) -> None:
+    """Payments connected: every service gets an API payment status (first = unpaid 60 000)."""
+    fake.sync_status = _fresh_sync(minutes_ago, ok)
+    fake.unpaid = UNPAID
+    for i, s in enumerate(fake.services):
+        s.update(payment_status="unpaid" if i == 0 else "paid", amount_due=60000.0 if i == 0 else None,
+                 match_confidence="phone" if i == 0 else "both")
+
+
+def open_card(vehicle_id: int = 1) -> AppTest:
+    at = run_app()
+    at.session_state[common.CARD_ID] = vehicle_id
+    return at.switch_page(CARD).run()
+
+
+def test_not_connected_card_and_dashboard_unchanged(fake_api) -> None:
+    """No sync yet (API null / 404): no pill, no «Төлбөр», no payment filter; the search sends no payment_status."""
+    seed_two(fake_api)
+    for s in fake_api.services:
+        s.update(payment_status=None, amount_due=None, match_confidence=None)
+    card = open_card()
+    assert not card.exception and "pill-st pay" not in html_blocks(card)
+    at = run_app(DASHBOARD)
+    page = html_blocks(at)
+    assert not at.exception and "Төлбөр" not in texts(at.subheader) and "Сүүлд шинэчилсэн" not in page
+    assert "dash_f_payment_status" not in [w.key for w in at.selectbox]
+    assert "payment_status" not in fake_api.search_params[-1]
+
+
+def test_card_shows_a_payment_pill_per_service(fake_api) -> None:
+    seed_existing(fake_api)
+    fake_api._add_service(1, {"service_date": "2026-10-01", "odometer_km": 215000, "oil_grade": "10W-40", "liters": 32.0})
+    connect_payments(fake_api)
+    page = html_blocks(open_card())
+    assert "Төлөөгүй · 60 000₮" in page and "Төлсөн</span>" in page
+    assert page.count('class="pill-st pay"') == 2                 # one per service
+
+
+def test_dashboard_unpaid_list_and_fresh_sync(fake_api) -> None:
+    seed_two(fake_api)
+    connect_payments(fake_api)
+    at = run_app(DASHBOARD)
+    page = html_blocks(at)
+    assert not at.exception and "Төлбөр" in texts(at.subheader)
+    assert '<span class="sync">Сүүлд шинэчилсэн' in page          # fresh: not red
+    assert "Төлөөгүй (2) · нийт <b>105 000₮</b>" in page
+    assert page.index('<span class="plate">0002 ТЕС</span>') < page.index('<span class="plate">7777ТЕС</span>')  # oldest first
+    assert "49 хоног хүлээж байна" in page and "60 000₮" in page and "45 000₮" in page
+    assert '<a class="call" href="tel:88119900">Залгах</a>' in page and "8811 9900" in page
+    assert "Хэд хэдэн машин таарсан" in page                       # unlinked receipt says why
+    assert page.count('class="call"') == 1                         # no phone -> no «Залгах»
+
+
+@pytest.mark.parametrize(("minutes_ago", "ok"), [(150, True), (10, False)])
+def test_dashboard_sync_line_red_when_old_or_failed(fake_api, monkeypatch, minutes_ago, ok) -> None:
+    from src.ui import logic
+    monkeypatch.setattr(logic, "QUIET_FROM_HOUR", 24)  # no quiet hours: the result must not depend on
+    monkeypatch.setattr(logic, "QUIET_TO_HOUR", 0)     # the clock when the tests run (quiet hours: test_ui_logic)
+    connect_payments(fake_api, minutes_ago=minutes_ago, ok=ok)
+    page = html_blocks(run_app(DASHBOARD))
+    assert '<span class="sync red">' in page
+
+
+def test_dashboard_payment_filter_sent_and_listed_in_excel_line(fake_api) -> None:
+    seed_two(fake_api)
+    connect_payments(fake_api)
+    at = run_app(DASHBOARD)
+    widget = at.selectbox(key="dash_f_payment_status")
+    assert widget.options == ["Төлсөн", "Төлөөгүй", "Төлсөн (дараа)", "Тодорхойгүй"]
+    at = set_filters(at, payment_status="unpaid")
+    assert not at.exception
+    assert fake_api.search_params[-1]["payment_status"] == "unpaid"
+    assert at.expander[0].label == "Шүүлтүүр (1)"
+    from src.ui import logic
+    assert logic.filters_text("", {"payment_status": "unpaid"}, {}) == "Төлбөр: Төлөөгүй"
+
+
+def test_dashboard_history_shows_payment_pills(fake_api) -> None:
+    seed_two(fake_api)
+    connect_payments(fake_api)
+    at = on(run_app(DASHBOARD), DASHBOARD).button(key="dash_open_1").click().run()
+    assert "Төлөөгүй · 60 000₮" in html_blocks(at)
+
+
+def test_dashboard_payments_view_only_and_phones_not_in_excel(fake_api) -> None:
+    """PM 9.6b-4: unpaid-list phones are on screen only. The Excel file (all cells read back) has none."""
+    import io
+    from datetime import date
+
+    import openpyxl
+
+    from src.ui import export
+    seed_two(fake_api)
+    connect_payments(fake_api)
+    posts_before = len(fake_api.posts)
+    run_app(DASHBOARD)
+    assert len(fake_api.posts) == posts_before and not fake_api.sent
+    vehicles = fake_api._search("", 1000, None, True).json()["vehicles"]
+    sheet = openpyxl.load_workbook(io.BytesIO(export.search_workbook(vehicles, date(2026, 10, 12), "x"))).active
+    cells = " ".join(str(c) for row in sheet.iter_rows(values_only=True) for c in row if c is not None)
+    assert "0002 ТЕС" in cells                                    # the sheet really has the trucks
+    assert "88119900" not in cells and "8811 9900" not in cells   # the unpaid-list phone is not
+
+
+def test_payments_api_error_hides_payments_only(fake_api) -> None:
+    """sync-status works but unpaid fails -> a message in the «Төлбөр» block; the rest still works."""
+    seed_two(fake_api)
+    connect_payments(fake_api)
+    fake_api.unpaid = None                                        # -> 404
+    at = run_app(DASHBOARD)
+    assert not at.exception and len(at.dataframe[0].value) == 2

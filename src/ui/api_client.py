@@ -191,3 +191,13 @@ def stop_phone(phone: str) -> dict:
 def unstop_phone(phone: str) -> None:
     """DELETE /reminders/stops/{phone}: send reminders to this phone again."""
     _request("DELETE", f"/reminders/stops/{phone}")
+
+
+def payments_unpaid(limit: int = 200) -> dict:
+    """GET /payments/unpaid -> {connected, total, total_due, items} (task 9.6b-5, read only)."""
+    return _request("GET", "/payments/unpaid", params={"limit": limit})
+
+
+def payments_sync_status() -> dict:
+    """GET /payments/sync-status -> {connected, runs} (task 9.6b-5, read only)."""
+    return _request("GET", "/payments/sync-status")

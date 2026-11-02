@@ -618,3 +618,111 @@ def test_history_table_rows() -> None:
         ("2026-09-01", "12 980.5 мц", "—", "15W-40", "30 л", "—", "—"),  # mine truck: no target
     ]
     assert len(logic.HISTORY_COLUMNS) == 7
+
+
+# ---------------------------------------------------------------- task 9.6b-5: payments
+
+
+from datetime import datetime as _dt  # noqa: E402
+
+NOW = _dt.fromisoformat("2026-10-12T15:00:00+08:00")
+
+
+def _run(kind: str, started: str, ok: bool | None, last_ok: str | None) -> dict:
+    return {"kind": kind, "account_code": "127" if kind == "acc_txn" else None, "started_at": started,
+            "ok": ok, "last_ok_at": last_ok}
+
+
+@pytest.mark.parametrize(
+    ("service", "expected"),
+    [({"payment_status": "paid"}, ("Төлсөн", "#1E7A4C", "#E8F5EE")),
+     ({"payment_status": "unpaid"}, ("Төлөөгүй", "#B42318", "#FDECEC")),
+     ({"payment_status": "paid_later"}, ("Төлсөн (дараа)", "#1F4E9D", "#E8EEF9")),
+     ({"payment_status": "unknown"}, ("Тодорхойгүй", "#4B5563", "#F3F4F6")),
+     ({"payment_status": None}, None), ({}, None), (None, None), ({"payment_status": "late"}, None)],
+)
+def test_payment_badge(service, expected):
+    assert logic.payment_badge(service) == expected
+
+
+def test_payments_shown_only_when_api_sent_them():
+    assert not logic.payments_shown([{"payment_status": None}, {}])
+    assert logic.payments_shown([{"payment_status": None}, {"payment_status": "unknown"}])
+
+
+def test_money_waiting_and_tel():
+    assert (logic.money_text(60000), logic.money_text(45000.5), logic.money_text(None)) == ("60 000₮", "45 000.5₮", "—")
+    assert logic.waiting_text(49) == "49 хоног хүлээж байна" and logic.waiting_text(None) == "—"
+    assert logic.tel_url("88119900") == "tel:88119900"
+    assert logic.tel_url("8811") is None and logic.tel_url("8811 9900") is None and logic.tel_url(None) is None
+
+
+def test_unpaid_rows_linked_and_unlinked():
+    linked, unlinked, bare = logic.unpaid_rows([
+        {"identifier": "0002 ТЕС", "company_name": "Говь", "vehicle_id": 1, "amount_due": 60000, "days_waiting": 49,
+         "bill_date": "2026-08-24", "plates": ["9999ААА"], "phones": ["88119900", "99110000"], "match_note": None},
+        {"identifier": None, "company_name": None, "vehicle_id": None, "amount_due": 45000, "days_waiting": 5,
+         "bill_date": "2026-10-07", "plates": ["7777ТЕС"], "phones": [], "match_note": "conflict"},
+        {"amount_due": 1, "days_waiting": 0, "plates": [], "phones": [], "match_note": "none"},
+    ])
+    assert linked == {"title": "0002 ТЕС", "who": "Говь", "amount": "60 000₮", "waiting": "49 хоног хүлээж байна",
+                      "date": "2026-08-24", "phone": "8811 9900", "tel": "tel:88119900", "linked": True,
+                      "has_plate": True}
+    assert (unlinked["title"], unlinked["who"], unlinked["tel"], unlinked["linked"]) == \
+        ("7777ТЕС", "Дугаар, утас өөр машин заасан", None, False)
+    assert (bare["title"], bare["who"], bare["date"], bare["has_plate"]) == ("Дугааргүй баримт", "Машин олдсонгүй", "—", False)
+    assert unlinked["has_plate"] is True                          # a plate found in the receipt
+
+
+def test_sync_view_hidden_when_not_connected():
+    assert logic.sync_view(None, NOW) is None
+    assert logic.sync_view({"connected": False, "runs": []}, NOW) is None
+
+
+@pytest.mark.parametrize(
+    ("runs", "text", "red"),
+    [
+        ([_run("bills", "2026-10-12T14:30:00+08:00", True, "2026-10-12T14:31:00+08:00")],
+         "Сүүлд шинэчилсэн 14:31", False),
+        # exactly 2 h -> still fresh; 2 h 1 min -> red
+        ([_run("bills", "2026-10-12T13:00:00+08:00", True, "2026-10-12T13:00:00+08:00")], "Сүүлд шинэчилсэн 13:00", False),
+        ([_run("bills", "2026-10-12T12:59:00+08:00", True, "2026-10-12T12:59:00+08:00")], "Сүүлд шинэчилсэн 12:59", True),
+        # last_ok_at in UTC is shown in UB time; an earlier day adds the date
+        ([_run("nightly", "2026-10-11T18:30:00+00:00", True, "2026-10-11T18:35:00+00:00")],
+         "Сүүлд шинэчилсэн 02:35", True),
+        ([_run("bills", "2026-10-10T21:30:00+08:00", True, "2026-10-10T21:31:00+08:00")],
+         "Сүүлд шинэчилсэн 10-10 21:31", True),
+        # the latest run (any kind) failed -> red even though the bills are fresh
+        ([_run("bills", "2026-10-12T14:30:00+08:00", True, "2026-10-12T14:31:00+08:00"),
+          _run("acc_txn", "2026-10-12T14:45:00+08:00", False, "2026-10-12T12:15:00+08:00")],
+         "Сүүлд шинэчилсэн 14:31 · сүүлийн оролдлого амжилтгүй", True),
+        # still running (ok null) is not a failure
+        ([_run("bills", "2026-10-12T14:30:00+08:00", True, "2026-10-12T14:31:00+08:00"),
+          _run("bills", "2026-10-12T14:59:00+08:00", None, "2026-10-12T14:31:00+08:00")],
+         "Сүүлд шинэчилсэн 14:31", False),
+        # acc-txn successes do not count as "receipts read"; never an ok bills run -> red, no time
+        ([_run("acc_txn", "2026-10-12T14:15:00+08:00", True, "2026-10-12T14:16:00+08:00")],
+         "Сүүлд шинэчилсэн: —", True),
+    ],
+)
+def test_sync_view(runs, text, red):
+    assert logic.sync_view({"connected": True, "runs": runs}, NOW) == {"text": text, "red": red}
+
+
+
+@pytest.mark.parametrize(
+    ("now", "ok", "red"),
+    [
+        ("2026-10-12T21:59:00+08:00", True, True),    # 21:59, update 18:31 (3 h 28 min old) -> red
+        ("2026-10-12T22:00:00+08:00", True, False),   # quiet from 22:00: age is not red
+        ("2026-10-13T03:00:00+08:00", True, False),   # night
+        ("2026-10-13T06:59:00+08:00", True, False),   # still quiet
+        ("2026-10-13T07:00:00+08:00", True, True),    # day again: 22:00-old update is red until a run
+        ("2026-10-13T03:00:00+08:00", False, True),   # night, but the latest run failed -> red
+        ("2026-10-12T19:00:00+00:00", True, False),   # 03:00 UB given in UTC: quiet hours use UB time
+    ],
+)
+def test_sync_view_quiet_hours(now, ok, red):
+    """PM 9.6b-5 review: 22:00-07:00 UB only a failed latest run is red, not the age."""
+    runs = [_run("bills", "2026-10-12T18:30:00+08:00", ok, "2026-10-12T18:31:00+08:00")]
+    assert logic.sync_view({"connected": True, "runs": runs}, _dt.fromisoformat(now))["red"] is red

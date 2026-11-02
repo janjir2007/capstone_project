@@ -7,7 +7,7 @@ message; the API stays the source of truth. Plate and phone normalization are
 NOT repeated here (they live in the backend / src/common/plates.py).
 """
 
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import quote
 
@@ -446,7 +446,8 @@ def search_table_rows(vehicles: list[dict]) -> list[dict[str, Any]]:
     return rows
 
 
-FILTER_KEYS = ("date_from", "date_to", "company_id", "route", "oil_grade")  # GET /vehicles/search params
+FILTER_KEYS = ("date_from", "date_to", "company_id", "route", "oil_grade",
+               "payment_status")  # GET /vehicles/search params; payment_status: 9.6b-5, only when connected
 FILTER_ORDER_ERROR = "«Хэднээс» огноо «хэдийг хүртэл»-ээс хойш байна."
 
 
@@ -473,6 +474,8 @@ def filters_text(query: str, filters: dict[str, Any], company_names: dict[int, s
         parts.append(f"Маршрут: {route_label(filters['route'])}")
     if filters.get("oil_grade"):
         parts.append(f"Тос: {filters['oil_grade']}")
+    if filters.get("payment_status"):
+        parts.append(f"Төлбөр: {PAYMENT_LABELS.get(filters['payment_status'], filters['payment_status'])}")
     return " · ".join(parts) or "Шүүлтүүргүй — бүх машин"
 
 
@@ -740,3 +743,118 @@ def error_messages(status: int, detail: Any) -> list[str]:
             return list(dict.fromkeys(msgs)) or ["Буруу мэдээлэл."]
         return [_translate(str(detail))]
     return [f"Серверийн алдаа ({status}). Дахин оролдоно уу."]
+
+
+# ---------------------------------------------------------------- task 9.6b-5: Artlab payments (view only)
+# The API sends payment fields only once payments are connected (first successful Artlab sync);
+# before that every one is null and the screens show NO payment element at all.
+
+PAYMENT_LABELS: dict[str, str] = {
+    "paid": "Төлсөн",
+    "unpaid": "Төлөөгүй",
+    "paid_later": "Төлсөн (дараа)",
+    "unknown": "Тодорхойгүй",
+}
+# (text color, tint): the same AA pairs as the status pills; paid later = the blue segment color.
+PAYMENT_COLORS: dict[str, tuple[str, str]] = {
+    "paid": STATUS_COLORS["ok"],
+    "unpaid": STATUS_COLORS["overdue"],
+    "paid_later": ("#1F4E9D", "#E8EEF9"),
+    "unknown": PENDING_COLORS,
+}
+UNLINKED_NOTES: dict[str, str] = {  # why an unpaid receipt has no truck (API match_note)
+    "none": "Машин олдсонгүй",
+    "multiple": "Хэд хэдэн машин таарсан",
+    "conflict": "Дугаар, утас өөр машин заасан",
+}
+SYNC_STALE_AFTER = timedelta(hours=2)  # PM 9.6b-5: «Сүүлд шинэчилсэн» turns red after 2 h
+# PM 9.6b-5 review: the bills sync runs 07:00-22:00 UB only, so from 22:00 to 07:00 age alone is
+# never red (only a failed latest run is).
+QUIET_FROM_HOUR, QUIET_TO_HOUR = 22, 7
+UB = timezone(timedelta(hours=8), name="Asia/Ulaanbaatar")
+
+
+def payment_badge(service: dict | None) -> tuple[str, str, str] | None:
+    """(label, color, tint) for a service's payment, or None when payments are not connected."""
+    status = (service or {}).get("payment_status")
+    if status not in PAYMENT_LABELS:
+        return None
+    return (PAYMENT_LABELS[status], *PAYMENT_COLORS[status])
+
+
+def payments_shown(history: list[dict]) -> bool:
+    """True when the API sent payment fields (connected); False -> the card looks exactly as before."""
+    return any(s.get("payment_status") for s in history)
+
+
+def money_text(amount: float | int | None) -> str:
+    """60000 -> '60 000₮'; None -> '—'."""
+    return NOT_GIVEN if amount is None else f"{format_number(amount)}₮"
+
+
+def waiting_text(days: int | None) -> str:
+    """'50 хоног хүлээж байна'."""
+    return NOT_GIVEN if days is None else f"{days} хоног хүлээж байна"
+
+
+def tel_url(phone: str | None) -> str | None:
+    """«Залгах» link for an 8-digit phone, else None."""
+    return f"tel:{phone}" if phone and len(phone) == 8 and phone.isdigit() else None
+
+
+def unpaid_rows(items: list[dict]) -> list[dict[str, Any]]:
+    """GET /payments/unpaid items -> what one row of «Төлөөгүй» shows (oldest first, as sent).
+
+    Title = the linked truck, else the first plate found in the receipt. Second line = company,
+    else why the receipt has no truck. Phone = the first phone found in the receipt.
+    """
+    rows = []
+    for item in items:
+        plates = item.get("plates") or []
+        phones = item.get("phones") or []
+        title = item.get("identifier") or (plates[0] if plates else "Дугааргүй баримт")
+        who = item.get("company_name") or UNLINKED_NOTES.get(item.get("match_note") or "", "Машин олдсонгүй")
+        phone = phones[0] if phones else None
+        rows.append({
+            "title": title, "who": who, "amount": money_text(item.get("amount_due")),
+            "waiting": waiting_text(item.get("days_waiting")), "date": item.get("bill_date") or NOT_GIVEN,
+            "phone": phone_text(phone) or None, "tel": tel_url(phone), "linked": item.get("vehicle_id") is not None,
+            "has_plate": bool(item.get("identifier") or plates),
+        })
+    return rows
+
+
+def _when(value: str | None) -> datetime | None:
+    try:
+        return datetime.fromisoformat(value) if value else None
+    except ValueError:
+        return None
+
+
+def sync_view(status: dict | None, now: datetime) -> dict[str, Any] | None:
+    """«Сүүлд шинэчилсэн HH:MM» from GET /payments/sync-status; None when not connected (hide it).
+
+    Time = end of the latest SUCCESSFUL bills / nightly run (receipts last read), in UB time; the
+    date is added when it was not today. Red when the latest run of any kind failed, or (only
+    between 07:00 and 22:00 UB, outside the quiet hours) when that time is more than 2 h ago
+    (or there is none).
+    """
+    if not status or not status.get("connected"):
+        return None
+    runs = status.get("runs") or []
+    latest = max(runs, key=lambda r: _when(r.get("started_at")) or datetime.min.replace(tzinfo=UB), default=None)
+    failed = bool(latest) and latest.get("ok") is False
+    oks = [t for r in runs if r.get("kind") in ("bills", "nightly") and (t := _when(r.get("last_ok_at")))]
+    updated = max(oks) if oks else None
+    hour = now.astimezone(UB).hour
+    quiet = hour >= QUIET_FROM_HOUR or hour < QUIET_TO_HOUR
+    stale = not quiet and (updated is None or now - updated > SYNC_STALE_AFTER)
+    if updated is None:
+        text = "Сүүлд шинэчилсэн: —"
+    else:
+        local = updated.astimezone(UB)
+        day = "" if local.date() == now.astimezone(UB).date() else f"{local:%m-%d} "
+        text = f"Сүүлд шинэчилсэн {day}{local:%H:%M}"
+    if failed:
+        text += " · сүүлийн оролдлого амжилтгүй"
+    return {"text": text, "red": failed or stale}

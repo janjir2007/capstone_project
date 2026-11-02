@@ -14,11 +14,15 @@
 - Filters (step 2): date range, company, route, oil grade, sent with the search. «Excel татах»
   downloads one row per matching service (src/ui/export.py, built in memory, nothing stored).
 - Due list from GET /reminders/due, read only (sending stays on «Сануулга»).
+- 9.6b-5 (Artlab payments, only once payments are connected — before that the screen is exactly as
+  in 9.5c): «Сүүлд шинэчилсэн HH:MM» (red if the last run failed or is older than 2 h), the
+  «Төлөөгүй» list (total, days waiting, receipt phone + «Залгах»), a «Төлбөр» filter, and a payment
+  pill on each service in the history. Phones of the unpaid list are on screen only, never in Excel.
 Nothing here writes to the API.
 """
 
 import html
-from datetime import date
+from datetime import date, datetime
 from functools import partial
 
 import streamlit as st
@@ -91,6 +95,18 @@ WIDE_CSS = f"""
   .dash-due .pill-st {{grid-column: 2; justify-self: start;}}
 }}
 .st-key-dash_hist_top {{flex-wrap: nowrap !important; justify-content: space-between;}}
+/* 9.6b-5: payments */
+.sync {{font-size: 13px; color: var(--muted);}} .sync.red {{color: #B42318; font-weight: 500;}}
+.unpaid-sum {{font-size: 15px;}} .unpaid-sum b {{font-weight: 600;}}
+/* one stacked block per receipt (phone first): plate + amount, who + how long, «Залгах» */
+.unpaid .pay {{padding: 0;}} .unpaid .pay.sep {{border-top: 1px solid var(--line); padding-top: 16px; margin-top: 16px;}}
+.unpaid .top {{display: flex; align-items: center; justify-content: space-between; gap: 12px;}}
+.unpaid .noplate {{font-size: 15px; font-weight: 500; color: var(--muted);}}
+.unpaid .amt {{font-size: 16px; font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums;}}
+.unpaid .n {{font-size: 15px; margin-top: 8px;}} .unpaid .m {{font-size: 13px; color: var(--muted); margin-top: 2px;}}
+.unpaid .call {{display: inline-flex; align-items: center; justify-content: center; min-height: 44px; margin-top: 10px;
+  padding: 0 20px; border-radius: 12px; background: var(--fill); color: var(--ink) !important; text-decoration: none;
+  font-size: 15px; font-weight: 500; white-space: nowrap; touch-action: manipulation;}}
 .st-key-dash_hist_top > [data-testid="stElementContainer"]:first-child {{flex: 1 1 auto; min-width: 0; width: auto !important;}}
 </style>
 """
@@ -123,9 +139,54 @@ def segment_tiles() -> None:
     common.html_block(f'<span class="muted">Нийт {stats.get("total", 0)} машин · {stats.get("as_of", "")}</span>')
 
 
-def current_filters() -> dict:
-    """Filter values as the API wants them (None = not used), from the form's widgets."""
-    return {name: st.session_state.get(key) for name, key in FILTER_WIDGETS.items()}
+def load_sync_view() -> dict | None:
+    """«Сүүлд шинэчилсэн» view, or None = payments not connected (or the call failed): then every
+    payment element stays hidden and the dashboard looks exactly as before 9.6b-5."""
+    try:
+        return logic.sync_view(api_client.payments_sync_status(), datetime.now(logic.UB))
+    except api_client.ApiError:
+        return None
+
+
+def payments_section(sync: dict) -> None:
+    """«Төлбөр»: freshness line + «Төлөөгүй» list, oldest receipt first (view only)."""
+    st.subheader("Төлбөр")
+    common.html_block(f'<span class="sync{" red" if sync["red"] else ""}">{html.escape(sync["text"])}</span>')
+    try:
+        unpaid = api_client.payments_unpaid()
+    except api_client.ApiError as exc:
+        common.show_api_error(exc)
+        return
+    rows = logic.unpaid_rows(unpaid.get("items") or [])
+    with st.container(key="card_dash_unpaid"):
+        common.html_block(f'<div class="unpaid-sum">Төлөөгүй ({unpaid.get("total", 0)}) · '
+                          f'нийт <b>{html.escape(logic.money_text(unpaid.get("total_due", 0)))}</b></div>')
+        if not rows:
+            common.html_block('<span class="muted">Төлөөгүй баримт алга.</span>')
+            return
+        items = []
+        for i, r in enumerate(rows):
+            call = f'<a class="call" href="{html.escape(r["tel"])}">Залгах</a>' if r["tel"] else ""
+            meta = " · ".join(p for p in (r["waiting"], r["date"], r["phone"]) if p)
+            title_cls = "plate" if r["has_plate"] else "noplate"  # «Дугааргүй баримт» is text, not a plate
+            items.append(
+                f'<div class="pay{"" if i == 0 else " sep"}"><div class="top">'
+                f'<span class="{title_cls}">{html.escape(r["title"])}</span>'
+                f'<span class="amt">{html.escape(r["amount"])}</span></div>'
+                f'<div class="n">{html.escape(r["who"])}</div><div class="m">{html.escape(meta)}</div>{call}</div>'
+            )
+        common.html_block(f'<div class="unpaid">{"".join(items)}</div>')
+        if unpaid.get("total", 0) > len(rows):
+            common.html_block(f'<span class="muted">Эхний {len(rows)} баримт.</span>')
+
+
+def current_filters(payments_on: bool = False) -> dict:
+    """Filter values as the API wants them (None = not used), from the form's widgets.
+    The payment filter only counts while payments are connected (its widget is shown)."""
+    values = {name: st.session_state.get(key) for name, key in FILTER_WIDGETS.items()}
+    if not payments_on:
+        values["payment_status"] = None
+    return values
 
 
 def clear_filters() -> None:
@@ -133,8 +194,9 @@ def clear_filters() -> None:
         st.session_state[key] = None
 
 
-def search_form(options: dict, active: int) -> None:
-    """Search field + «Хайх»; filters in «Шүүлтүүр» (open while any is used). One submit applies all."""
+def search_form(options: dict, active: int, payments_on: bool = False) -> None:
+    """Search field + «Хайх»; filters in «Шүүлтүүр» (open while any is used). One submit applies all.
+    «Төлбөр» (9.6b-5) only while payments are connected."""
     companies = {c["id"]: c["name"] for c in options.get("companies") or []}
     with st.container(key="card_dash_search"):
         with st.form("dash_search_form", border=False):  # Enter in the field searches too
@@ -143,7 +205,7 @@ def search_form(options: dict, active: int) -> None:
                                placeholder="1234 УБА · 9911 · Говь Тээвэр")
             cols[1].form_submit_button("Хайх", type="primary", width="stretch")
             with st.expander(f"Шүүлтүүр ({active})" if active else "Шүүлтүүр", expanded=bool(active)):
-                f = st.columns(5)
+                f = st.columns(6 if payments_on else 5)
                 f[0].date_input("Хэднээс", key=FILTER_WIDGETS["date_from"], value=None, format="YYYY-MM-DD")
                 f[1].date_input("Хэдийг хүртэл", key=FILTER_WIDGETS["date_to"], value=None, format="YYYY-MM-DD")
                 f[2].selectbox("Компани", list(companies), key=FILTER_WIDGETS["company_id"], index=None,
@@ -152,6 +214,9 @@ def search_form(options: dict, active: int) -> None:
                                format_func=logic.route_label, placeholder="Бүгд")
                 f[4].selectbox("Тос", options.get("oil_grades") or [], key=FILTER_WIDGETS["oil_grade"], index=None,
                                placeholder="Бүгд")
+                if payments_on:
+                    f[5].selectbox("Төлбөр", list(logic.PAYMENT_LABELS), key=FILTER_WIDGETS["payment_status"],
+                                   index=None, format_func=logic.PAYMENT_LABELS.get, placeholder="Бүгд")
                 common.html_block('<span class="muted">Огноо, маршрут, тос нэг үйлчилгээнд хамт таарах ёстой. '
                                   'Мөрөнд машины хамгийн сүүлийн үйлчилгээ харагдана.</span>')
     if active:
@@ -221,12 +286,13 @@ def history_panel(vehicle_id: int) -> None:
         # under it (9.5a), «Тос» = grade · liters, «Жолооч» = name with the phone under it.
         head = "".join(f"<th>{c}</th>" for c in ("Огноо", "Гүйлт → дараагийн", "Тос", "Жолооч"))
         body = "".join(
-            f'<tr><td data-l="Огноо" class="n">{html.escape(day)}</td>'
+            f'<tr><td data-l="Огноо" class="n">{html.escape(day)}{common.payment_pill_html(service)}</td>'
             f'<td data-l="Гүйлт → дараагийн" class="n">{html.escape(meter)}'
             f'{"" if target == logic.NOT_GIVEN else f"<div class=ph>→ {html.escape(target)}</div>"}</td>'
             f'<td data-l="Тос">{html.escape(oil)} · {html.escape(liters)}</td>'
             f'<td data-l="Жолооч">{html.escape(driver)}<div class="ph">{html.escape(phone)}</div></td></tr>'
-            for day, meter, target, oil, liters, driver, phone in logic.history_table_rows(history)
+            for service, (day, meter, target, oil, liters, driver, phone)
+            in zip(history, logic.history_table_rows(history))
         )
         common.html_block(f'<div class="hist-wrap"><table class="hist"><thead><tr>{head}</tr></thead>'
                           f'<tbody>{body}</tbody></table></div>')
@@ -265,11 +331,15 @@ common.html_block(WIDE_CSS)
 st.subheader("Сегмент")
 segment_tiles()
 
+sync = load_sync_view()  # 9.6b-5: None -> no payment element anywhere on this screen
+if sync is not None:
+    payments_section(sync)
+
 st.subheader("Машин хайх")
 # Search BEFORE drawing the form: the form's values are already in session_state (last submit),
 # and the answer brings the filter choices (companies, oil grades) the form needs.
 query = (st.session_state.get(DASH_QUERY) or "").strip()
-filters = current_filters()
+filters = current_filters(payments_on=sync is not None)
 problems = logic.filter_errors(filters)
 found, error = None, None
 if not problems:
@@ -279,7 +349,7 @@ if not problems:
     except api_client.ApiError as exc:
         error = exc
 search_form((found or {}).get("options") or st.session_state.get(DASH_OPTIONS) or {},
-            logic.active_filter_count(filters))
+            logic.active_filter_count(filters), payments_on=sync is not None)
 if found is not None:
     st.session_state[DASH_OPTIONS] = found.get("options")  # keeps the lists while a filter is invalid
 for message in problems:

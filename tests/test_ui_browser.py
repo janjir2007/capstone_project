@@ -301,3 +301,40 @@ def test_gallery_photo_reaches_result(ui_url, pw, shot_dir, engine, kind) -> Non
         browser.close()
     assert "Зураг уншигдсангүй" not in body and errors == []
     assert "Дугаарыг таньлаа" in body or "Дугаарыг уншиж чадсангүй" in body
+
+
+def test_payments_fit_phone(ui_url, phone_page, shot_dir) -> None:
+    """9.6b-5: with payments connected, the «Төлбөр» block (sync line, «Төлөөгүй» list, «Залгах»)
+    fits 390 px, and every «Залгах» is a 44 px tap target. Skipped when the API's database has no
+    successful Artlab sync yet (the block is hidden then, which test_screen_fits_phone covers)."""
+    phone_page.goto(ui_url + "/dashboard")
+    phone_page.wait_for_selector("text=Сегмент", timeout=20000)
+    phone_page.wait_for_timeout(1500)
+    if phone_page.locator("text=Сүүлд шинэчилсэн").count() == 0:
+        pytest.skip("payments not connected in this API's database")
+    assert phone_page.locator(".st-key-card_dash_unpaid").is_visible()
+    calls = phone_page.locator(".unpaid .call")
+    for i in range(calls.count()):
+        box = calls.nth(i).bounding_box()
+        assert box["height"] >= 44 and box["x"] + box["width"] <= PHONE["width"], box
+    _check_phone_width(phone_page, shot_dir, "screen_dashboard_payments")
+
+
+def test_card_payment_pills_fit_phone(ui_url, phone_page, shot_dir) -> None:
+    """9.6b-5: the card's payment pill under each service stays inside 390 px."""
+    plate = os.environ.get("UI_BROWSER_PLATE")
+    if not plate:
+        pytest.skip("set UI_BROWSER_PLATE to a plate in the DB to check the card")
+    phone_page.goto(ui_url + "/search")
+    phone_page.wait_for_selector("text=Камераар хайх", timeout=20000)
+    phone_page.get_by_label("Улсын дугаар эсвэл утас").fill(plate)
+    phone_page.get_by_role("button", name="Хайх", exact=True).click()
+    phone_page.wait_for_selector(".plate", timeout=15000)
+    phone_page.wait_for_timeout(800)
+    pills = phone_page.locator(".tl .pill-st.pay")
+    if pills.count() == 0:
+        pytest.skip("payments not connected in this API's database")
+    for i in range(pills.count()):
+        box = pills.nth(i).bounding_box()
+        assert box["x"] >= 0 and box["x"] + box["width"] <= PHONE["width"], box
+    _check_phone_width(phone_page, shot_dir, "screen_card_payments")
