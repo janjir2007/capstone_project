@@ -5,6 +5,8 @@
   once; a new service starts a new cycle.
 - «Viber-ээр илгээх» (task 5.5, D-091): viber://forward link with the text pre-filled; the tap also
   reruns the app, so that row then asks «Илгээсэн үү?» -> «Тийм» marks it sent. No Viber API / auto send.
+- «SMS илгээх» (task 9.5d, main button above Viber): sms: link with the driver's number and the text;
+  opens the phone's SMS app, nothing is sent by the app; the manager then taps «Илгээсэн».
 - 2 numbers: «Илгээх» (queue) and «Эрсдэлтэй» (red when > 0).
 - «Өнөөдрийн дараалал» and «Эрсдэлтэй» (API `segment` = at_risk = AT_RISK_DAYS (150)+ days, stays
   until sent or a new service): a row per truck = plate, driver, days since the change · phone,
@@ -103,10 +105,13 @@ def reminder_row(r: dict, first: bool) -> None:
     )
     sid = r["service_id"]
     st.code(r.get("message_mn", ""), language=None, wrap_lines=True)  # copy button = desktop fallback
+    sms = logic.sms_url(r.get("phone"), r.get("message_mn"))
+    if sms:  # 9.5d: main button; no rerun on tap, the manager then taps «Илгээсэн»
+        st.link_button("SMS илгээх", sms, type="primary", width="stretch", icon=":material/sms:")
     viber_url = logic.viber_forward_url(r.get("message_mn"))
     if viber_url:
         st.link_button("Viber-ээр илгээх", viber_url, key=f"viber_{sid}", on_click=on_viber, args=(sid,),
-                       type="primary", width="stretch", icon=":material/send:")
+                       type="secondary" if sms else "primary", width="stretch", icon=":material/send:")
     asking = sid in viber_tapped()
     with st.container(horizontal=True, key=f"rem_act_{sid}"):
         if r.get("phone"):
@@ -152,7 +157,8 @@ with st.container(key="card_how"):
     common.html_block(
         f'<div class="act"><span class="act-ic green">{common.icon("send")}</span><div>'
         '<div class="act-t">Гараар илгээнэ</div>'
-        '<div class="act-s">«Viber-ээр илгээх» дарж чатаа сонгоод илгээнэ, дараа нь «Тийм» дарна. '
+        '<div class="act-s">«SMS илгээх» дарж мессежээ илгээгээд «Илгээсэн» дарна. '
+        '«Viber-ээр илгээх» дарвал чатаа сонгоод илгээнэ, дараа нь «Тийм» дарна. '
         'Компьютер дээр мессежийг хуулж илгээгээд «Илгээсэн» дарна.</div></div></div>'
     )
 

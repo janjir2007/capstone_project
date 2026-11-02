@@ -536,6 +536,17 @@ def viber_forward_url(message: str | None) -> str | None:
         return None
     return VIBER_FORWARD + quote(message, safe="")
 
+
+def sms_url(phone: str | None, message: str | None) -> str | None:
+    """«SMS илгээх» link: the phone's SMS app opens with this number and text, or None without both.
+
+    "?&body=" is the form shared by iPhone (reads "&body=") and Android (reads "?body=");
+    the body is encoded like the Viber text (UTF-8, %20 for spaces).
+    """
+    if not phone or not phone.strip() or not message or not message.strip():
+        return None
+    return f"sms:{quote(phone.strip(), safe='+')}?&body={quote(message, safe='')}"
+
 # --- Choice lists (T6): tap/select instead of typing ---------------------------------
 
 OTHER_CHOICE = "Бусад"  # last option of a choice list -> free-text field

@@ -546,6 +546,28 @@ def test_viber_forward_url_none_without_text(message) -> None:
     assert logic.viber_forward_url(message) is None
 
 
+# --- SMS link (9.5d) --------------------------------------------------------------------
+
+def test_sms_url_number_and_encoded_body() -> None:
+    """iPhone + Android form: sms:<number>?&body=<UTF-8 percent-encoded text>, text comes back exact."""
+    message = "Сайн байна уу! 1234 УБА.\nХолбогдох: +976 9911-0002 & #Гео?=1"
+    url = logic.sms_url("99110002", message)
+    assert url.startswith("sms:99110002?&body=")
+    body = url.removeprefix("sms:99110002?&body=")
+    assert all(ch not in body for ch in " \n+&#?=/") and body.isascii() and "%20" in body
+    assert unquote(body) == message
+
+
+def test_sms_url_keeps_plus_of_international_number() -> None:
+    assert logic.sms_url(" +97699110002 ", "Тос") == "sms:+97699110002?&body=%D0%A2%D0%BE%D1%81"
+
+
+@pytest.mark.parametrize(("phone", "message"), [(None, "Тос"), ("", "Тос"), ("  ", "Тос"),
+                                                ("99110002", None), ("99110002", " ")])
+def test_sms_url_none_without_phone_or_text(phone, message) -> None:
+    assert logic.sms_url(phone, message) is None
+
+
 # --- «Хяналтын самбар» search (9.1) ------------------------------------------------------
 
 ROW = {"id": 1, "identifier_type": "plate", "identifier": "0001 ТЕС", "vehicle_model": None,

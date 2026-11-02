@@ -1080,6 +1080,27 @@ def test_no_viber_button_without_message(fake_api) -> None:
     assert "Viber-ээр илгээх" not in links(at) and "Илгээсэн" in [b.label for b in at.button]
 
 
+def test_sms_button_first_then_viber(fake_api) -> None:
+    """9.5d: «SMS илгээх» = main button above Viber, sms: link with the driver's number and the exact
+    text; no rerun on tap (no id), so the row keeps the plain «Илгээсэн» button."""
+    fake_api.reminders = [reminder(1, "0001 ТЕС")]
+    at = run_app(REMINDERS)
+    buttons = [b.proto for b in at.get("link_button")]
+    assert [b.label for b in buttons][:2] == ["SMS илгээх", "Viber-ээр илгээх"]
+    sms, viber = buttons[0], buttons[1]
+    assert sms.type == "primary" and viber.type == "secondary"
+    assert sms.url.startswith("sms:99110002?&body=") and " " not in sms.url
+    assert unquote(sms.url.removeprefix("sms:99110002?&body=")) == reminder(1, "0001 ТЕС")["message_mn"]
+    assert not sms.id and "Илгээсэн" in [b.label for b in at.button]
+    assert "Илгээсэн үү?" not in html_blocks(at)
+
+
+def test_no_sms_button_without_phone(fake_api) -> None:
+    fake_api.reminders = [{**reminder(1, "0001 ТЕС"), "phone": None}]
+    at = run_app(REMINDERS)
+    assert "SMS илгээх" not in links(at) and links(at)["Viber-ээр илгээх"].type == "primary"
+
+
 def test_mark_sent_removes_row(fake_api) -> None:
     fake_api.reminders = [reminder(1, "0001 ТЕС")]
     at = click(run_app(REMINDERS), "Илгээсэн")
