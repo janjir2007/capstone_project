@@ -20,7 +20,7 @@
   km/day, 34+ days after their service — asks the driver for his km (not a reminder). A row like a
   reminder: plate, driver, days since · phone, «SMS илгээх» (sms: link with the km-check text) ->
   «Илгээсэн» (POST /km-checks/{id}/sent), «Залгах», «Дахиж илгээхгүй» (the same stop list), and
-  «Хариу бүртгэх» = the truck's card with «Км бүртгэх» open (the reply moves the reminder).
+  «Хариу бүртгэх» = the truck's card with the km form open (the reply moves the reminder).
 """
 
 import html
@@ -184,7 +184,7 @@ def km_check_row(c: dict, first: bool) -> None:
         st.button("Илгээсэн", key=f"km_sent_{sid}", on_click=on_km_sent, args=(sid,),
                   width="stretch", icon=":material/check:")
     if st.button("Хариу бүртгэх", key=f"km_reply_{sid}", type="tertiary", icon=":material/speed:"):
-        st.session_state[common.KM_FORM] = c["vehicle_id"]  # the card opens with «Км бүртгэх» open
+        st.session_state[common.KM_FORM] = c["vehicle_id"]  # the card opens with the km form open
         st.session_state.pop(common.KM_PREVIEW, None)
         common.go_card(c["vehicle_id"])
     stop_controls(sid, c.get("phone"), prefix="km_")

@@ -2,10 +2,12 @@
 
 Needs an API with contract v0.19 + the demo seed (synthetic data only, RISK-06), e.g. on :8011:
     API_URL=http://localhost:8011 .venv/bin/python docs/design/9.14a/shoot.py
-Saves card_*.png (truck card: «Км/өдөр», «Км бүртгэл»), card_km_confirm_390.png (the confirm step),
-reminders_*.png and km_checks_*.png («Сануулга | Км шалгах»). Each must not scroll sideways.
+Saves card_*.png (truck card: target km big + due day small, «Км бүртгэл · … км/өдөр»; 9.14a-3b),
+card_km_confirm_390.png (the confirm step, reached like the oil changer does: «Сануулга» -> «Км шалгах» ->
+«Хариу бүртгэх»), reminders_*.png and km_checks_*.png («Сануулга | Км шалгах»). None may scroll sideways.
 """
 
+import json
 import os
 import socket
 import subprocess
@@ -50,6 +52,13 @@ def open_card(page, ui: str) -> None:
     page.wait_for_selector(".st-key-card_km", timeout=15000)
 
 
+def km_check_reply() -> tuple[int, float]:
+    """The first km check due (service id) + a plausible reply: its odometer + 300 km/day since then."""
+    with urllib.request.urlopen(f"{API_URL}/km-checks/due", timeout=5) as r:
+        first = json.load(r)["checks"][0]
+    return first["service_id"], first["odometer_km"] + 300 * first["days_since"]
+
+
 def main() -> None:
     wait_ok(f"{API_URL}/health", 5)
     with socket.socket() as s:
@@ -70,18 +79,20 @@ def main() -> None:
                                         is_mobile=width < 768, has_touch=width < 768)
                 open_card(page, ui)
                 shoot(page, f"card_{width}.png", width)
-                if width == 390:  # the confirm step: «Км бүртгэх» -> km -> «Үргэлжлүүлэх» (nothing stored)
-                    page.get_by_role("button", name="Км бүртгэх").click()
-                    page.get_by_label("Одоогийн км").fill("572000")
-                    page.get_by_role("button", name="Үргэлжлүүлэх").click()
-                    page.wait_for_selector(".st-key-card_km_confirm", timeout=10000)
-                    shoot(page, "card_km_confirm_390.png", width)
                 page.goto(ui + "/reminders")
                 page.wait_for_selector(".st-key-rem_tab", timeout=20000)
                 shoot(page, f"reminders_{width}.png", width)
                 page.locator(".st-key-rem_tab button", has_text="Км шалгах").click()
                 page.wait_for_selector("text=Км асуух (", timeout=10000)
                 shoot(page, f"km_checks_{width}.png", width)
+                if width == 390:  # «Хариу бүртгэх» -> km -> «Үргэлжлүүлэх» = the confirm step (nothing stored)
+                    service_id, km = km_check_reply()
+                    page.locator(f".st-key-km_reply_{service_id} button").click()
+                    page.wait_for_selector(".st-key-card_km_form", timeout=15000)
+                    page.get_by_label("Одоогийн км").fill(str(round(km)))
+                    page.get_by_role("button", name="Үргэлжлүүлэх").click()
+                    page.wait_for_selector(".st-key-card_km_confirm", timeout=10000)
+                    shoot(page, "card_km_confirm_390.png", width)
                 page.close()
             browser.close()
     finally:

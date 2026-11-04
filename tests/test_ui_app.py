@@ -20,7 +20,7 @@ import pytest
 st = pytest.importorskip("streamlit")
 from streamlit.testing.v1 import AppTest  # noqa: E402
 
-from src.ui import api_client, common  # noqa: E402
+from src.ui import api_client, common, logic  # noqa: E402
 
 APP = str(Path(__file__).resolve().parent.parent / "src" / "ui" / "app.py")
 TODAY = "2026-10-12"
@@ -944,7 +944,7 @@ def test_single_match_opens_card(fake_api) -> None:
     assert "Говь Тест ХХК" in page                             # one line company · model
     assert "Сүүлд солисон" in page and "10W-40 · ердийн\u00a032\u00a0л" in page  # usual liters back (T8)
     assert "Жолооч Д. · 9911 0002" in page and "Залгах" not in page  # driver row, no call button (T6)
-    assert texts(at.subheader) == ["Км бүртгэл", "Түүх"] and '<div class="tl">' in page  # history timeline (T9)
+    assert texts(at.subheader) == ["Км бүртгэл · Мэдээлэл алга", "Түүх"] and '<div class="tl">' in page  # history timeline (T9)
 
 
 def test_card_shows_target_not_predicted_date(fake_api) -> None:
@@ -1703,26 +1703,43 @@ def card_screen(vehicle_id: int) -> AppTest:
     return at.switch_page(CARD).run()
 
 
+def km_form_screen(vehicle_id: int) -> AppTest:
+    """The card with the km form open, as «Км шалгах» -> «Хариу бүртгэх» leaves it (9.14a-3b: the card
+    itself has no «Км бүртгэх» button)."""
+    at = AppTest.from_file(APP, default_timeout=10).run()
+    at.session_state[common.CARD_ID] = vehicle_id
+    at.session_state[common.KM_FORM] = vehicle_id
+    return at.switch_page(CARD).run()
+
+
 PACE_SERVICES = {"unit": "km", "rate_per_day": 286.6, "source": "services", "reading_value": None,
                  "reading_date": None, "interval_km": 15000, "next_due_date": "2026-10-01",
                  "reminder_on": "2026-09-26", "basis": "pace", "km_check_on": None}
 
 
-def test_card_pace_line_and_due_day(fake_api) -> None:
-    """«Км/өдөр: 287 · өмнөх 2 үйлчилгээ» and «~2026-10-01 · 215 000 км» (the API's due day + stored target)."""
+def test_card_pace_in_title_and_km_big(fake_api) -> None:
+    """9.14a-3b: «Км бүртгэл · 287 км/өдөр»; the target km big, «~2026-10-01» small; no «Км/өдөр» row."""
     vid = seed_existing(fake_api)["id"]
     fake_api.paces[vid] = PACE_SERVICES
-    page = html_blocks(card_screen(vid))
-    assert "<span class=\"k\">Км/өдөр</span><span class=\"v\">287 · өмнөх 2 үйлчилгээ</span>" in page
-    assert '<div class="pc-big">~2026-10-01 · 215\u00a0000\u00a0км</div>' in page
+    at = card_screen(vid)
+    page = html_blocks(at)
+    assert texts(at.subheader)[0] == "Км бүртгэл · 287 км/өдөр"
+    assert '<div class="pc-big">215\u00a0000\u00a0км <span>~2026-10-01</span></div>' in page
+    assert "<span class=\"k\">Км/өдөр</span>" not in page
 
 
-def test_card_without_pace_or_from_a_reply(fake_api) -> None:
-    vid = seed_existing(fake_api)["id"]
-    page = html_blocks(card_screen(vid))
-    assert "<span class=\"v\">Мэдээлэл алга</span>" in page and '<div class="pc-big">215\u00a0000\u00a0км</div>' in page
-    fake_api.paces[vid] = PACE_SERVICES | {"source": "reading", "rate_per_day": 400.0, "reading_date": "2026-10-11"}
-    assert "400 · жолоочийн хариу (2026-10-11)" in html_blocks(card_screen(vid))
+def test_card_without_pace_no_km_button_no_route(fake_api) -> None:
+    """9.14a-3b: no pace -> «· Мэдээлэл алга» and no date; no «Км бүртгэх» button; no «Чиглэл» (D-111),
+    not in the fact rows nor in the history lines, even for an old record that has one."""
+    vid = seed_existing(fake_api)["id"]                                 # an old record with a list destination
+    where = logic.service_destination_text(fake_api.services[0])
+    assert where != logic.NOT_GIVEN
+    at = card_screen(vid)
+    page = html_blocks(at)
+    assert texts(at.subheader)[0] == "Км бүртгэл · Мэдээлэл алга"
+    assert '<div class="pc-big">215\u00a0000\u00a0км</div>' in page
+    assert "Км бүртгэх" not in [b.label for b in at.button] and not at.number_input
+    assert "Чиглэл" not in page and where not in page
 
 
 def test_mine_truck_hours_per_day_no_target(fake_api) -> None:
@@ -1730,9 +1747,9 @@ def test_mine_truck_hours_per_day_no_target(fake_api) -> None:
                                oil_grade="15W-40", liters=90.0, service_date="2026-08-25")["id"]
     fake_api.paces[vid] = {**PACE_SERVICES, "unit": "hours", "rate_per_day": 8.72, "next_due_date": None,
                            "reminder_on": None, "basis": None, "interval_km": None}
-    page = html_blocks(card_screen(vid))
-    assert "<span class=\"k\">Цаг/өдөр</span><span class=\"v\">8.7 · өмнөх 2 үйлчилгээ</span>" in page
-    assert "Дараагийн тос солилт" not in page
+    at = card_screen(vid)
+    assert texts(at.subheader)[0] == "Км бүртгэл · 8.7 цаг/өдөр"
+    assert "Дараагийн тос солилт" not in html_blocks(at)
 
 
 def test_readings_list_flag_reason_and_undo(fake_api) -> None:
@@ -1754,9 +1771,9 @@ def test_readings_list_flag_reason_and_undo(fake_api) -> None:
 
 
 def test_km_entry_confirm_then_save(fake_api) -> None:
-    """«Км бүртгэх» -> km + date -> «Үргэлжлүүлэх» shows the API's preview, nothing stored -> «Хадгалах»."""
+    """Km form -> km + date -> «Үргэлжлүүлэх» shows the API's preview, nothing stored -> «Хадгалах»."""
     vid = seed_existing(fake_api)["id"]
-    at = click(card_screen(vid), "Км бүртгэх")
+    at = km_form_screen(vid)
     assert at.number_input(key="km_value").label == "Одоогийн км"
     at.number_input(key="km_value").set_value(216000)
     at.date_input(key="km_date").set_value(date(2026, 10, 11))
@@ -1770,13 +1787,13 @@ def test_km_entry_confirm_then_save(fake_api) -> None:
     at = click(at, "Хадгалах")
     assert [(r["value"], r["reading_date"]) for r in fake_api.readings] == [(216000, "2026-10-11")]
     assert "Хадгаллаа · Км/өдөр: 400" in texts(at.success)
-    assert "Км бүртгэх" in [b.label for b in at.button]               # form closed
-    assert "400 · жолоочийн хариу (2026-10-11)" in html_blocks(at)
+    assert not at.number_input                                          # form closed
+    assert texts(at.subheader)[0] == "Км бүртгэл · 400 км/өдөр"
 
 
 def test_km_entry_flagged_warns_and_edit_keeps_the_value(fake_api) -> None:
     vid = seed_existing(fake_api)["id"]
-    at = click(card_screen(vid), "Км бүртгэх")
+    at = km_form_screen(vid)
     at.number_input(key="km_value").set_value(199000)
     at.date_input(key="km_date").set_value(date(2026, 10, 11))
     at = click(at.run(), "Үргэлжлүүлэх")
@@ -1789,14 +1806,14 @@ def test_km_entry_flagged_warns_and_edit_keeps_the_value(fake_api) -> None:
 
 def test_km_entry_needs_a_value_and_shows_api_errors(fake_api) -> None:
     vid = seed_existing(fake_api)["id"]
-    at = click(click(card_screen(vid), "Км бүртгэх"), "Үргэлжлүүлэх")
+    at = click(km_form_screen(vid), "Үргэлжлүүлэх")
     assert "Одоогийн км-ийг оруулна уу." in texts(at.error) and fake_api.previews == []
     at.number_input(key="km_value").set_value(216000)
     at.date_input(key="km_date").set_value(date(2026, 9, 1))           # the service's own day
     at = click(at.run(), "Үргэлжлүүлэх")
     assert "Огноо нь сүүлийн тос солилтоос хойш байх ёстой." in texts(at.error)
     at = click(at, "Болих")
-    assert "Км бүртгэх" in [b.label for b in at.button]
+    assert not at.number_input
 
 
 def km_check(service_id: int, plate: str, phone: str | None = "99110003") -> dict:
@@ -1846,4 +1863,4 @@ def test_km_check_reply_opens_the_card_form(fake_api) -> None:
     at = at.segmented_control(key="rem_tab").set_value("km").run()
     at = at.button(key=f"km_reply_{vid}").click().run()
     assert texts(at.title) == ["Машины карт"]
-    assert at.number_input(key="km_value").label == "Одоогийн км"     # «Км бүртгэх» already open
+    assert at.number_input(key="km_value").label == "Одоогийн км"     # the km form already open

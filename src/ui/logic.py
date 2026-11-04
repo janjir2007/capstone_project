@@ -938,27 +938,23 @@ def rate_text(rate: float | None, unit: str = "km") -> str:
     return format_number(round(rate) if unit == "km" else round(rate, 1))
 
 
-def pace_text(pace: dict | None) -> str:
-    """Card value next to «Км/өдөр»: '287 · жолоочийн хариу (2026-10-11)', '287 · өмнөх 2 үйлчилгээ',
-    or «Мэдээлэл алга» when the API knows no usable pace."""
+def pace_title_text(pace: dict | None) -> str:
+    """9.14a-3b: the km/day in the «Км бүртгэл» title: '350 км/өдөр' (mine trucks '8.7 цаг/өдөр'),
+    «Мэдээлэл алга» when the API knows no usable pace."""
     if not pace or pace.get("rate_per_day") is None:
         return NO_PACE_TEXT
-    rate = rate_text(pace["rate_per_day"], pace.get("unit", "km"))
-    if pace.get("source") == "reading":
-        return f"{rate} · жолоочийн хариу ({pace.get('reading_date') or NOT_GIVEN})"
-    return f"{rate} · өмнөх 2 үйлчилгээ"
+    unit = pace.get("unit", "km")
+    return f"{rate_text(pace['rate_per_day'], unit)} {'км' if unit == 'km' else 'цаг'}/өдөр"
 
 
-def next_change_text(card: dict | None) -> str | None:
-    """«Дараагийн солилт» value: '~2026-10-01 · 270 500 км' (due day from km/day + stored target km),
-    just the km without a pace, None for mine trucks (no target)."""
+def next_due_text(card: dict | None) -> str | None:
+    """9.14a-3b: the small date under the big target km: '~2026-11-17' (the API's next_due_date);
+    None without a pace or for mine trucks (no target)."""
     card = card or {}
-    target = (card.get("last_service") or {}).get("target_km")
-    due = (card.get("pace") or {}).get("next_due_date")
-    if target is None:
+    if (card.get("last_service") or {}).get("target_km") is None:
         return None
-    km = format_number(target, "км")
-    return f"~{due} · {km}" if due else km
+    due = (card.get("pace") or {}).get("next_due_date")
+    return f"~{due}" if due else None
 
 
 def flag_text(reason: str | None, unit: str = "km") -> str:
@@ -981,7 +977,7 @@ def reading_text(reading: dict) -> str:
 
 
 def preview_rows(preview: dict) -> list[tuple[str, str]]:
-    """«Км бүртгэх» confirm step: what saving would give (from POST /vehicles/{id}/readings/preview)."""
+    """Km form confirm step: what saving would give (from POST /vehicles/{id}/readings/preview)."""
     pace = preview.get("pace") or {}
     unit = preview.get("unit", "km")
     rows = [(pace_label(pace), rate_text(preview.get("rate_per_day"), unit))]

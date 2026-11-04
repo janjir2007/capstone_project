@@ -473,18 +473,29 @@ def _open_card(page, ui_url: str, plate: str) -> None:
 
 
 def test_card_km_section_and_form_fit_phone(ui_url, phone_page, shot_dir) -> None:
-    """Card: «Км/өдөр» row + «Км бүртгэл» fit 390 px; «Км бүртгэх» form: fields >= 16 px (no iOS zoom),
-    buttons >= 44 px tall, nothing sideways."""
+    """Card: «Км бүртгэл · … км/өдөр» fits 390 px and has no «Км бүртгэх» button (9.14a-3b). The km form,
+    opened from «Км шалгах» -> «Хариу бүртгэх»: fields >= 16 px (no iOS zoom), buttons >= 44 px tall,
+    nothing sideways."""
     plate = os.environ.get("UI_BROWSER_PLATE")
     if not plate:
         pytest.skip("set UI_BROWSER_PLATE to a plate in the DB to check the card")
     _open_card(phone_page, ui_url, plate)
     if phone_page.locator(".st-key-card_km").count() == 0:
         pytest.skip("API before contract v0.18 (no km readings)")
-    assert phone_page.locator("text=Км/өдөр").count() >= 1
+    assert phone_page.locator("h3", has_text="Км бүртгэл · ").count() == 1
+    assert phone_page.get_by_role("button", name="Км бүртгэх").count() == 0
+    assert phone_page.locator("text=Чиглэл").count() == 0
     _check_phone_width(phone_page, shot_dir, "screen_card_km")
-    phone_page.get_by_role("button", name="Км бүртгэх").click()
-    phone_page.wait_for_selector(".st-key-card_km_form", timeout=10000)
+    phone_page.goto(ui_url + "/reminders")
+    phone_page.wait_for_selector(".st-key-rem_tab", timeout=20000)
+    phone_page.locator(".st-key-rem_tab button", has_text="Км шалгах").click()
+    reply = phone_page.locator('[class*="st-key-km_reply_"] button')
+    try:
+        reply.first.wait_for(timeout=10000)
+    except playwright.TimeoutError:
+        pytest.skip("no km check due in this DB (the form opens only from «Хариу бүртгэх»)")
+    reply.first.click()
+    phone_page.wait_for_selector(".st-key-card_km_form", timeout=15000)
     phone_page.wait_for_timeout(500)
     assert all(size >= 16 for size in phone_page.evaluate(FIELD_JS))
     for name in ("Болих", "Үргэлжлүүлэх"):

@@ -2,17 +2,18 @@
 
 Order: big plate + grey segment chip («Байнгын · 3 удаа»), one line company · model, blue target
 block («Дараагийн тос солилт · 165 000 км», task 9.5a — replaces the predicted-date block; none for
-mine trucks), fact rows (last change, oil, [destination], driver), «Км бүртгэл», «Түүх» timeline,
-primary «Үйлчилгээ бүртгэх».
+mine trucks), fact rows (last change, oil, driver), «Км бүртгэл», «Түүх» timeline, primary
+«Үйлчилгээ бүртгэх». No route / «Чиглэл» anywhere on the card (D-111, 9.14a-3b).
 
-Task 9.14a-3 (contract v0.18/v0.19; every number comes from the API, src/api/pace.py):
-- target block «~2026-10-01 · 270 500 км» (due day from the truck's km/day + stored target km);
-  fact row «Км/өдөр: 287 · жолоочийн хариу (2026-10-11)» / «· өмнөх 2 үйлчилгээ» / «Мэдээлэл алга».
-- «Км бүртгэл»: the 5 newest readings; a flagged one says why in Mongolian; a typed-in one has
-  «Буцаах» (DELETE /readings/{id}).
-- «Км бүртгэх» (the driver's reply): km + date (default today) -> «Үргэлжлүүлэх» -> confirm step with the
-  new km/day, due day and reminder day from POST .../readings/preview (nothing stored yet) ->
-  «Хадгалах» = POST /vehicles/{id}/readings. «Км шалгах» rows on «Сануулга» open this form directly.
+Task 9.14a-3 (contract v0.18/v0.19; every number comes from the API, src/api/pace.py), simplified in
+9.14a-3b after Ari's review:
+- target block: the target km big, the due day small next to it («574 255 км  ~2026-11-17»).
+- «Км бүртгэл · 350 км/өдөр» (mine trucks «цаг/өдөр», «· Мэдээлэл алга» without a pace): the 5 newest
+  readings; a flagged one says why in Mongolian; a typed-in one has «Буцаах» (DELETE /readings/{id}).
+- the km form (the driver's reply) has no button on the card: «Км шалгах» -> «Хариу бүртгэх» on
+  «Сануулга» opens the card with it open. km + date (default today) -> «Үргэлжлүүлэх» -> confirm step with
+  the new km/day, due day and reminder day from POST .../readings/preview (nothing stored yet) ->
+  «Хадгалах» = POST /vehicles/{id}/readings.
 """
 
 import html
@@ -29,11 +30,6 @@ KM_MSG = "km_msg"                          # (kind, text) shown once above «К�
 
 def km_form_open(vehicle_id: int) -> bool:
     return st.session_state.get(common.KM_FORM) == vehicle_id
-
-
-def on_km_open(vehicle_id: int) -> None:
-    st.session_state[common.KM_FORM] = vehicle_id
-    st.session_state.pop(common.KM_PREVIEW, None)
 
 
 def on_km_close() -> None:
@@ -98,8 +94,8 @@ def on_km_undo(reading_id: int) -> None:
 
 
 def readings_section(card: dict) -> None:
-    """«Км бүртгэл»: newest readings + «Км бүртгэх» (form -> confirm -> save)."""
-    st.subheader("Км бүртгэл")
+    """«Км бүртгэл · 350 км/өдөр»: newest readings, then the km form when «Хариу бүртгэх» opened it."""
+    st.subheader(f"Км бүртгэл · {logic.pace_title_text(card.get('pace'))}")
     msg = st.session_state.pop(KM_MSG, None)
     if msg:
         getattr(st, msg[0])(msg[1])
@@ -122,9 +118,6 @@ def readings_section(card: dict) -> None:
         km_confirm(vid, preview)
     elif km_form_open(vid):
         km_form(vid, (card.get("pace") or {}).get("unit", "km"))
-    else:
-        st.button("Км бүртгэх", key="btn_km_open", width="stretch", on_click=on_km_open, args=(vid,),
-                  icon=":material/speed:")
 
 
 def km_form(vehicle_id: int, unit: str) -> None:

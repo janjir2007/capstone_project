@@ -781,22 +781,21 @@ def test_picked_row_marker_or_any_cell() -> None:
 PACE = {"unit": "km", "rate_per_day": 286.6, "source": "services", "reading_date": None, "next_due_date": "2026-10-01"}
 
 
-def test_pace_text_sources_and_none() -> None:
-    assert logic.pace_text(PACE) == "287 · өмнөх 2 үйлчилгээ"
-    assert logic.pace_text(PACE | {"source": "reading", "rate_per_day": 400.0, "reading_date": "2026-10-11"}) == \
-        "400 · жолоочийн хариу (2026-10-11)"
-    assert logic.pace_text(PACE | {"rate_per_day": None}) == logic.pace_text(None) == "Мэдээлэл алга"
-    assert logic.pace_text(PACE | {"unit": "hours", "rate_per_day": 8.72}) == "8.7 · өмнөх 2 үйлчилгээ"
+def test_pace_title_text() -> None:
+    assert logic.pace_title_text(PACE) == "287 км/өдөр"
+    assert logic.pace_title_text(PACE | {"source": "reading", "rate_per_day": 350.0}) == "350 км/өдөр"
+    assert logic.pace_title_text(PACE | {"rate_per_day": None}) == logic.pace_title_text(None) == "Мэдээлэл алга"
+    assert logic.pace_title_text(PACE | {"unit": "hours", "rate_per_day": 8.72}) == "8.7 цаг/өдөр"
     assert (logic.pace_label(PACE), logic.pace_label({"unit": "hours"}), logic.pace_label(None)) == \
         ("Км/өдөр", "Цаг/өдөр", "Км/өдөр")
 
 
-def test_next_change_text() -> None:
+def test_next_due_text() -> None:
     card = {"last_service": {"target_km": 270500}, "pace": PACE}
-    assert logic.next_change_text(card) == "~2026-10-01 · 270 500 км"
-    assert logic.next_change_text(card | {"pace": PACE | {"next_due_date": None}}) == "270 500 км"
-    assert logic.next_change_text({"last_service": {"target_km": None}, "pace": PACE}) is None   # mine truck
-    assert logic.next_change_text(None) is None
+    assert logic.next_due_text(card) == "~2026-10-01"
+    assert logic.next_due_text(card | {"pace": PACE | {"next_due_date": None}}) is None
+    assert logic.next_due_text({"last_service": {"target_km": None}, "pace": PACE}) is None   # mine truck
+    assert logic.next_due_text(None) is None
 
 
 @pytest.mark.parametrize(("reason", "unit", "text"), [
