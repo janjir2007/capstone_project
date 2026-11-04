@@ -9,6 +9,7 @@ install requirements-ui.txt to run these).
 """
 
 import json
+from datetime import date
 from typing import Any
 from urllib.parse import unquote
 from pathlib import Path
@@ -60,6 +61,12 @@ class FakeApi:
         self.sync_status: dict | None = None        # GET /payments/sync-status
         self.unpaid: dict | None = None             # GET /payments/unpaid
         self.periods: list[str] = []                # period of every GET /stats/period (9.12)
+        # 9.14a-3: pace per vehicle (None = the API's "no usable pace"), readings, km checks
+        self.paces: dict[int, dict] = {}
+        self.readings: list[dict] = []
+        self.previews: list[dict] = []              # bodies of POST .../readings/preview
+        self.km_checks: list[dict] = []             # GET /km-checks/due items
+        self.km_sent: dict[int, dict] = {}
 
     # -- data ---------------------------------------------------------------
     def add_vehicle(self, identifier: str, company: str, identifier_type: str = "plate", **service) -> dict:
@@ -119,7 +126,28 @@ class FakeApi:
             "last_service": history[0] if history else None,
             "history": history,
             "prediction": {**self.prediction, "vehicle_id": vehicle["id"]} if self.prediction and n else None,
+            # 9.14a: like the API, a pace object whenever the truck has a service
+            "pace": self.paces.get(vehicle["id"], no_pace(history[0])) if n else None,
+            "readings": sorted((r for r in self.readings if r["vehicle_id"] == vehicle["id"]),
+                               key=lambda r: (r["reading_date"], r["id"]), reverse=True)[:5],
         }
+
+    def _reading(self, vid: int, body: dict) -> tuple[int, dict]:
+        """POST .../readings(/preview) the way the API answers it (simplified rules, made-up dates)."""
+        last = self.card(next(v for v in self.vehicles if v["id"] == vid))["last_service"]
+        day = body.get("reading_date") or TODAY
+        if day <= last["service_date"]:
+            return 422, {"detail": f"reading_date must be after the latest service ({last['service_date']})"}
+        unit = "km" if last["odometer_km"] is not None else "hours"
+        base = last["odometer_km"] if unit == "km" else last["engine_hours"]
+        rate = round((body["value"] - base) / (date.fromisoformat(day) - date.fromisoformat(last["service_date"])).days, 1)
+        flag = "not_higher" if body["value"] <= base else None
+        pace = self.paces.get(vid, no_pace(last)) if flag else {
+            "unit": unit, "rate_per_day": rate, "source": "reading", "reading_value": body["value"],
+            "reading_date": day, "interval_km": 15000, "next_due_date": "2026-11-20", "reminder_on": "2026-11-15",
+            "basis": "pace", "km_check_on": None}
+        return 200, {"unit": unit, "value": body["value"], "reading_date": day,
+                     "status": "flagged" if flag else "ok", "flag_reason": flag, "rate_per_day": rate, "pace": pace}
 
     # -- endpoints ----------------------------------------------------------
     def handle(self, request: httpx.Request) -> httpx.Response:
@@ -132,6 +160,40 @@ class FakeApi:
             return httpx.Response(200, json={"login_required": self.login_required})
         if path == "/destinations":
             return httpx.Response(200, json=self.destinations)
+        if path.startswith("/vehicles/") and "/readings" in path and request.method == "POST":  # 9.14a
+            vid = int(path.split("/")[2])
+            status, body = self._reading(vid, json.loads(request.content))
+            if status != 200 or path.endswith("/preview"):
+                self.previews.append(json.loads(request.content))
+                return httpx.Response(status, json=body)
+            reading = {"id": len(self.readings) + 100, "vehicle_id": vid, "service_id": 1, "source": "manual",
+                       "created_at": f"{TODAY}T10:00:00+08:00", **{k: body[k] for k in (
+                           "unit", "value", "reading_date", "status", "flag_reason", "rate_per_day")}}
+            self.readings.append(reading)
+            if body["status"] == "ok":
+                self.paces[vid] = body["pace"]
+            return httpx.Response(201, json={"reading": reading, "pace": body["pace"]})
+        if path.startswith("/readings/") and request.method == "DELETE":
+            rid = int(path.split("/")[-1])
+            row = next((r for r in self.readings if r["id"] == rid), None)
+            if row is None:
+                return httpx.Response(404, json={"detail": f"reading {rid} not found"})
+            if row["source"] != "manual":
+                return httpx.Response(422, json={"detail": "only readings typed in by hand (source manual) can be removed"})
+            self.readings.remove(row)
+            self.paces.pop(row["vehicle_id"], None)
+            return httpx.Response(204)
+        if path == "/km-checks/due":
+            checks = [c for c in self.km_checks if c["service_id"] not in self.km_sent and c.get("phone") not in self.stops]
+            return httpx.Response(200, json={"as_of": TODAY, "contact_is_placeholder": False, "checks": checks})
+        if path.startswith("/km-checks/") and path.endswith("/sent"):
+            sid = int(path.split("/")[2])
+            if sid in self.km_sent:
+                return httpx.Response(200, json={**self.km_sent[sid], "already_sent": True})
+            self.km_sent[sid] = {"id": len(self.km_sent) + 1, "service_id": sid, "vehicle_id": sid, "phone": "99110003",
+                                 "message_text": "x", "channel": "manual", "check_on": "2026-10-05",
+                                 "sent_at": f"{TODAY}T11:00:00+08:00"}
+            return httpx.Response(201, json={**self.km_sent[sid], "already_sent": False})
         if path.startswith("/vehicles/") and path.split("/")[-1].isdigit():
             vid = int(path.split("/")[-1])
             vehicle = next((v for v in self.vehicles if v["id"] == vid), None)
@@ -261,6 +323,13 @@ class FakeApi:
             "service": service, "vehicle_id": vehicle["id"],
             "vehicle_created": created, "company_created": created,
         })
+
+
+def no_pace(last: dict) -> dict:
+    """The API's pace of a truck without a usable km/day (9.14a): 75 days, km check at 34."""
+    return {"unit": "km" if last.get("odometer_km") is not None else "hours", "rate_per_day": None, "source": None,
+            "reading_value": None, "reading_date": None, "interval_km": None if last.get("odometer_km") is None else 15000,
+            "next_due_date": None, "reminder_on": None, "basis": None, "km_check_on": None}
 
 
 @pytest.fixture
@@ -868,14 +937,14 @@ def test_single_match_opens_card(fake_api) -> None:
     assert texts(at.title) == ["Машины карт"]
     page = html_blocks(at)
     assert '<span class="plate lg">0002 ТЕС</span>' in page
-    assert "Дараагийн тос солилт" in page and "215 000 км" in page  # 9.5a: target = 200 000 + 15 000
+    assert "Дараагийн тос солилт" in page and "215\u00a0000\u00a0км" in page  # 9.5a: 200 000 + 15 000 (9.14a: no-break)
     assert "Сүүлд: 200 000 км · 2026-09-01 · +15 000 км" in page
     assert "Таамаглал" not in page                              # 9.5a: no prediction block
     assert "Шинэ · 1 удаа</span>" in page                       # grey segment chip next to the plate (T7)
     assert "Говь Тест ХХК" in page                             # one line company · model
     assert "Сүүлд солисон" in page and "10W-40 · ердийн\u00a032\u00a0л" in page  # usual liters back (T8)
     assert "Жолооч Д. · 9911 0002" in page and "Залгах" not in page  # driver row, no call button (T6)
-    assert texts(at.subheader) == ["Түүх"] and '<div class="tl">' in page  # history timeline, open (T9)
+    assert texts(at.subheader) == ["Км бүртгэл", "Түүх"] and '<div class="tl">' in page  # history timeline (T9)
 
 
 def test_card_shows_target_not_predicted_date(fake_api) -> None:
@@ -884,7 +953,7 @@ def test_card_shows_target_not_predicted_date(fake_api) -> None:
     fake_api.prediction = PREDICTION
     at = search(run_app(SEARCH), "0002 ТЕС")
     [card] = [t for t in texts(at.markdown) if 'class="pc"' in t]
-    assert "Дараагийн тос солилт" in card and "215 000 км" in card
+    assert "Дараагийн тос солилт" in card and "215\u00a0000\u00a0км" in card
     assert "9 хоног" not in card and "10-р сарын 21" not in card
 
 
@@ -1623,3 +1692,158 @@ def test_dashboard_period_error_keeps_the_rest(fake_api) -> None:
     at = run_app(DASHBOARD)
     assert not at.exception and texts(at.error) and len(at.dataframe[0].value) == 2
     assert '<div class="tiles kpi">' not in html_blocks(at)
+
+
+# ---------------------------------------------------------------- task 9.14a-3: km/day on the card + «Км шалгах»
+
+def card_screen(vehicle_id: int) -> AppTest:
+    """The card screen for this truck (as if opened from the search)."""
+    at = AppTest.from_file(APP, default_timeout=10).run()
+    at.session_state[common.CARD_ID] = vehicle_id
+    return at.switch_page(CARD).run()
+
+
+PACE_SERVICES = {"unit": "km", "rate_per_day": 286.6, "source": "services", "reading_value": None,
+                 "reading_date": None, "interval_km": 15000, "next_due_date": "2026-10-01",
+                 "reminder_on": "2026-09-26", "basis": "pace", "km_check_on": None}
+
+
+def test_card_pace_line_and_due_day(fake_api) -> None:
+    """«Км/өдөр: 287 · өмнөх 2 үйлчилгээ» and «~2026-10-01 · 215 000 км» (the API's due day + stored target)."""
+    vid = seed_existing(fake_api)["id"]
+    fake_api.paces[vid] = PACE_SERVICES
+    page = html_blocks(card_screen(vid))
+    assert "<span class=\"k\">Км/өдөр</span><span class=\"v\">287 · өмнөх 2 үйлчилгээ</span>" in page
+    assert '<div class="pc-big">~2026-10-01 · 215\u00a0000\u00a0км</div>' in page
+
+
+def test_card_without_pace_or_from_a_reply(fake_api) -> None:
+    vid = seed_existing(fake_api)["id"]
+    page = html_blocks(card_screen(vid))
+    assert "<span class=\"v\">Мэдээлэл алга</span>" in page and '<div class="pc-big">215\u00a0000\u00a0км</div>' in page
+    fake_api.paces[vid] = PACE_SERVICES | {"source": "reading", "rate_per_day": 400.0, "reading_date": "2026-10-11"}
+    assert "400 · жолоочийн хариу (2026-10-11)" in html_blocks(card_screen(vid))
+
+
+def test_mine_truck_hours_per_day_no_target(fake_api) -> None:
+    vid = fake_api.add_vehicle("HT-12", "Уурхай ХХК", identifier_type="fleet_no", engine_hours=12980.5,
+                               oil_grade="15W-40", liters=90.0, service_date="2026-08-25")["id"]
+    fake_api.paces[vid] = {**PACE_SERVICES, "unit": "hours", "rate_per_day": 8.72, "next_due_date": None,
+                           "reminder_on": None, "basis": None, "interval_km": None}
+    page = html_blocks(card_screen(vid))
+    assert "<span class=\"k\">Цаг/өдөр</span><span class=\"v\">8.7 · өмнөх 2 үйлчилгээ</span>" in page
+    assert "Дараагийн тос солилт" not in page
+
+
+def test_readings_list_flag_reason_and_undo(fake_api) -> None:
+    vid = seed_existing(fake_api)["id"]
+    fake_api.readings = [
+        {"id": 1, "vehicle_id": vid, "service_id": 1, "unit": "km", "value": 200000.0, "reading_date": "2026-09-01",
+         "source": "service", "status": "ok", "flag_reason": None, "rate_per_day": None, "created_at": "x"},
+        {"id": 2, "vehicle_id": vid, "service_id": 1, "unit": "km", "value": 900000.0, "reading_date": "2026-10-02",
+         "source": "manual", "status": "flagged", "flag_reason": "too_fast", "rate_per_day": 23333.3, "created_at": "x"},
+    ]
+    at = card_screen(vid)
+    page = html_blocks(at)
+    assert "2026-10-02 · 900 000 км · Жолоочийн хариу" in page and "2026-09-01 · 200 000 км · Тос солилт" in page
+    assert "Өдөрт 1 200 км-ээс их — тооцоонд ашиглахгүй" in page
+    undo = [b for b in at.button if b.label == "Буцаах"]
+    assert [b.key for b in undo] == ["km_undo_2"]                     # only the typed-in one
+    at = undo[0].click().run()
+    assert [r["id"] for r in fake_api.readings] == [1] and "Бүртгэлийг буцаалаа." in texts(at.success)
+
+
+def test_km_entry_confirm_then_save(fake_api) -> None:
+    """«Км бүртгэх» -> km + date -> «Үргэлжлүүлэх» shows the API's preview, nothing stored -> «Хадгалах»."""
+    vid = seed_existing(fake_api)["id"]
+    at = click(card_screen(vid), "Км бүртгэх")
+    assert at.number_input(key="km_value").label == "Одоогийн км"
+    at.number_input(key="km_value").set_value(216000)
+    at.date_input(key="km_date").set_value(date(2026, 10, 11))
+    at = click(at.run(), "Үргэлжлүүлэх")
+    assert fake_api.previews == [{"value": 216000, "reading_date": "2026-10-11"}] and fake_api.readings == []
+    page = html_blocks(at)
+    assert "2026-10-11 · 216 000 км" in page
+    assert "<span class=\"k\">Км/өдөр</span><span class=\"v\">400</span>" in page
+    assert "<span class=\"k\">Дараагийн солилт</span><span class=\"v\">~2026-11-20</span>" in page
+    assert "<span class=\"k\">Сануулга</span><span class=\"v\">2026-11-15</span>" in page
+    at = click(at, "Хадгалах")
+    assert [(r["value"], r["reading_date"]) for r in fake_api.readings] == [(216000, "2026-10-11")]
+    assert "Хадгаллаа · Км/өдөр: 400" in texts(at.success)
+    assert "Км бүртгэх" in [b.label for b in at.button]               # form closed
+    assert "400 · жолоочийн хариу (2026-10-11)" in html_blocks(at)
+
+
+def test_km_entry_flagged_warns_and_edit_keeps_the_value(fake_api) -> None:
+    vid = seed_existing(fake_api)["id"]
+    at = click(card_screen(vid), "Км бүртгэх")
+    at.number_input(key="km_value").set_value(199000)
+    at.date_input(key="km_date").set_value(date(2026, 10, 11))
+    at = click(at.run(), "Үргэлжлүүлэх")
+    assert any("Өмнөхөөс бага буюу тэнцүү — тооцоонд ашиглахгүй" in w for w in texts(at.warning))
+    at = click(at, "Засах")
+    assert at.number_input(key="km_value").value == 199000 and fake_api.readings == []
+    assert at.date_input(key="km_date").value == date(2026, 10, 11)
+    assert texts(at.warning) == [] and not at.exception                # no session-state warning
+
+
+def test_km_entry_needs_a_value_and_shows_api_errors(fake_api) -> None:
+    vid = seed_existing(fake_api)["id"]
+    at = click(click(card_screen(vid), "Км бүртгэх"), "Үргэлжлүүлэх")
+    assert "Одоогийн км-ийг оруулна уу." in texts(at.error) and fake_api.previews == []
+    at.number_input(key="km_value").set_value(216000)
+    at.date_input(key="km_date").set_value(date(2026, 9, 1))           # the service's own day
+    at = click(at.run(), "Үргэлжлүүлэх")
+    assert "Огноо нь сүүлийн тос солилтоос хойш байх ёстой." in texts(at.error)
+    at = click(at, "Болих")
+    assert "Км бүртгэх" in [b.label for b in at.button]
+
+
+def km_check(service_id: int, plate: str, phone: str | None = "99110003") -> dict:
+    """A GET /km-checks/due item (contract v0.18)."""
+    return {"service_id": service_id, "vehicle_id": service_id, "identifier_type": "plate", "identifier": plate,
+            "plate_normalized": plate.replace(" ", ""), "company": "Туршилт ХХК", "phone": phone,
+            "driver_name": "Км Д.", "last_change_date": "2026-09-01", "odometer_km": 100000, "days_since": 41,
+            "check_on": "2026-10-05", "reminder_on": "2026-11-15", "segment": "new",
+            "message_mn": f"Сайн байна уу! {plate} машины тосыг 2026.09.01-нд солиулсан. Одоогийн км-ээ хариу бичнэ үү."}
+
+
+def test_reminders_switch_counts_and_km_rows(fake_api) -> None:
+    fake_api.reminders = [reminder(1, "0001 ТЕС")]
+    fake_api.km_checks = [km_check(5, "0005 ТЕС"), km_check(6, "0006 ТЕС", phone=None)]
+    at = run_app(REMINDERS)
+    switch = at.segmented_control(key="rem_tab")
+    assert [o.content for o in switch.proto.options] == ["Сануулга (1)", "Км шалгах (2)"]
+    assert texts(at.subheader)[0] == "Өнөөдрийн дараалал (1)"         # reminders by default
+    at = switch.set_value("km").run()
+    assert texts(at.subheader)[0] == "Км асуух (2)"
+    page = html_blocks(at)
+    assert '<span class="plate">0005 ТЕС</span>' in page and "Км асуух</span>" in page
+    assert "41 хоногийн өмнө · 9911 0003" in page and "утасгүй" in page
+    sms = [b for b in at.get("link_button") if b.proto.label == "SMS илгээх"]
+    assert len(sms) == 1 and sms[0].proto.url.startswith("sms:99110003?&body=") and "%D0%9E%D0%B4" in sms[0].proto.url
+    assert "Viber-ээр илгээх" not in [b.proto.label for b in at.get("link_button")]
+
+
+def test_km_check_sent_and_stop_list(fake_api) -> None:
+    fake_api.km_checks = [km_check(5, "0005 ТЕС"), km_check(6, "0006 ТЕС", phone="99110004")]
+    at = run_app(REMINDERS)
+    at = at.segmented_control(key="rem_tab").set_value("km").run()
+    at = at.button(key="km_sent_5").click().run()
+    assert 5 in fake_api.km_sent and fake_api.sent == {}                # a km check, not a reminder
+    assert any("Км асуусан гэж тэмдэглэлээ" in t for t in texts(at.success))
+    assert texts(at.subheader)[0] == "Км асуух (1)"
+    at = at.button(key="km_stop_6").click().run()
+    assert "9911 0004 утсанд дахиж илгээхгүй юу?" in html_blocks(at)
+    at = at.button(key="km_stop_yes_6").click().run()
+    assert fake_api.stops == ["99110004"] and texts(at.subheader)[0] == "Км асуух (0)"
+
+
+def test_km_check_reply_opens_the_card_form(fake_api) -> None:
+    vid = seed_existing(fake_api)["id"]
+    fake_api.km_checks = [km_check(vid, "0002 ТЕС")]
+    at = run_app(REMINDERS)
+    at = at.segmented_control(key="rem_tab").set_value("km").run()
+    at = at.button(key=f"km_reply_{vid}").click().run()
+    assert texts(at.title) == ["Машины карт"]
+    assert at.number_input(key="km_value").label == "Одоогийн км"     # «Км бүртгэх» already open

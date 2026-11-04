@@ -89,6 +89,12 @@ API_MESSAGES_MN: dict[str, str] = {
     "is in the future": "Ирээдүйн огноо оруулах боломжгүй.",
     "does not exist": "Сонгосон газар олдсонгүй. Жагсаалтыг дахин ачаална уу.",
     "conflicts with destination": "Маршрут нь сонгосон газартай таарахгүй байна.",
+    # 9.14a: km readings + km checks
+    "must be after the latest service": "Огноо нь сүүлийн тос солилтоос хойш байх ёстой.",
+    "greater than 0": "0-ээс их тоо оруулна уу.",
+    "the km check is not due yet": "Км шалгах өдөр хараахан болоогүй байна.",
+    "asked for no more messages": "Энэ утас мессеж хүлээж авахгүй гэсэн.",
+    "only readings typed in by hand": "Зөвхөн гараар бүртгэсэн км-ийг буцаана.",
 }
 
 
@@ -907,3 +913,80 @@ def sync_view(status: dict | None, now: datetime) -> dict[str, Any] | None:
     if failed:
         text += " · сүүлийн оролдлого амжилтгүй"
     return {"text": text, "red": failed or stale}
+
+
+# ---------------------------------------------------------------- task 9.14a: km/day (contract v0.18)
+# The API decides everything (src/api/pace.py); these only turn its fields into Mongolian text.
+
+PACE_LABELS: dict[str, str] = {"km": "Км/өдөр", "hours": "Цаг/өдөр"}
+READING_SOURCE_LABELS: dict[str, str] = {"service": "Тос солилт", "manual": "Жолоочийн хариу",
+                                         "messenger": "Messenger"}
+NO_PACE_TEXT = "Мэдээлэл алга"
+NOT_USED_TEXT = "тооцоонд ашиглахгүй"
+KM_CHECK_PILL = ("Км асуух", "#1F4E9D", "#EAF0FA")  # brand blue on its tint (not a reminder)
+
+
+def pace_label(pace: dict | None) -> str:
+    """«Км/өдөр» (mine trucks: «Цаг/өдөр»)."""
+    return PACE_LABELS.get((pace or {}).get("unit", "km"), PACE_LABELS["km"])
+
+
+def rate_text(rate: float | None, unit: str = "km") -> str:
+    """Pace number: whole km ('287'), engine hours with 1 decimal ('8.7'); '—' when None."""
+    if rate is None:
+        return NOT_GIVEN
+    return format_number(round(rate) if unit == "km" else round(rate, 1))
+
+
+def pace_text(pace: dict | None) -> str:
+    """Card value next to «Км/өдөр»: '287 · жолоочийн хариу (2026-10-11)', '287 · өмнөх 2 үйлчилгээ',
+    or «Мэдээлэл алга» when the API knows no usable pace."""
+    if not pace or pace.get("rate_per_day") is None:
+        return NO_PACE_TEXT
+    rate = rate_text(pace["rate_per_day"], pace.get("unit", "km"))
+    if pace.get("source") == "reading":
+        return f"{rate} · жолоочийн хариу ({pace.get('reading_date') or NOT_GIVEN})"
+    return f"{rate} · өмнөх 2 үйлчилгээ"
+
+
+def next_change_text(card: dict | None) -> str | None:
+    """«Дараагийн солилт» value: '~2026-10-01 · 270 500 км' (due day from km/day + stored target km),
+    just the km without a pace, None for mine trucks (no target)."""
+    card = card or {}
+    target = (card.get("last_service") or {}).get("target_km")
+    due = (card.get("pace") or {}).get("next_due_date")
+    if target is None:
+        return None
+    km = format_number(target, "км")
+    return f"~{due} · {km}" if due else km
+
+
+def flag_text(reason: str | None, unit: str = "km") -> str:
+    """Why a reading is not used, e.g. «Өмнөхөөс бага буюу тэнцүү — тооцоонд ашиглахгүй»; '' when usable."""
+    if reason is None:
+        return ""
+    why = {
+        "not_higher": "Өмнөхөөс бага буюу тэнцүү",
+        "too_slow": "Өдөрт 20 км-ээс бага" if unit == "km" else "Хэт бага",
+        "too_fast": "Өдөрт 1 200 км-ээс их" if unit == "km" else "Өдөрт 24 цагаас их",
+    }.get(reason, reason)
+    return f"{why} — {NOT_USED_TEXT}"
+
+
+def reading_text(reading: dict) -> str:
+    """One reading row: '2026-10-11 · 116 000 км · Жолоочийн хариу'."""
+    unit = "км" if reading.get("unit", "km") == "km" else "мц"
+    return " · ".join([reading.get("reading_date") or NOT_GIVEN, format_number(reading.get("value"), unit),
+                       READING_SOURCE_LABELS.get(reading.get("source"), reading.get("source") or NOT_GIVEN)])
+
+
+def preview_rows(preview: dict) -> list[tuple[str, str]]:
+    """«Км бүртгэх» confirm step: what saving would give (from POST /vehicles/{id}/readings/preview)."""
+    pace = preview.get("pace") or {}
+    unit = preview.get("unit", "km")
+    rows = [(pace_label(pace), rate_text(preview.get("rate_per_day"), unit))]
+    if preview.get("status") == "ok":
+        rows.append(("Дараагийн солилт", f"~{pace['next_due_date']}" if pace.get("next_due_date") else NOT_GIVEN))
+        if pace.get("reminder_on"):
+            rows.append(("Сануулга", pace["reminder_on"]))
+    return rows

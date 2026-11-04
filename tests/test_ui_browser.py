@@ -454,3 +454,58 @@ def test_dashboard_history_below_list_and_in_view(dash) -> None:
     assert dash.evaluate("document.documentElement.scrollWidth") <= dash.width
     dash.get_by_role("button", name="Хаах").click()
     panel.wait_for(state="detached", timeout=15000)
+
+
+# --- 9.14a-3: km/day on the card + «Сануулга | Км шалгах» at phone width ---------------------------
+# Needs an API with contract v0.19 (readings preview) and migration 010; skipped against an older API.
+
+FIELD_JS = """() => [...document.querySelectorAll('.st-key-card_km_form input')]
+  .map(e => parseFloat(getComputedStyle(e).fontSize))"""
+
+
+def _open_card(page, ui_url: str, plate: str) -> None:
+    page.goto(ui_url + "/search")
+    page.wait_for_selector("text=Камераар хайх", timeout=20000)
+    page.get_by_label("Улсын дугаар эсвэл утас").fill(plate)
+    page.get_by_role("button", name="Хайх", exact=True).click()
+    page.wait_for_selector(".plate", timeout=15000)
+    page.wait_for_timeout(800)
+
+
+def test_card_km_section_and_form_fit_phone(ui_url, phone_page, shot_dir) -> None:
+    """Card: «Км/өдөр» row + «Км бүртгэл» fit 390 px; «Км бүртгэх» form: fields >= 16 px (no iOS zoom),
+    buttons >= 44 px tall, nothing sideways."""
+    plate = os.environ.get("UI_BROWSER_PLATE")
+    if not plate:
+        pytest.skip("set UI_BROWSER_PLATE to a plate in the DB to check the card")
+    _open_card(phone_page, ui_url, plate)
+    if phone_page.locator(".st-key-card_km").count() == 0:
+        pytest.skip("API before contract v0.18 (no km readings)")
+    assert phone_page.locator("text=Км/өдөр").count() >= 1
+    _check_phone_width(phone_page, shot_dir, "screen_card_km")
+    phone_page.get_by_role("button", name="Км бүртгэх").click()
+    phone_page.wait_for_selector(".st-key-card_km_form", timeout=10000)
+    phone_page.wait_for_timeout(500)
+    assert all(size >= 16 for size in phone_page.evaluate(FIELD_JS))
+    for name in ("Болих", "Үргэлжлүүлэх"):
+        box = phone_page.get_by_role("button", name=name).bounding_box()
+        assert box["height"] >= 44 and box["x"] + box["width"] <= PHONE["width"], (name, box)
+    _check_phone_width(phone_page, shot_dir, "screen_card_km_form")
+
+
+def test_reminder_and_km_check_lists_fit_phone(ui_url, phone_page, shot_dir) -> None:
+    """«Сануулга»: the switch is full width with 44 px segments; both lists fit 390 px."""
+    phone_page.goto(ui_url + "/reminders")
+    phone_page.wait_for_selector("text=Гараар илгээнэ", timeout=20000)
+    phone_page.wait_for_timeout(800)
+    track = phone_page.locator(".st-key-rem_tab div:has(> button)").first
+    if track.count() == 0:
+        pytest.skip("API before contract v0.18 (no km-check list)")
+    box = track.bounding_box()
+    assert box["width"] >= PHONE["width"] - 2 * 20 - 1, box
+    for b in phone_page.locator(".st-key-rem_tab button").all():
+        assert b.bounding_box()["height"] >= 44
+    _check_phone_width(phone_page, shot_dir, "screen_reminders_list")
+    phone_page.locator(".st-key-rem_tab button", has_text="Км шалгах").click()
+    phone_page.wait_for_selector("text=Км асуух (", timeout=10000)
+    _check_phone_width(phone_page, shot_dir, "screen_km_checks")

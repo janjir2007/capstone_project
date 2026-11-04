@@ -308,6 +308,18 @@ class ReadingIn(BaseModel):
                                                                 "service, not in the future")
 
 
+class ReadingPreview(BaseModel):
+    """POST /vehicles/{id}/readings/preview (9.14a-3): the reading as it WOULD be stored + the pace after it."""
+
+    unit: MeterUnit
+    value: float
+    reading_date: date
+    status: Literal["ok", "flagged"]
+    flag_reason: ReadingFlag | None
+    rate_per_day: float | None
+    pace: PaceOut
+
+
 class ReadingSaved(BaseModel):
     """POST /vehicles/{id}/readings answer: the stored reading and the truck's pace after it."""
 

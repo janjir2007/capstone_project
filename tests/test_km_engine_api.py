@@ -105,6 +105,24 @@ def test_reply_moves_the_first_reminder(client: TestClient) -> None:  # noqa: F8
     assert vid not in due_ids(client, as_of="2026-10-10")            # as_of before the reply: not known yet
 
 
+def test_preview_equals_the_save_and_stores_nothing(client: TestClient, pg: Connection) -> None:  # noqa: F811
+    """9.14a-3 (the UI's confirm step): preview = what the save gives, without storing; same refusals."""
+    vid = new_service(client, "0110 ТЕС", "2026-09-01", km=100_000)["vehicle_id"]
+    count = text("SELECT count(*) FROM odometer_readings WHERE vehicle_id = :v AND source = 'manual'")
+    preview = client.post(f"/vehicles/{vid}/readings/preview", json={"value": 116_000, "reading_date": "2026-10-11"})
+    assert preview.status_code == 200, preview.text
+    body = preview.json()
+    assert pg.execute(count, {"v": vid}).scalar_one() == 0
+    saved = reading(client, vid, 116_000, "2026-10-11").json()
+    assert body == {k: saved["reading"][k] for k in ("unit", "value", "reading_date", "status", "flag_reason",
+                                                     "rate_per_day")} | {"pace": saved["pace"]}
+    typo = client.post(f"/vehicles/{vid}/readings/preview", json={"value": 99_000, "reading_date": "2026-10-12"}).json()
+    assert (typo["status"], typo["flag_reason"], typo["pace"]["reading_value"]) == ("flagged", "not_higher", 116_000.0)
+    assert client.post(f"/vehicles/{vid}/readings/preview", json={"value": 1, "reading_date": "2026-10-13"}).status_code == 422
+    assert client.post("/vehicles/999999/readings/preview", json={"value": 1}).status_code == 404
+    assert pg.execute(count, {"v": vid}).scalar_one() == 1
+
+
 def test_unusable_reply_is_stored_flagged_and_not_used(client: TestClient) -> None:  # noqa: F811
     vid = new_service(client, "0103 ТЕС", "2026-09-01", km=100_000)["vehicle_id"]
     lower = reading(client, vid, 99_000, "2026-10-01").json()

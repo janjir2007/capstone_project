@@ -1,7 +1,9 @@
 """Driver meter readings (task 9.14a): the driver's current km, typed in by the oil changer.
 
-POST   /vehicles/{vehicle_id}/readings   {value, reading_date?}  store one (source 'manual')
-DELETE /readings/{reading_id}                                    remove a manual one (a typo)
+POST   /vehicles/{vehicle_id}/readings           {value, reading_date?}  store one (source 'manual')
+POST   /vehicles/{vehicle_id}/readings/preview   same body: what it WOULD give, nothing stored (9.14a-3:
+                                                 the UI's confirm step; the UI has no copy of the rules)
+DELETE /readings/{reading_id}                                            remove a manual one (a typo)
 
 A reading counts from the truck's LATEST service and must be after it (not on the same day) and not
 in the future. It is stored even when it cannot be used (status 'flagged' + flag_reason, PM 9.14a:
@@ -19,10 +21,10 @@ from sqlalchemy.orm import Session
 from src.api.clock import get_today
 from src.api.db import get_session
 from src.api.history import driver_readings, meter, pace_out, schedule_of, service_records
-from src.api.models import OdometerReading, Vehicle
+from src.api.models import OdometerReading, ServiceRecord, Vehicle
 from src.api.pace import Reading, new_reading_flag, rate
 from src.api.routers.reminders import RulesDep
-from src.api.schemas import ReadingIn, ReadingOut, ReadingSaved
+from src.api.schemas import ReadingIn, ReadingOut, ReadingPreview, ReadingSaved
 
 router = APIRouter(tags=["readings"])
 
@@ -34,11 +36,9 @@ def unprocessable(message: str) -> HTTPException:
     return HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, message)
 
 
-@router.post("/vehicles/{vehicle_id}/readings", response_model=ReadingSaved, status_code=status.HTTP_201_CREATED)
-def add_reading(vehicle_id: int, body: ReadingIn, session: SessionDep, today: TodayDep,
-                rules: RulesDep) -> ReadingSaved:
-    """Store the driver's reading. 404 unknown truck · 422 no service yet, a day in the future, or a
-    day not after the latest service. A reading that cannot be used is stored as 'flagged' (201)."""
+def new_reading(session: Session, vehicle_id: int, body: ReadingIn,
+                today: date) -> tuple[list[ServiceRecord], OdometerReading]:
+    """The checked, NOT yet stored reading + the truck's services (newest first). Raises 404 / 422."""
     if session.get(Vehicle, vehicle_id) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"vehicle {vehicle_id} not found")
     records = service_records(session, vehicle_id)  # newest first
@@ -60,11 +60,34 @@ def add_reading(vehicle_id: int, body: ReadingIn, session: SessionDep, today: To
     row = OdometerReading(vehicle_id=vehicle_id, service_id=latest.id, unit=unit, value=body.value, reading_date=day,
                           source="manual", status="ok" if flag is None else "flagged", flag_reason=flag,
                           rate_per_day=None if per_day is None else round(per_day, 1))
+    return list(records), row
+
+
+@router.post("/vehicles/{vehicle_id}/readings", response_model=ReadingSaved, status_code=status.HTTP_201_CREATED)
+def add_reading(vehicle_id: int, body: ReadingIn, session: SessionDep, today: TodayDep,
+                rules: RulesDep) -> ReadingSaved:
+    """Store the driver's reading. 404 unknown truck · 422 no service yet, a day in the future, or a
+    day not after the latest service. A reading that cannot be used is stored as 'flagged' (201)."""
+    records, row = new_reading(session, vehicle_id, body, today)
     session.add(row)
     session.commit()
     session.refresh(row)
     plan = schedule_of(list(reversed(records)), driver_readings(session, [vehicle_id]).get(vehicle_id, []), rules)
     return ReadingSaved(reading=ReadingOut.model_validate(row), pace=pace_out(plan))
+
+
+@router.post("/vehicles/{vehicle_id}/readings/preview", response_model=ReadingPreview)
+def preview_reading(vehicle_id: int, body: ReadingIn, session: SessionDep, today: TodayDep,
+                    rules: RulesDep) -> ReadingPreview:
+    """What POST /vehicles/{id}/readings WOULD store and the pace it WOULD give; nothing is stored.
+    Same 404 / 422 as the real one."""
+    records, row = new_reading(session, vehicle_id, body, today)
+    usable = driver_readings(session, [vehicle_id]).get(vehicle_id, []) + ([row] if row.status == "ok" else [])
+    plan = schedule_of(list(reversed(records)), usable, rules)
+    return ReadingPreview(unit=row.unit, value=float(row.value), reading_date=row.reading_date, status=row.status,
+                          flag_reason=row.flag_reason,
+                          rate_per_day=None if row.rate_per_day is None else float(row.rate_per_day),
+                          pace=pace_out(plan))
 
 
 @router.delete("/readings/{reading_id}", status_code=status.HTTP_204_NO_CONTENT)

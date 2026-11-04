@@ -16,6 +16,11 @@
   that phone. «Мессеж хүсээгүй утас» lists them; «Буцаах» = DELETE (a mistaken tap).
 - «Удахгүй»: GET /reminders/due?as_of=<API today + 7> minus today's list = reminders due this week.
 - Link to «Хяналтын самбар» (segment counts, views/dashboard.py).
+- 9.14a-3: switch «Сануулга (N) | Км шалгах (M)». «Км шалгах» (GET /km-checks/due): trucks without a
+  km/day, 34+ days after their service — asks the driver for his km (not a reminder). A row like a
+  reminder: plate, driver, days since · phone, «SMS илгээх» (sms: link with the km-check text) ->
+  «Илгээсэн» (POST /km-checks/{id}/sent), «Залгах», «Дахиж илгээхгүй» (the same stop list), and
+  «Хариу бүртгэх» = the truck's card with «Км бүртгэх» open (the reply moves the reminder).
 """
 
 import html
@@ -125,16 +130,64 @@ def reminder_row(r: dict, first: bool) -> None:
             st.button("Тийм", key=f"yes_{sid}", on_click=on_sent, args=(sid,), type="primary",
                       icon=":material/check:")
             st.button("Үгүй", key=f"no_{sid}", on_click=on_not_sent, args=(sid,))
-    phone = r.get("phone")
+    stop_controls(sid, r.get("phone"))
+
+
+def stop_controls(sid: int, phone: str | None, prefix: str = "") -> None:
+    """«Дахиж илгээхгүй» -> «… утсанд дахиж илгээхгүй юу?» «Тийм» / «Үгүй» (one stop list for reminders
+    and km checks). ``prefix`` keeps the km-check widgets apart from the reminder ones."""
     if phone and sid in stop_asking():
-        with st.container(horizontal=True, vertical_alignment="center", key=f"rem_stop_ask_{sid}"):
+        with st.container(horizontal=True, vertical_alignment="center", key=f"{prefix or 'rem_'}stop_ask_{sid}"):
             common.html_block(f'<span class="act-t">{html.escape(logic.phone_text(phone))} утсанд дахиж '
                               'илгээхгүй юу?</span>')
-            st.button("Тийм", key=f"stop_yes_{sid}", on_click=on_stop, args=(sid, phone), type="primary")
-            st.button("Үгүй", key=f"stop_no_{sid}", on_click=on_stop_cancel, args=(sid,))
+            st.button("Тийм", key=f"{prefix}stop_yes_{sid}", on_click=on_stop, args=(sid, phone), type="primary")
+            st.button("Үгүй", key=f"{prefix}stop_no_{sid}", on_click=on_stop_cancel, args=(sid,))
     elif phone:  # the driver said "stop" (9.5b)
-        st.button("Дахиж илгээхгүй", key=f"stop_{sid}", on_click=on_stop_ask, args=(sid,), type="tertiary",
+        st.button("Дахиж илгээхгүй", key=f"{prefix}stop_{sid}", on_click=on_stop_ask, args=(sid,), type="tertiary",
                   icon=":material/notifications_off:")
+
+
+def on_km_sent(service_id: int) -> None:
+    """Km check «Илгээсэн»: log it in the API (not a reminder), keep the answer for the message."""
+    try:
+        row = api_client.mark_km_check_sent(service_id)
+    except api_client.NotLatestService:
+        st.session_state["rem_msg"] = ("warning", "Энэ машин шинэ үйлчилгээтэй болсон — жагсаалтыг шинэчиллээ.")
+    except api_client.ApiError as exc:
+        st.session_state["rem_msg"] = ("error", " ".join(logic.error_messages(exc.status, exc.detail)))
+    else:
+        if row.get("already_sent"):
+            st.session_state["rem_msg"] = ("info", f"Өмнө нь илгээсэн гэж тэмдэглэгдсэн ({row.get('sent_at', '')[:16]}).")
+        else:
+            st.session_state["rem_msg"] = ("success", f"Км асуусан гэж тэмдэглэлээ · {row.get('phone') or ''}")
+
+
+def km_check_row(c: dict, first: bool) -> None:
+    """One truck to ask for its km: like a reminder row, «Км асуух» pill, no Viber (9.14a-3)."""
+    label, fg, bg = logic.KM_CHECK_PILL
+    meta = " · ".join(t.replace(" ", "\u00a0") for t in
+                      (logic.days_since_text(c.get("days_since")), logic.phone_text(c.get("phone")) or "утасгүй"))
+    common.html_block(
+        f'<div class="rem{"" if first else " sep"}"><span class="plate">{html.escape(c["identifier"])}</span>'
+        f'<div class="who"><div class="n">{html.escape(c.get("driver_name") or c.get("company") or "—")}</div>'
+        f'<div class="m">{html.escape(meta)}</div></div>'
+        f'<span class="pill-st" style="color:{fg};background:{bg}">{html.escape(label)}</span></div>'
+    )
+    sid = c["service_id"]
+    st.code(c.get("message_mn", ""), language=None, wrap_lines=True)  # copy button = desktop fallback
+    sms = logic.sms_url(c.get("phone"), c.get("message_mn"))
+    if sms:
+        st.link_button("SMS илгээх", sms, type="primary", width="stretch", icon=":material/sms:")
+    with st.container(horizontal=True, key=f"km_act_{sid}"):
+        if c.get("phone"):
+            st.link_button("Залгах", f"tel:{c['phone']}", width="stretch", icon=":material/call:")
+        st.button("Илгээсэн", key=f"km_sent_{sid}", on_click=on_km_sent, args=(sid,),
+                  width="stretch", icon=":material/check:")
+    if st.button("Хариу бүртгэх", key=f"km_reply_{sid}", type="tertiary", icon=":material/speed:"):
+        st.session_state[common.KM_FORM] = c["vehicle_id"]  # the card opens with «Км бүртгэх» open
+        st.session_state.pop(common.KM_PREVIEW, None)
+        common.go_card(c["vehicle_id"])
+    stop_controls(sid, c.get("phone"), prefix="km_")
 
 
 def upcoming(as_of: str, today_ids: set[int]) -> list[dict]:
@@ -153,22 +206,50 @@ msg = st.session_state.pop("rem_msg", None)
 if msg:
     getattr(st, msg[0])(msg[1])
 
-with st.container(key="card_how"):
-    common.html_block(
-        f'<div class="act"><span class="act-ic green">{common.icon("send")}</span><div>'
-        '<div class="act-t">Гараар илгээнэ</div>'
-        '<div class="act-s">«SMS илгээх» дарж мессежээ илгээгээд «Илгээсэн» дарна. '
-        '«Viber-ээр илгээх» дарвал чатаа сонгоод илгээнэ, дараа нь «Тийм» дарна. '
-        'Компьютер дээр мессежийг хуулж илгээгээд «Илгээсэн» дарна.</div></div></div>'
-    )
+# 9.14a-3: «Сануулга» page CSS (only while this screen is open): the list switch = segmented control
+# (grey track, picked one white), full width, like the dashboard's period switch.
+common.html_block("""<style>
+.st-key-rem_tab, .st-key-rem_tab [data-testid="stButtonGroup"], .st-key-rem_tab div:has(> button) {width: 100% !important; max-width: none !important;}
+.st-key-rem_tab div:has(> button) {display: flex; background: #E9ECF1; border-radius: 12px; padding: 4px; gap: 4px !important;}
+.st-key-rem_tab button {flex: 1 1 0; min-width: 0; min-height: 44px; padding: 4px 8px !important; border-radius: 8px !important;
+  background: transparent !important; color: var(--muted) !important; border: none !important; touch-action: manipulation;}
+.st-key-rem_tab button[aria-checked="true"] {background: #fff !important; color: var(--ink) !important; box-shadow: 0 1px 2px rgba(16,24,40,.08);}
+.st-key-rem_tab button p {font-size: 15px !important; font-weight: 500; white-space: nowrap;}
+/* the pill goes under the driver line (as on the dashboard, 9.12): beside it the 390 px row broke
+   «97 хоногийн өмнө» mid-word */
+.rem {display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 12px; row-gap: 6px;}
+.rem .who {min-width: 0;} .rem .pill-st {grid-column: 2; justify-self: start;}
+</style>""")
 
 try:
     due = api_client.reminders_due()
 except api_client.ApiError as exc:
     due = None
     common.show_api_error(exc)
+try:
+    km = api_client.km_checks_due()
+except api_client.ApiError as exc:
+    km = None
+    common.show_api_error(exc)
 
-if due is not None:
+reminders = (due or {}).get("reminders") or []
+checks = (km or {}).get("checks") or []
+tabs = {"rem": f"Сануулга ({len(reminders)})", "km": f"Км шалгах ({len(checks)})"}
+tab = st.segmented_control("Жагсаалт", list(tabs), format_func=tabs.get, default="rem", required=True,
+                           key="rem_tab", label_visibility="collapsed") or "rem"
+
+
+def show_reminders(due: dict) -> None:
+    """The reminder list (9.5c), unchanged by 9.14a-3 apart from sitting under the switch."""
+    with st.container(key="card_how"):
+        common.html_block(
+            f'<div class="act"><span class="act-ic green">{common.icon("send")}</span><div>'
+            '<div class="act-t">Гараар илгээнэ</div>'
+            '<div class="act-s">«SMS илгээх» дарж мессежээ илгээгээд «Илгээсэн» дарна. '
+            '«Viber-ээр илгээх» дарвал чатаа сонгоод илгээнэ, дараа нь «Тийм» дарна. '
+            'Компьютер дээр мессежийг хуулж илгээгээд «Илгээсэн» дарна.</div></div></div>'
+        )
+
     reminders = due.get("reminders") or []
     counts = logic.reminder_counts(reminders)
     red = ' style="color:#B42318"' if counts["at_risk"] else ""  # at risk: the customer may be lost
@@ -202,6 +283,34 @@ if due is not None:
                 for r in soon
             )
             common.html_block(f'<div class="kv sm">{rows}</div>')
+
+
+def show_km_checks(km: dict) -> None:
+    """«Км шалгах»: how it works, then one row per truck (oldest check day first, API order)."""
+    with st.container(key="card_km_how"):
+        common.html_block(
+            f'<div class="act"><span class="act-ic green">{common.icon("send")}</span><div>'
+            '<div class="act-t">Жолоочоос км асууна</div>'
+            '<div class="act-s">«SMS илгээх» дарж асуугаад «Илгээсэн» дарна. Жолооч хариу бичвэл '
+            '«Хариу бүртгэх» дарж км-ийг оруулна: сануулгын огноо түүний гүйлтээр тооцогдоно.</div></div></div>'
+        )
+    if km.get("contact_is_placeholder"):
+        common.html_block('<div class="note-line"><i class="dot" style="background:#A05A00"></i>'
+                          'Мессеж дэх утас түр дугаар байна (API-д CONTACT_PHONE тохируулаагүй).</div>')
+    checks = km.get("checks") or []
+    st.subheader(f"Км асуух ({len(checks)})")
+    with st.container(key="card_km_checks"):
+        if not checks:
+            common.html_block('<span class="muted">Өнөөдөр км асуух машин алга.</span>')
+        for i, c in enumerate(checks):
+            km_check_row(c, first=i == 0)
+
+
+if tab == "km":
+    if km is not None:
+        show_km_checks(km)
+elif due is not None:
+    show_reminders(due)
 
 try:
     stops = api_client.reminder_stops()

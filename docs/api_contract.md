@@ -1,6 +1,6 @@
 # API contract — data, model and reminder endpoints (tasks 4.2, 4.2b, 4.3, 4.4)
 
-- **Version:** 0.18 (task 9.14a-2, 2026-11-04) · **Owner:** Backend Engineer
+- **Version:** 0.19 (task 9.14a-3, 2026-11-04) · **Owner:** Backend Engineer
 - Extends PROJECT_STATE §8 "API contract" with exact fields. The live, always
   current version is the OpenAPI page of the running API: `http://localhost:8000/docs`.
 - Field names follow [`data_dictionary.md`](data_dictionary.md). Code:
@@ -311,6 +311,10 @@ one that cannot be used is still stored, `status: flagged` + `flag_reason`.
 - **404** unknown truck · **422** no service yet, `reading_date` in the future or not after the latest
   service (the same day is refused too), `value` ≤ 0, unknown fields
 
+`POST /vehicles/{id}/readings/preview` (v0.19, task 9.14a-3): the same body, checks and errors, but **nothing
+is stored** → **200** `{unit, value, reading_date, status, flag_reason, rate_per_day, pace}` = what the save
+would store and the Pace after it. The UI's «Км бүртгэх» confirm step uses it (the UI has no copy of the rules).
+
 `DELETE /readings/{id}` removes a typed-in reading (a typo): **204** · **404** unknown · **422** not
 `source = manual` (a service's own reading is part of the service).
 
@@ -399,3 +403,4 @@ The only API routes besides `/health` that Caddy makes public. Not used by the U
 | 0.16 | 2026-11-02 | Task 9.6b-4: Artlab payments, **additive + read only**. ServiceOut gets `payment_status`, `amount_due`, `match_confidence` (card `history` / `last_service`, lookup cards, search rows; null in the `POST /services` answer and before the first successful sync). `GET /vehicles/search?payment_status=`. New `GET /payments/unpaid`, `GET /payments/sync-status`. Needs migrations 008 + 009 (run `scripts.migrate` before the new API starts) |
 | 0.17 | 2026-11-02 | Task 9.12-1: **additive, read only**. New `GET /stats/period?period=today\|week\|month&as_of=` (services, new vehicles = first-ever service, liters, reminders sent; week = Monday to today, UB). `GET /vehicles/search?segment=` (truck filter, same segment rule). `at_risk_days` added to `GET /stats/segments` |
 | 0.18 | 2026-11-04 | Task 9.14a-2: per-truck km/day engine. ServiceOut `target_km` now **stored** (+ `interval_km`; `OIL_INTERVAL_KM` default 12000, was 15000; older services 15000 by migration 010). VehicleCard `pace` + `readings` (additive). `GET /reminders/due`: `send_on` = the km/day reminder day when the pace is known (meaning change; else 75 days as before) + `next_due_date`, `rate_per_day`, `pace_source`, `basis` (additive); `target_km` nullable. New: `POST /vehicles/{id}/readings`, `DELETE /readings/{id}`, `GET /km-checks/due`, `POST /km-checks/{service_id}/sent`. `GET /stats/period` + `km_checks_sent` (additive). Settings `REMINDER_LEAD_DAYS` (5), `KM_CHECK_DAYS` (34) |
+| 0.19 | 2026-11-04 | Task 9.14a-3: `POST /vehicles/{id}/readings/preview` (additive): what a reading would give, nothing stored — for the UI's confirm step |

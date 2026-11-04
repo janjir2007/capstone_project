@@ -28,7 +28,7 @@ from src.api.routers import (auth, destinations, health, km_checks, payments, pl
                              stats, vehicles)
 from src.cv.plate_reader import PlateRecognizer
 
-API_VERSION = "0.18.0"  # = docs/api_contract.md version
+API_VERSION = "0.19.0"  # = docs/api_contract.md version
 log = logging.getLogger("uvicorn.error")
 
 

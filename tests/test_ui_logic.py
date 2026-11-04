@@ -774,3 +774,55 @@ def test_picked_row_marker_or_any_cell() -> None:
     assert logic.picked_row([], [(4, "Компани")]) == 4
     assert logic.picked_row([1], [(4, "Тос")]) == 1          # the row marker wins
     assert logic.picked_row([], []) is None
+
+
+# ---------------------------------------------------------------- task 9.14a-3: km/day texts
+
+PACE = {"unit": "km", "rate_per_day": 286.6, "source": "services", "reading_date": None, "next_due_date": "2026-10-01"}
+
+
+def test_pace_text_sources_and_none() -> None:
+    assert logic.pace_text(PACE) == "287 · өмнөх 2 үйлчилгээ"
+    assert logic.pace_text(PACE | {"source": "reading", "rate_per_day": 400.0, "reading_date": "2026-10-11"}) == \
+        "400 · жолоочийн хариу (2026-10-11)"
+    assert logic.pace_text(PACE | {"rate_per_day": None}) == logic.pace_text(None) == "Мэдээлэл алга"
+    assert logic.pace_text(PACE | {"unit": "hours", "rate_per_day": 8.72}) == "8.7 · өмнөх 2 үйлчилгээ"
+    assert (logic.pace_label(PACE), logic.pace_label({"unit": "hours"}), logic.pace_label(None)) == \
+        ("Км/өдөр", "Цаг/өдөр", "Км/өдөр")
+
+
+def test_next_change_text() -> None:
+    card = {"last_service": {"target_km": 270500}, "pace": PACE}
+    assert logic.next_change_text(card) == "~2026-10-01 · 270 500 км"
+    assert logic.next_change_text(card | {"pace": PACE | {"next_due_date": None}}) == "270 500 км"
+    assert logic.next_change_text({"last_service": {"target_km": None}, "pace": PACE}) is None   # mine truck
+    assert logic.next_change_text(None) is None
+
+
+@pytest.mark.parametrize(("reason", "unit", "text"), [
+    (None, "km", ""),
+    ("not_higher", "km", "Өмнөхөөс бага буюу тэнцүү — тооцоонд ашиглахгүй"),
+    ("too_slow", "km", "Өдөрт 20 км-ээс бага — тооцоонд ашиглахгүй"),
+    ("too_fast", "km", "Өдөрт 1 200 км-ээс их — тооцоонд ашиглахгүй"),
+    ("too_fast", "hours", "Өдөрт 24 цагаас их — тооцоонд ашиглахгүй"),
+])
+def test_flag_text(reason: str | None, unit: str, text: str) -> None:
+    assert logic.flag_text(reason, unit) == text
+
+
+def test_reading_text_and_preview_rows() -> None:
+    assert logic.reading_text({"unit": "km", "value": 116000.0, "reading_date": "2026-10-11", "source": "manual"}) == \
+        "2026-10-11 · 116 000 км · Жолоочийн хариу"
+    assert logic.reading_text({"unit": "hours", "value": 13300.5, "reading_date": "2026-10-10", "source": "service"}) == \
+        "2026-10-10 · 13 300.5 мц · Тос солилт"
+    ok = {"unit": "km", "status": "ok", "rate_per_day": 400.0,
+          "pace": {"unit": "km", "next_due_date": "2026-10-01", "reminder_on": "2026-10-11"}}
+    assert logic.preview_rows(ok) == [("Км/өдөр", "400"), ("Дараагийн солилт", "~2026-10-01"), ("Сануулга", "2026-10-11")]
+    flagged = ok | {"status": "flagged", "rate_per_day": -25.0}
+    assert logic.preview_rows(flagged) == [("Км/өдөр", "-25")]
+
+
+def test_km_api_errors_in_mongolian() -> None:
+    assert logic.error_messages(422, "reading_date must be after the latest service (2026-09-01)") == \
+        ["Огноо нь сүүлийн тос солилтоос хойш байх ёстой."]
+    assert logic.error_messages(422, [{"msg": "Input should be greater than 0"}]) == ["0-ээс их тоо оруулна уу."]

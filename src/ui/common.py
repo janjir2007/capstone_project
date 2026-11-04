@@ -36,6 +36,8 @@ DASHBOARD_PAGE = "views/dashboard.py"
 REC_PENDING = "rec_pending"        # {"identifier_type", "identifier", "card" | None}
 REC_RESET = "rec_reset"            # True -> record screen starts at the camera step
 CARD_ID = "card_id"                # vehicle shown on the card screen
+KM_FORM = "km_form"                # 9.14a: vehicle whose «Км бүртгэх» form is open (km-check rows open it)
+KM_PREVIEW = "km_preview"          # 9.14a: the confirm step's preview (vehicle_id + API answer)
 SEARCH_PENDING = "search_pending"  # query to search on arrival
 RECENT = "recent_vehicles"         # "Сүүлд үзсэн": [{id, identifier, company, status}], this session only
 RECENT_MAX = 5
@@ -304,6 +306,10 @@ a.logout:hover {color: var(--pri-dark);}
 .rem.sep {border-top: 1px solid var(--line); padding-top: 16px; margin-top: 4px;}
 .rem .who {flex: 1; min-width: 96px;} .rem .n {font-size: 15px; font-weight: 500;}
 .rem .m {font-size: 13px; color: var(--muted);}
+/* 9.14a: «Км бүртгэл» rows — text takes the row, «Буцаах» stays at the right; a flagged reason in red */
+[class*="st-key-km_row_"] {flex-wrap: nowrap !important;}
+[class*="st-key-km_row_"] > [data-testid="stElementContainer"]:first-child {flex: 1 1 auto; min-width: 0; width: auto !important;}
+.km-r .t {font-size: 14px; font-variant-numeric: tabular-nums;} .km-r .why {font-size: 13px; color: #B42318; margin-top: 2px;}
 [data-testid="stCode"] pre {background: #F6F7F9; border: none; border-radius: 12px; font-size: 14px;}
 [data-testid="stCode"] pre, [data-testid="stCode"] code {font-family: -apple-system, BlinkMacSystemFont,
   "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif !important;}
@@ -625,17 +631,22 @@ TARGET_COLORS = ("#1F4E9D", "#EAF0FA")  # brand blue on its tint (same pair as �
 
 def render_target(card: dict) -> None:
     """Task 9.5a, card: «Дараагийн тос солилт» · «165 000 км» · «Сүүлд: 150 000 км · 2026-10-01 · +15 000 км».
-    Shown instead of the predicted date. Nothing for mine trucks (engine hours only, no target_km)."""
+    Shown instead of the predicted date. Nothing for mine trucks (engine hours only, no target_km).
+    9.14a: with a km/day the due day comes first: «~2026-10-01 · 165 000 км» (the API's next_due_date)."""
     last = card.get("last_service") or {}
     if last.get("target_km") is None:
         return
     fg, bg = TARGET_COLORS
     step = logic.format_number(last["target_km"] - last["odometer_km"], "км")
+    # «~2026-11-17 · 574 255 км»: no-break spaces inside each part, so a phone line breaks only at «·»
+    # (not a <span>: «.pc-big span» is the small sub-text style)
+    big = " · ".join(html.escape(p).replace(" ", "\u00a0")
+                     for p in (logic.next_change_text(card) or logic.target_text(last)).split(" · "))
     since = " · ".join([logic.format_number(last["odometer_km"], "км"), last.get("service_date") or logic.NOT_GIVEN])
     html_block(
         f'<div class="pc" style="background:{bg};color:{fg}">'
         f'<div class="pc-top">{_dot(fg)}Дараагийн тос солилт</div>'
-        f'<div class="pc-big">{html.escape(logic.target_text(last))}</div>'
+        f'<div class="pc-big">{big}</div>'
         f'<div class="pc-date">Сүүлд: {html.escape(since)} · +{html.escape(step)}</div></div>'
     )
 
@@ -654,7 +665,8 @@ def render_arrival(prediction: dict | None) -> None:
 
 
 def render_tiles(card: dict) -> None:
-    """Fact rows (label left, value right): last change, «15W-40 · ердийн 32 л», [destination], driver.
+    """Fact rows (label left, value right): last change, «15W-40 · ердийн 32 л», [destination], driver,
+    km/day (9.14a).
     9.5a: «Чиглэл» only when the last service has one (old records; the form no longer asks)."""
     last = card.get("last_service") or {}
     destination = logic.service_destination_text(last) if last else logic.NOT_GIVEN
@@ -663,6 +675,8 @@ def render_tiles(card: dict) -> None:
         ("Тос", logic.oil_pair_text(last, card.get("usual_liters"))),
         *([("Чиглэл", destination)] if destination != logic.NOT_GIVEN else []),
         ("Жолооч", logic.driver_text(last.get("driver_name"), last.get("driver_phone"))),
+        # 9.14a: «Км/өдөр: 287 · өмнөх 2 үйлчилгээ» (mine trucks: «Цаг/өдөр»), «Мэдээлэл алга» without one
+        *([(logic.pace_label(card["pace"]), logic.pace_text(card["pace"]))] if card.get("pace") else []),
     ]
     with st.container(key="card_facts"):
         html_block(kv_rows(pairs))

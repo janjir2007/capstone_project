@@ -199,6 +199,36 @@ def unstop_phone(phone: str) -> None:
     _request("DELETE", f"/reminders/stops/{phone}")
 
 
+def _reading_body(value: float, reading_date: str | None) -> dict:
+    return {"value": value} | ({"reading_date": reading_date} if reading_date else {})
+
+
+def preview_reading(vehicle_id: int, value: float, reading_date: str | None = None) -> dict:
+    """POST /vehicles/{id}/readings/preview -> {unit, value, reading_date, status, flag_reason, rate_per_day,
+    pace}: what saving WOULD give (contract v0.19, task 9.14a-3); nothing is stored."""
+    return _request("POST", f"/vehicles/{vehicle_id}/readings/preview", json=_reading_body(value, reading_date))
+
+
+def add_reading(vehicle_id: int, value: float, reading_date: str | None = None) -> dict:
+    """POST /vehicles/{id}/readings -> {reading, pace}: the driver's km, typed in (contract v0.18)."""
+    return _request("POST", f"/vehicles/{vehicle_id}/readings", json=_reading_body(value, reading_date))
+
+
+def delete_reading(reading_id: int) -> None:
+    """DELETE /readings/{id}: remove a typed-in reading (a typo)."""
+    _request("DELETE", f"/readings/{reading_id}")
+
+
+def km_checks_due(as_of: str | None = None) -> dict:
+    """GET /km-checks/due -> {as_of, contact_is_placeholder, checks: [KmCheck]} (contract v0.18)."""
+    return _request("GET", "/km-checks/due", params={"as_of": as_of} if as_of else None)
+
+
+def mark_km_check_sent(service_id: int) -> dict:
+    """POST /km-checks/{service_id}/sent -> stored row with already_sent. Raises NotLatestService (409)."""
+    return _request("POST", f"/km-checks/{service_id}/sent")
+
+
 def payments_unpaid(limit: int = 200) -> dict:
     """GET /payments/unpaid -> {connected, total, total_due, items} (task 9.6b-5, read only)."""
     return _request("GET", "/payments/unpaid", params={"limit": limit})
