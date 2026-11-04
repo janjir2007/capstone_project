@@ -239,6 +239,20 @@ systemctl enable --now ocp-artlab-bills.timer ocp-artlab-acctxn.timer ocp-artlab
 systemctl list-timers 'ocp-artlab-*'
 ```
 
+## 8f. Real-DB probe (task 9.6c-2): safety rules + server command
+
+Plan: `docs/plans/9.6c_plan.md`. On the server the probe runs only through `deploy/artlab_probe.sh <section>`
+(paymethods | bills | acc-txn). The JSON is saved only under `/root/artlab_probe/` (umask 077), and a plate check runs on the new file.
+
+- Every run first prints the **active connection** (code, name, company, newest bill date) on the screen. Check for real DB vs test DB.
+- Money sums are shown only for groups of **5+ rows** (`"hidden (<5)"` otherwise). acc-txn number columns show the sum (5+),
+  the count of negatives and the digit-length range, never min/max.
+- Bills are counted per `terminal.code / branch.code` (codes only). The plate/phone **extraction rate** is measured on completed
+  SALE_VAT/SALE bills, overall and per terminal, with `meets_sync_bar` (≥ 50 %, PM 9.6c).
+- Errors print our own message or the exception **class** only. The probe refuses to print to a terminal.
+- Allow-list unchanged. `tests/test_artlab_probe.py` plants names, plates, phones, accounts and single amounts in a fake
+  DB and asserts that none of them reach stdout/stderr for any section.
+
 ## 9. Open questions for Artlab
 
 1. ~~Which type marks a credit sale?~~ `LOAN` (§8c). Still open: a **test-DB account code with transactions**
