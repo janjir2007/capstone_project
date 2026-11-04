@@ -17,7 +17,7 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -105,8 +105,9 @@ class UnpaidBill:
     phones: list[str]
 
 
-def unpaid_bills(session: Session, today: date) -> list[UnpaidBill]:
-    """Every unpaid receipt, oldest first (the longest wait on top)."""
+def unpaid_bills(session: Session, today: date, lookback_days: int) -> list[UnpaidBill]:
+    """Unpaid receipts of the last ``lookback_days`` days (linked or not), oldest first (the
+    longest wait on top). Older bills are left out: the sync no longer re-checks them (9.12-3)."""
     rows = session.execute(text(
         "SELECT b.artlab_id, b.bill_date, b.credit_amount, b.total_gross, b.match_confidence, b.match_note, "
         "       b.service_id, v.id, v.identifier, c.name, b.plates, b.phones "
@@ -114,8 +115,8 @@ def unpaid_bills(session: Session, today: date) -> list[UnpaidBill]:
         "LEFT JOIN service_records s ON s.id = b.service_id "
         "LEFT JOIN vehicles v ON v.id = s.vehicle_id "
         "LEFT JOIN companies c ON c.id = v.company_id "
-        "WHERE b.payment_status = 'unpaid' ORDER BY b.bill_date, b.artlab_id"
-    )).all()
+        "WHERE b.payment_status = 'unpaid' AND b.bill_date >= :since ORDER BY b.bill_date, b.artlab_id"
+    ), {"since": today - timedelta(days=lookback_days)}).all()
     return [UnpaidBill(
         artlab_id=r[0], bill_date=r[1], days_waiting=(today - r[1]).days, amount_due=float(r[2]),
         total_gross=None if r[3] is None else float(r[3]), match_confidence=r[4], match_note=r[5],

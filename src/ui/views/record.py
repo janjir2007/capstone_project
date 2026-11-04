@@ -357,7 +357,7 @@ def form_recognized(card: dict, checked: dict) -> None:
                           horizontal_alignment="distribute"):
             common.html_block(
                 f'<div><div class="vh-big">{html.escape(checked["identifier"])}</div>'
-                f'<div class="vh-sub" style="color:#4B5563">{common._dot(logic.SEGMENT_DOTS.get(seg))}'
+                f'<div class="vh-sub" style="color:#4B5563">{common.segment_mark_html(seg)}'
                 f'{html.escape(sub)}</div></div>')
             st.button("Буруу", key="btn_wrong", on_click=on_wrong, type="tertiary")
         rows = [("Өмнөх удаа", logic.prev_visit_text(last))]

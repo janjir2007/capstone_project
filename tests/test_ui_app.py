@@ -1150,6 +1150,17 @@ def test_overview_segment_tiles(fake_api) -> None:
                                (1, "Эргэж ирээгүй", "150+ хоног")):
         assert (f'<div class="segc"><div class="v">{count}</div><div class="k">' in page
                 and f"{label}</div><div class=\"d\">{hint}</div>" in page), label
+    # 9.12-3: «Байнгын» = ⭐, no purple dot anywhere; the other segments keep their dot
+    assert '<span class="seg-ic" aria-hidden="true">⭐</span>Байнгын</div>' in page
+    assert "#6D28D9" not in page
+
+
+def test_segment_mark_star_for_loyal_dot_for_others() -> None:
+    """9.12-3: one mark per segment, the same on every screen (cards, plate chip, record screen)."""
+    assert "⭐" in common.segment_mark_html("loyal") and "dot" not in common.segment_mark_html("loyal")
+    assert common.segment_mark_html("at_risk") == '<i class="dot" style="background:#B42318"></i>'
+    assert common.segment_mark_html(None) == ""
+    assert "⭐" in common.segment_chip_html("loyal", 3) and "Байнгын · 3 удаа" in common.segment_chip_html("loyal", 3)
 
 
 def test_reminders_api_error_shown(fake_api) -> None:

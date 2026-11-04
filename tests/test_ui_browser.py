@@ -355,11 +355,14 @@ DASH_JS = """() => {
     input: box('.st-key-card_dash_search [data-testid="stTextInputRootElement"]'),
     button: box('.st-key-card_dash_search .stFormSubmitButton button'),
     filters: box('.st-key-card_dash_search [data-testid="stExpander"] summary p'),
-    // the placeholder's text width vs the field's inner width (canvas: the input's own font)
-    hint: (i => { const c = document.createElement('canvas').getContext('2d'), st = getComputedStyle(i);
-      c.font = st.fontSize + ' ' + st.fontFamily;
+    // the placeholder's text width vs the field's inner width (canvas: the placeholder's own font;
+    // 9.12-3: 14 px on a phone, the typed text stays 16 px)
+    hint: (i => { const c = document.createElement('canvas').getContext('2d'), st = getComputedStyle(i),
+                        ph = getComputedStyle(i, '::placeholder');
+      c.font = ph.fontSize + ' ' + ph.fontFamily;
       return [Math.ceil(c.measureText(i.placeholder).width),
               i.clientWidth - parseFloat(st.paddingLeft) - parseFloat(st.paddingRight)]; })(q('.st-key-card_dash_search input')),
+    font: parseFloat(getComputedStyle(q('.st-key-card_dash_search input')).fontSize),
     track: box('.st-key-dash_period div:has(> button)'),
     table: !!q('.st-key-dash_table_wrap')?.checkVisibility(), scroller: sc ? [sc.scrollWidth, sc.clientWidth] : null};
 }"""
@@ -396,6 +399,7 @@ def test_dashboard_layout_per_width(dash) -> None:
     assert abs(m["input"]["bottom"] - m["button"]["bottom"]) < 1 and m["button"]["left"] > m["input"]["right"], m
     assert abs(m["filters"]["left"] - m["input"]["left"]) < 1, m
     assert m["hint"][0] <= m["hint"][1], m                           # the whole placeholder is visible
+    assert m["font"] >= 16, m                                        # typed text: no iOS zoom on focus
     assert (m["track"]["width"] < 500) if wide else (m["track"]["width"] >= dash.width - 2 * 16 - 1), m
     assert m["table"] == wide, m                                     # phone: tappable cards instead
 
@@ -425,8 +429,10 @@ def test_dashboard_segment_card_filters_and_outlines(dash) -> None:
 
 
 def test_dashboard_history_below_list_and_in_view(dash) -> None:
-    """Pick a truck (phone: its row; computer: the table's row marker): the history opens BELOW the
-    list, full width, and is scrolled into view."""
+    """Pick a truck (phone: its row; computer: a click in the MIDDLE of table row 1, not its row
+    marker, 9.12-3): that truck's history opens BELOW the list, full width, and is scrolled into view."""
+    # row 1 = the first truck of the list; the phone cards hold the same list (hidden on a computer)
+    first_plate = dash.locator('[class*="st-key-act_dash_"] .plate').first.text_content()
     if dash.width < 768:
         dash.locator('[class*="st-key-act_dash_"]').first.click()
     else:
@@ -435,9 +441,10 @@ def test_dashboard_history_below_list_and_in_view(dash) -> None:
         table.wait_for(state="visible", timeout=15000)
         table.scroll_into_view_if_needed()
         box = table.bounding_box()
-        dash.mouse.click(box["x"] + 14, box["y"] + 35 * 1.5)       # row 1's selection marker
+        dash.mouse.click(box["x"] + box["width"] * 0.5, box["y"] + 35 * 1.5)  # a data cell of row 1
     panel = dash.locator(".st-key-card_dash_history")
     panel.wait_for(timeout=15000)
+    assert panel.locator(".plate").first.text_content() == first_plate     # the clicked row's truck
     dash.wait_for_timeout(1200)                                     # smooth scroll
     p = panel.bounding_box()
     list_box = dash.locator(".st-key-dash_list").bounding_box()

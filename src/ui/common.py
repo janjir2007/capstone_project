@@ -218,6 +218,7 @@ a.logout:hover {color: var(--pri-dark);}
   background: var(--fill); color: var(--ink2);}
 .chip.known {background: #E8F5EE; color: #1E7A4C;} .chip.new {background: var(--pri-tint); color: var(--pri);}
 .dot {display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex: none;}
+.seg-ic {flex: none; font-size: .9em; line-height: 1;}  /* 9.12-3: ⭐ «Байнгын» in place of a dot */
 .muted {color: var(--muted); font-size: 14px;}
 .line {color: var(--muted); font-size: 15px; margin-top: -4px;}
 .pill-st {display: inline-flex; align-items: center; padding: 4px 12px; border-radius: 999px; font-size: 13px; font-weight: 500; white-space: nowrap;}
@@ -392,13 +393,20 @@ def known_chip_html(card: dict | None) -> str:
 
 
 def segment_chip_html(segment: str | None, service_count: int | None = None) -> str:
-    """Small grey chip next to the plate: colored dot + «Байнгын · 3 удаа» (word, never color alone)."""
+    """Small grey chip next to the plate: segment mark + «Байнгын · 3 удаа» (word, never color alone)."""
     parts = [logic.segment_label(segment)] if segment else []
     if service_count:
         parts.append(f"{service_count} удаа")
     if not parts:
         return ""
-    return f'<span class="chip">{_dot(logic.SEGMENT_DOTS.get(segment))}{html.escape(" · ".join(parts))}</span>'
+    return f'<span class="chip">{segment_mark_html(segment)}{html.escape(" · ".join(parts))}</span>'
+
+
+def segment_mark_html(segment: str | None) -> str:
+    """The mark before a segment word, the same on every screen: ⭐ for «Байнгын» (9.12-3),
+    a colored dot for the others, nothing for «Бүгд» / no segment."""
+    icon = logic.SEGMENT_ICONS.get(segment or "")
+    return f'<span class="seg-ic" aria-hidden="true">{icon}</span>' if icon else _dot(logic.SEGMENT_DOTS.get(segment or ""))
 
 
 def _dot(color: str | None) -> str:

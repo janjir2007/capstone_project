@@ -10,9 +10,12 @@ from __future__ import annotations
 
 from datetime import datetime
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import Connection, text
 
+from src.api.config import DEFAULT_UNPAID_LOOKBACK_DAYS, ConfigError, unpaid_lookback_days
+from src.artlab.sync import SyncConfig
 from tests.test_api_data import client, pg  # noqa: F401  (fixtures)
 
 BIG_ID = 104400000000000001  # Artlab ids exceed 2^53 (notes §8c)
@@ -142,6 +145,30 @@ def test_unpaid_list_oldest_first_with_truck_or_receipt_data(client: TestClient,
     assert (unlinked["service_id"], unlinked["vehicle_id"], unlinked["match_note"]) == (None, None, "multiple")
     assert (unlinked["plates"], unlinked["phones"], unlinked["total_gross"]) == (["1234УБА", "5678УНА"], ["99112233"], None)
     assert unlinked["days_waiting"] == 5
+
+
+def test_unpaid_lookback_setting() -> None:
+    """9.12-3: ARTLAB_UNPAID_LOOKBACK_DAYS default 90, same as the sync; a bad value stops the API."""
+    assert unpaid_lookback_days({}) == DEFAULT_UNPAID_LOOKBACK_DAYS == SyncConfig.unpaid_lookback_days == 90
+    assert unpaid_lookback_days({"ARTLAB_UNPAID_LOOKBACK_DAYS": " 30 "}) == 30
+    for raw in ("0", "-5", "abc", "1.5"):
+        with pytest.raises(ConfigError, match="ARTLAB_UNPAID_LOOKBACK_DAYS"):
+            unpaid_lookback_days({"ARTLAB_UNPAID_LOOKBACK_DAYS": raw})
+
+
+def test_unpaid_list_only_within_lookback(client: TestClient, pg: Connection, monkeypatch) -> None:  # noqa: F811
+    """9.12-3: bills older than ARTLAB_UNPAID_LOOKBACK_DAYS (default 90) are not listed, linked or
+    not: a 780-day-old receipt without a plate is left out, 90 days is still in, 91 is out."""
+    monkeypatch.delenv("ARTLAB_UNPAID_LOOKBACK_DAYS", raising=False)
+    seed(pg)
+    add_bill(pg, 21, "2024-08-11", "unpaid", note="none", credit=10000)   # 780 days before TODAY
+    add_bill(pg, 22, "2026-07-02", "unpaid", note="none", credit=20000)   # 90 days
+    add_bill(pg, 23, "2026-07-01", "unpaid", note="none", credit=30000)   # 91 days
+    body = client.get("/payments/unpaid").json()
+    assert [i["artlab_id"] for i in body["items"]] == ["22", "12", str(BIG_ID)]
+    assert (body["total"], body["total_due"]) == (3, 125000.5)                # totals skip old bills too
+    monkeypatch.setenv("ARTLAB_UNPAID_LOOKBACK_DAYS", "10")
+    assert [i["artlab_id"] for i in client.get("/payments/unpaid").json()["items"]] == [str(BIG_ID)]
 
 
 def test_unpaid_limit_keeps_the_totals(client: TestClient, pg: Connection) -> None:  # noqa: F811

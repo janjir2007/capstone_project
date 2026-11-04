@@ -161,6 +161,18 @@ def reminder_rules(env: Mapping[str, str] | None = None) -> ReminderRules:
     return rules
 
 
+# Task 9.12-3: the «Төлөөгүй» list shows only bills from the last N days. Same setting (and default)
+# as the nightly sync's re-check window (src/artlab/sync.py): an older bill is never re-checked, so
+# its «unpaid» may be stale and must not be listed as money owed.
+DEFAULT_UNPAID_LOOKBACK_DAYS = 90
+
+
+def unpaid_lookback_days(env: Mapping[str, str] | None = None) -> int:
+    """ARTLAB_UNPAID_LOOKBACK_DAYS (default 90). Not a whole number > 0 -> ConfigError."""
+    env = os.environ if env is None else env
+    return _whole_days(env, "ARTLAB_UNPAID_LOOKBACK_DAYS", DEFAULT_UNPAID_LOOKBACK_DAYS)
+
+
 def reminder_contact(env: Mapping[str, str] | None = None) -> Contact:
     """Contact at the end of every reminder (needs no database settings).
 

@@ -82,6 +82,9 @@ WIDE_CSS = f"""
   .st-key-dash_period button {{flex: none; padding: 4px 24px !important;}}
 }}
 @media (max-width: {WIDE_PX - 0.02}px) {{
+  /* 9.12-3: the example placeholder fits the ~206 px phone field only at 14 px; typed text stays 16 px
+     (iOS zooms on focus by the input's own size, not the placeholder's) */
+  .st-key-card_dash_search input::placeholder {{font-size: 14px;}}
   .st-key-dash_table_wrap, [data-testid="stLayoutWrapper"]:has(> .st-key-dash_table_wrap) {{display: none !important;}}
 }}
 /* KPI tiles + segment cards: 2×2 on a phone, 4 across on a computer, 12 px apart */
@@ -159,10 +162,12 @@ WIDE_CSS = f"""
 
 
 def on_table_select(key: str) -> None:
-    """Table row clicked: open that truck's history (row number -> id of the table just shown)."""
-    rows = st.session_state[key].selection.rows
+    """Table clicked (any cell of a row, or its row marker): open that truck's history
+    (row number -> id of the table just shown). Nothing picked any more -> the history closes."""
+    selection = st.session_state[key].selection
+    row = logic.picked_row(selection.rows, selection.cells)
     ids = st.session_state.get(DASH_IDS, [])
-    open_history(ids[rows[0]] if rows and rows[0] < len(ids) else None)
+    open_history(ids[row] if row is not None and row < len(ids) else None)
 
 
 def open_history(vehicle_id: int | None) -> None:
@@ -206,11 +211,10 @@ def segment_cards() -> None:
     with st.container(key="dash_segs"):
         for card in logic.segment_cards(stats):
             name = card["segment"] or "all"
-            dot = f'<i class="dot" style="background:{card["dot"]}"></i>' if card["dot"] else ""
             with st.container(key=f"act_seg_{name}"):
                 common.html_block(
                     f'<div class="segc"><div class="v">{card["count"]}</div>'
-                    f'<div class="k">{dot}{html.escape(card["label"])}</div>'
+                    f'<div class="k">{common.segment_mark_html(card["segment"])}{html.escape(card["label"])}</div>'
                     f'<div class="d">{html.escape(card["hint"])}</div></div>')
                 # the label is what a screen reader says: count, and whether this card is the one shown
                 chosen = " · сонгосон" if card["segment"] == picked else ""
@@ -304,7 +308,7 @@ def search_form(options: dict, active: int, payments_on: bool = False, expand: b
             with st.container(key="dash_search_row"):  # CSS keeps this row unwrapped on a phone
                 cols = st.columns([4, 1], vertical_alignment="bottom")
             cols[0].text_input("Улсын дугаар, утас эсвэл компани", key=DASH_QUERY,
-                               placeholder="Улсын дугаар эсвэл утас")  # 9.12: fits the ~227 px phone field
+                               placeholder="1234 УБА · 9911 · Говь Тээвэр")  # 9.12-3: an example of each kind
             cols[1].form_submit_button("Хайх", type="primary", width="stretch")
             with st.expander(f"Шүүлтүүр ({active})" if active else "Шүүлтүүр", expanded=expand):
                 f = [*st.columns(4), *st.columns(4)]  # two rows: 4 fields each fit from 768 px
@@ -329,7 +333,7 @@ def search_form(options: dict, active: int, payments_on: bool = False, expand: b
 
 
 def results_table(vehicles: list[dict], search_key: str) -> None:
-    """Computer view: sortable table; clicking a row opens the history (no editing).
+    """Computer view: sortable table; a click anywhere in a row opens the history (no editing).
 
     The widget key includes the query + filters, so a new search starts with no row highlighted
     (a kept selection would point at a row number of the OLD results)."""
@@ -338,7 +342,8 @@ def results_table(vehicles: list[dict], search_key: str) -> None:
     with st.container(key="dash_table_wrap"):
         st.dataframe(
             logic.search_table_rows(vehicles), key=key, on_select=partial(on_table_select, key),  # no args= here
-            selection_mode="single-row", hide_index=True, width="stretch", row_height=ROW_PX,
+            # 9.12-3: "single-cell" too, so a click on ANY cell reports its row (not only the row marker)
+            selection_mode=["single-row", "single-cell"], hide_index=True, width="stretch", row_height=ROW_PX,
             height=min(ROW_PX * (len(vehicles) + 1) + 3, 16 * ROW_PX),  # header + rows; scrolls after 15 rows
             placeholder=logic.NOT_GIVEN,  # 9.5a: an empty cell shows «—», not "None" (mine trucks have no km)
             column_config={

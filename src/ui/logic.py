@@ -23,9 +23,10 @@ SEGMENT_LABELS: dict[str, str] = {
 SEGMENT_DOTS: dict[str, str] = {
     "new": "#1F4E9D",
     "returning": "#1E7A4C",
-    "loyal": "#6D28D9",
     "at_risk": "#B42318",
 }
+# 9.12-3 (PM, as in the 9.12 mockup): «Байнгын» gets a star instead of a (purple) dot
+SEGMENT_ICONS: dict[str, str] = {"loyal": "⭐"}
 
 ROUTE_LABELS: dict[str, str] = {
     "ub_city": "Улаанбаатар хот",
@@ -329,7 +330,7 @@ def segment_cards(stats: dict) -> list[dict[str, Any]]:
              "at_risk": f"{stats.get('at_risk_days', 150)}+ хоног"}
     return [{"segment": s, "label": ALL_LABEL if s is None else SEGMENT_LABELS[s],
              "count": stats.get("total", 0) if s is None else counts.get(s, 0),
-             "hint": hints[s], "dot": SEGMENT_DOTS.get(s or "")} for s in SEGMENT_CARDS]
+             "hint": hints[s]} for s in SEGMENT_CARDS]
 
 
 # Task 9.5c: one reminder per service; the pill says whether the truck is also at risk (API `segment`).
@@ -480,6 +481,15 @@ def search_table_rows(vehicles: list[dict]) -> list[dict[str, Any]]:
             "Удаа": v.get("service_count"),
         })
     return rows
+
+
+def picked_row(rows: list[int], cells: list[tuple[int, str]]) -> int | None:
+    """Row number picked in the dashboard table (9.12-3): its row marker, else the row of the
+    clicked cell; None = nothing picked. Row numbers are positions in the rows as sent, also
+    after the user sorted the table in the browser (Streamlit keeps the original position)."""
+    if rows:
+        return rows[0]
+    return cells[0][0] if cells else None
 
 
 FILTER_KEYS = ("date_from", "date_to", "company_id", "route", "oil_grade",

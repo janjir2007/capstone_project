@@ -759,7 +759,6 @@ def test_segment_cards_order_counts_and_hints() -> None:
     assert [(c["segment"], c["label"], c["count"], c["hint"]) for c in cards] == [
         (None, "Бүгд", 40, "12 нь 2 удаа"), ("loyal", "Байнгын", 19, "3+ удаа"),
         ("new", "Шинэ", 9, "1 удаа"), ("at_risk", "Эргэж ирээгүй", 0, "150+ хоног")]
-    assert cards[0]["dot"] is None and cards[3]["dot"] == logic.SEGMENT_DOTS["at_risk"]
     assert logic.segment_cards({**stats, "at_risk_days": 120})[3]["hint"] == "120+ хоног"  # from the API
 
 
@@ -767,3 +766,11 @@ def test_segment_filter_counts_and_names_the_excel_line() -> None:
     assert "segment" in logic.FILTER_KEYS
     assert logic.active_filter_count({"segment": "loyal"}) == 1
     assert logic.filters_text("", {"segment": "at_risk"}, {}) == "Сегмент: Эргэж ирээгүй"
+
+
+def test_picked_row_marker_or_any_cell() -> None:
+    """9.12-3: a click on any cell opens the truck, like its row marker; nothing picked = None."""
+    assert logic.picked_row([2], []) == 2
+    assert logic.picked_row([], [(4, "Компани")]) == 4
+    assert logic.picked_row([1], [(4, "Тос")]) == 1          # the row marker wins
+    assert logic.picked_row([], []) is None
