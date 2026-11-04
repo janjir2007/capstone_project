@@ -1,153 +1,136 @@
 # PROJECT_STATE — "Oil Change Predictor" (Geo-Expert LLC)
 
-- **Version:** 2.19
-- **Last updated:** 2026-10-30
-- **Phase:** POST-CAPSTONE — capstone defended Oct 20, 2026. The system is being turned into Geo-Expert's real working tool (Phase 8 fixes, Phase 9 dashboard + new reminder logic).
-- **Live:** https://168.144.143.203.sslip.io (demo data only; domain app.geoexpert.mn parked, see D-103)
-- **Health:** 🟢 working and deployed in batches. 🟡 Not ready for real customers yet (see §5 "Before real use").
+- **Version:** 2.21
+- **Last updated:** 2026-11-04
+- **Phase:** POST-CAPSTONE — real daily tool for Geo-Expert. Phase 9: km/day reminders (done), Messenger bot, automatic SMS (CallPro), photos, Artlab payments.
+- **Live:** https://168.144.143.203.sslip.io (demo data only until demo wipe 9.8; domain app.geoexpert.mn parked)
+- **Health:** 🟢 9.12 + 9.12-3 + 9.14a (2, 3, 3b) deployed 11-04 (Ari confirmed; PM did not see deploy output). Migrations on server up to 010. OIL_INTERVAL_KM=12000. Real use starts after demo wipe (9.8).
 
-> Structure: §0–§9 = CURRENT truth. The ARCHIVE at the end is v2.18 unchanged (capstone scope, task list, decisions D-001–D-097, contracts, slide map) — read it for history; where it disagrees with §0–§9, §0–§9 win.
+> Structure: §0–§9 = CURRENT truth. The ARCHIVE at the end is v2.18 unchanged (capstone). Where they disagree, §0–§9 win. v2.21 adds D-127–D-133. D-127 replaces the Unitel plan in D-122. D-129/D-130 replace the fixed 75-day timing of D-119 when a truck's km/day is known (75/150 stay as fallback).
 
 ---
 
 ## 0. Where we are (short)
 
-1. Capstone defended Oct 20. Geo-Expert will really use the system, so work continues.
-2. Done since the defense: zoom fix, CI green again + secrets scan, daily tested backups, new camera screen, responsive dashboard with search/filters/Excel, simpler form, target km, month-based Viber reminders (last two: accepted, deploy pending).
-3. Prediction changed: the ML route model is no longer shown. Drivers don't stick to one route, so the app shows **target km = last odometer + 15,000** and sends reminders at **1/2/3 months**. ML code + data collection stay; a model without route is trained later on real data.
-4. Waiting on others: Artlab (accounting API test account + docs), DNS record for the domain.
-5. Before real customers: personal logins (8.5), demo wipe, personal-data check, off-server backup.
+1. **Live:** shared-password login (8.5r), simple form, dashboard redesign 9.12 + fixes 9.12-3, «SMS илгээх» button, Artlab payments code (UI hidden until first sync), **km/day engine 9.14a**: target km stored per service, reminder at the truck's own pace, «Км шалгах» list at day 34, simplified truck card.
+2. **Decided 11-04:** CallPro for automatic SMS (D-127), 12,000 km interval (D-128), pace rules (D-129), day-34 km check (D-130), Messenger bot plan (D-131), photos plan (D-132).
+3. **Deadlines:** first real truck → its day-34 km check ~4–5 weeks later (replies by SMS to oil changer's phone → «Км шалгах» → «Хариу бүртгэх»). Messenger bot (9.15a) as soon as Meta allows. CallPro auto SMS (9.11) live before **2027-01-16**; sign ~Dec 1–10.
+4. **Waiting outside:** CallPro answers; Meta (Page admin + business verification); Artlab real DB + accountant.
+5. **Next for Ari:** pick demo-wipe day (= first real truck), reminder text A/B/unchanged, CallPro questions, Facebook Page/Meta check. Next Claude Code task: 9.2 STEP 1 (photos) or 9.15a STEP 1 (Messenger) — PM to choose with Ari.
 
-### How we work (unchanged rules + new ones)
-- PM chat plans, writes short task briefs (goal, deliverable, done-when, do-not), reviews handoffs. Ari pastes briefs into Claude Code (one NEW session per task) and handoffs back.
-- **ONE Claude Code session at a time in the repo folder** (D-100).
-- **A task is done only when CI is green on the pushed commit — handoff must include the run link** (D-099). `gh` CLI is installed/logged in so Claude Code can check CI itself.
-- Deploys may be **batched** (D-101); after a batch, test each change separately on the phone.
-- Ari's preferences: short prompts; state file named with version (PROJECT_STATE_vX.Y.md); PM does not build/edit files on agreement alone — waits for an explicit "do it".
-- Update state: `cp ~/Downloads/PROJECT_STATE_v2.19.md docs/PROJECT_STATE.md && git add docs/PROJECT_STATE.md && git commit -m "docs: PROJECT_STATE v2.19" && git push` (repo: ~/Downloads/Capstone/oil-change-predictor).
-
----
-
-## 1. Current scope (post-capstone, v2)
-
-Internal website for Geo-Expert (phone browser + computer), login, HTTPS. Users: Ari (manager), the accountant, the oil changer.
-
-**Record (oil changer, phone):** photo → plate read → **worker confirms plate** → form. Form = plate, odometer (or engine hours), oil grade, liters, driver name, phone. **No destination field** (D-111). Date automatic. New odometer must be higher than last (warning + confirm). Photo kept 12 months once 9.2 is built (D-109).
-
-**Truck card / dashboard:** last service, history, **next change at target km** (last odometer + OIL_INTERVAL_KM = 15,000). Mine trucks (engine hours only): no target. No predicted date shown (D-112).
-
-**Reminders («Сануулга»):** stages 1m/2m/3m at 30/60/90 days after the latest service; prepared Mongolian message with target km + oil changer's phone; one-tap Viber button (manual send) → «Илгээсэн»; stop list per phone; 90+ days without return = «Эрсдэлтэй» (D-113).
-
-**Dashboard («Хяналтын самбар»):** works on computer (full width) and phone; search by plate/phone/company/fleet no.; filters (dates, company, route, oil grade); truck history; Excel export (one row per service); segment tiles; read-only due list; view only (D-108). Planned additions: photos in history (9.2), stats per day/month + company history (9.3), photo gallery by month (9.4), payments from Artlab (9.6).
-
-**Roles (8.5, planned):** manager = everything; accountant = dashboard + Excel; oil changer = record, search, reminders. API enforces roles, not only the UI (D-110).
-
-**Segments:** New (1 visit), Returning (2), Loyal (3+), At risk (90+ days, no return).
+### How we work
+- PM chat plans, writes short briefs (goal, deliverable, done-when, do-not), reviews handoffs critically. Ari pastes briefs into Claude Code and handoffs back.
+- **ONE Claude Code session at a time** (D-100). **Done = CI green on pushed commit + run link** (D-099). Big tasks: STEP 1 plan → PM review → build (split into -2 backend / -3 UI).
+- Ari's preferences: short prompts, explain code and commands in simple English, few questions (PM decides small things), state file named with version, PM creates/edits files only on explicit "do it".
+- Claude Code never edits PROJECT_STATE (PM owns it).
+- Update state: `cp ~/Downloads/PROJECT_STATE_v2.21.md docs/PROJECT_STATE.md && git add docs/PROJECT_STATE.md && git commit -m "docs: PROJECT_STATE v2.21" && git push` (Mac repo ~/Downloads/Capstone/oil-change-predictor; GitHub janjir2007/capstone_project).
 
 ---
 
-## 2. Task list — Phase 8 (fixes) + Phase 9 (dashboard & logic)
+## 1. Current scope (v2.21)
+
+Internal website for Geo-Expert (phone + computer), HTTPS, one shared password (D-117).
+
+**Record:** photo → plate read → confirm → form (plate, odometer/engine hours, oil, liters, driver, phone). No destination (D-111). **target_km and interval_km stored on the service at save** (D-128); interval = OIL_INTERVAL_KM = 12,000.
+
+**Pace + reminders (D-129, D-130):**
+- km/day (s) = newest OK driver reading after the last service (manual now, Messenger later) ÷ days; else previous → latest service odometers.
+- Due = service date + floor(12,000 ÷ s). Reminder = due − 5 (REMINDER_LEAD_DAYS), never before the reading date, capped at service + AT_RISK_DAYS − 5 (= 145).
+- No s → km check at day 34 (KM_CHECK_DAYS) + reminder at day 75 (REMINDER_DAYS). A reply moves the first reminder.
+- One reminder per service; reminders scheduled only from a service. Km check is NOT a reminder (own table km_checks; not in «Сануулга илгээсэн» KPI).
+- Safety: reading ≤ last, s < 20 or > 1200 → flagged, stored, never used. Manual readings can be undone («Буцаах»).
+- Mine trucks (engine hours): hours/day shown, **no reminder** until an hours interval is decided.
+
+**Screens:** «Сануулга» page with switch «Сануулга (N) | Км шалгах (M)». Km-check row: «SMS илгээх» (km-check text, 2 SMS) → «Илгээсэн», «Залгах», «Дахиж илгээхгүй», «Хариу бүртгэх» (opens km form → confirm → save). Truck card: target km big + due date small; «Км бүртгэл · N км/өдөр» with 5 newest readings; no route; no «Км бүртгэх» button (form only via «Хариу бүртгэх»).
+
+Reminder text (live, unchanged, 3 SMS): `Сайн байна уу! {plate} машины тосыг {date}-нд солиулсан ({oil}). Дахин солих хугацаа болж байна. Wolf Oil - Гео-Эксперт: {CONTACT_PHONE}`
+Km-check text (2 SMS): `Сайн байна уу! {plate} машины тосыг {date}-нд солиулсан. Одоогийн км-ээ хариу бичнэ үү. Wolf Oil - Гео-Эксперт: {CONTACT_PHONE}`
+
+**Dashboard (9.12, D-125):** period KPIs, 4 clickable segment cards (⭐ Байнгын), «Төлбөр» (hidden until Artlab sync), search + filter + table (click anywhere in a row) + truck panel + Excel. View only.
+
+**Payments (D-121):** «Төлөөгүй» list shows only bills from the last 90 days, with or without plate (D-133).
+
+**Segments:** Шинэ (1), Давтан (2, filter only), Байнгын (3+), Эргэж ирээгүй (150+ days).
+
+---
+
+## 2. Task list
 
 | ID | Task | Status |
 |---|---|---|
-| 8.0a | New UI_PASSWORD (examiners had old one) | ✅ DONE |
-| 8.0b | Reset Label Studio token (seen in screenshot Oct 16) | ⏳ Ari |
-| 8.1 | iPhone tap-zoom fix + «Хяналтын самбар» button on home | ✅ DONE, deployed (35fe060) |
-| 8.1b | CI green again (2 models/-dependent skips allowed; was red since 7.2) + gitleaks full-history scan (82 commits, no leaks) + slide/latency files committed | ✅ DONE (aafbcf7, f4dd0c3) |
-| 8.2 | Daily backups (systemd timer 03:00 UB, 14 days, /root/backups) + restore test + safe wipe_demo script | ✅ DONE (e55d2a3), installed on server, restore test OK (8 tables) |
-| 8.2c | Off-server backup copy (proposal: Backblaze B2, encrypted, upload-only key) — incl. photos once 9.2 exists | ⏳ Ari yes/no |
-| 8.3 | Own domain app.geoexpert.mn (DOMAIN/OLD_DOMAIN in .env, 302 redirect, runbook §11) | ✅ code (ac205f2); ⏸ server switch PARKED — DNS A record missing |
-| 8.4 | Record page camera: live square view + round shutter, native-camera fallback, gallery, Mongolian, ≤2560 px resize | ✅ DONE, deployed (e1f6c36) |
-| 8.4b | iPhone gallery "Зураг уншсангүй" fix (read file before input reset) + `?diag=1` shows «Алдаа» line | ✅ DONE, deployed (59d8f82). Real cause on Ari's phone = iOS Lockdown Mode (D-107) |
-| 8.4c | Measure: 27 field photos, original vs 2560 px resize → plates read | TODO (optional, before real use) |
-| 8.5 | Personal logins + roles + remember-me 30 days (STEP 1 plan → PM review) | ❓ brief given — status unknown, check first |
-| 9.1 | Responsive dashboard + search + filters + Excel (service rows, formula-safe) | ✅ DONE, deployed (779c354, dffab12) |
-| 9.1c | Engine hours column in Excel | ✅ DONE, deployed (b1578c9) |
-| 9.2 | Keep photos 12 months + small photo per service in dashboard history | Brief ready (see §9) — not started |
-| 9.3 | Dashboard: stats per day/month (count, liters), history per company | Brief not written |
-| 9.4 | Photo gallery by month (manager + accountant) | After 9.2 |
-| 9.5a | Simpler record form (no destination) + target km everywhere | ✅ ACCEPTED; 3 fixes requested before commit («—» not "None"; phone not clipped in history panel; fix browser test test_spacing_exact_values[/dashboard]) → confirm commit + CI |
-| 9.5b | Month-based Viber reminders (migration 006, stages, stop list, CONTACT_PHONE) | ✅ ACCEPTED; commit + CI link pending |
-| 9.5-deploy | Deploy 9.5a + 9.5b together: backup → set CONTACT_PHONE → pull → build → migrate (006) → up → phone test (form, card, reminders, stop/undo) | TODO after both CI green |
-| 9.6 | Payments section + Artlab sync robot (on Artlab TEST account first) | Waiting for Artlab |
-| 9.7 | gitleaks check in CI (every push) | TODO — before any Artlab credentials exist |
-| 9.8 | Demo wipe (scripts/wipe_demo.sh, typed confirmation) | When real use starts |
-| 9.9 | README polish for portfolio (problem, key numbers, screenshot, stack, honest note) | Later |
+| 8.0b | Reset Label Studio token | ⏳ Ari |
+| 8.3 | Domain app.geoexpert.mn | code ✅; ⏸ DNS A record missing |
+| 9.2 | Keep photos 12 months (scope D-132) | brief in §9; migration number now **011**; not started |
+| 9.2b | OneDrive copy of photos via rclone | Later; open: personal or company account, keep forever or 12 months |
+| 9.6b-1…5 | Artlab payments (read-only sync, tables 008/009, API, UI hidden) | ✅ CI green (run list 11-04), deployed |
+| 9.6b-T | Transfers → «Төлсөн (дараа)» | ⏳ needs acc-txn sample / real DB |
+| 9.6c | Real Artlab connection | ⏳ after accountant OK + real access |
+| 9.7 / 9.7b | gitleaks in CI | ✅ |
+| 9.8 | Demo wipe | ⏳ morning of first real truck (Ari to pick day) |
+| 9.10 | Smartcar.mn email | send or drop (Ari) |
+| 9.11 | CallPro automatic SMS (D-127) | ⏳ answers → sign ~Dec 1–10 → STEP 1 with API docs; live before 2027-01-16 |
+| 9.12 / 9.12-2 | Dashboard redesign | ✅ 7426a24, CI 41414931947, deployed ~11-02 |
+| 9.12-3 | Row click, ⭐, placeholder, unpaid 90-day lookback, CI ubuntu-24.04 | ✅ 24e9189 + 2d7c660, CI 41795776926, deployed |
+| 9.14a-1 | Pace engine plan | ✅ approved 11-04 |
+| 9.14a-2 | Migration 010, pace.py, API v0.18 | ✅ 14fccce, CI 41800678920, deployed |
+| 9.14a-3 | UI: card pace, «Км шалгах», km form + preview endpoint (v0.19) | ✅ 939a55c, CI 41804116240, deployed |
+| 9.14a-3b | Card: km big, km/day in title, no route, no «Км бүртгэх» | ✅ e238ab6, CI 41806343476, deployed |
+| 9.15a | Messenger bot: m.me link with ref, parse «871234 9988НАА», confirm, save reading (source messenger), warm scripted reply, One-Time Notification opt-in | ⏳ STEP 1 when Meta access is clear |
+| 9.15b | AI replies in Messenger (approved facts only, handover to person) | Later |
+| TXT-1 | Reminder text: A, B or unchanged (see §7) | ⏳ Ari + boss |
 
 ---
 
-## 3. New decisions (D-098 →)
+## 3. New decisions (D-127 →) — D-117…D-126 in v2.20 still valid
 
 | ID | Date | Decision | Status |
 |---|---|---|---|
-| D-098 | 10-21 | Project continues after the capstone: Geo-Expert uses the system for real. Droplet kept | APPROVED by Ari |
-| D-099 | 10-22 | A handoff is DONE only with CI green on the pushed commit (run link in handoff). CI had been red unnoticed from task 7.2 to 8.1 | APPROVED (PM) |
-| D-100 | 10-22 | Only one Claude Code session at a time in the repo folder (parallel sessions mixed commits) | APPROVED |
-| D-101 | 10-27 | Batch deploys allowed; each task still committed with CI green; after a batch, test each change separately | APPROVED by Ari |
-| D-102 | 10-22 | Repo stays PUBLIC (portfolio). Secrets only in server .env; gitleaks history scan clean; Artlab credentials never in git. Link the repo in the portfolio, not the live app | APPROVED by Ari |
-| D-103 | 10-22 | Domain = app.geoexpert.mn via DOMAIN in .env; old sslip.io address 302-redirects (switch to 301 after 2 weeks stable). PARKED: DNS A record (app → 168.144.143.203) not added; geoexpert.mn name servers = ns1–4.dns.mn (probably Datacom — unverified). geoexpert.mn website is WordPress elsewhere — never put the app under a path | APPROVED; ⏸ waiting DNS |
-| D-104 | 10-22 | Backups: daily pg_dump at 03:00 UB (systemd timer, Persistent), kept 14 days, each checked; restore test proved on server. Off-server copy pending (rec. Backblaze B2, encrypted, upload-only key). Keep .env values in a password manager (not in any backup) | APPROVED; off-server ⏳ |
-| D-105 | 10-22 | iPhone zoom fix = 16 px inputs + touch-action: manipulation; never maximum-scale / user-scalable=no | APPROVED |
-| D-106 | 10-22 | Record camera: in-page live view (rear) + round shutter, automatic fallback to native camera button, gallery; browser resizes to ≤2560 px JPEG, EXIF/GPS stripped. Worker confirms the plate before lookup (replaces D-072 auto-lookup). Search page camera unchanged (Later) | APPROVED by Ari |
-| D-107 | 10-28 | iOS Lockdown Mode blocks the in-browser photo processing and Streamlit's icon font. Ari excludes the site in Safari (aA → Website Settings). Workers' phones expected without Lockdown. Later: if browser processing fails, upload the original file instead | NOTED |
-| D-108 | 10-28 | Dashboard (9.1): ≥1024 px full width, phone one column, other pages stay 480 px; search contains-match in Python (D-043), phone from 3 digits; filters; Excel = one row per matching service, all text written as text (no formulas), engine-hours column; CSV toolbar hidden (one export path); view only | APPROVED |
-| D-109 | 10-28 | Photos are KEPT 12 months (reverses "photos not stored", D-065): saved services only, resized JPEG without EXIF, Docker volume, shown only via login-protected endpoint, daily deletion after 12 months; record text «Зураг 12 сар хадгалагдана». Not built yet (9.2) | APPROVED by Ari |
-| D-110 | 10-29 | Roles: manager all; accountant dashboard + Excel; oil_changer record, search, reminders. API checks roles. 30-day remember-me (token hashed in DB), 5 wrong → 15 min lock, saved_by on service, CLI user_add/user_disable, shared UI_PASSWORD removed, no admin UI | APPROVED (plan review pending) |
-| D-111 | 10-29 | Destination removed from the record form (Ari's brother: drivers don't keep one route). Overrides D-033 and the D-042 one-of rule. DB columns + old data kept | APPROVED by Ari |
-| D-112 | 10-29 | No predicted date shown. Next change = last odometer + OIL_INTERVAL_KM (15,000, same for every oil; setting). Mine trucks: no target, no reminders for now. ML model + prediction code kept unused; a model WITHOUT route is trained later on real data and compared with the simple rule — winner decided by data | APPROVED by Ari |
-| D-113 | 10-29 | Reminders: stages 1m/2m/3m at 30/60/90 days after latest service; only highest stage reached; each once (UNIQUE service_id, stage); «Илгээсэн» sends its stage; new service resets; at risk = 90+ days everywhere (replaces D-007/D-074 rule); stop list per phone with undo; CONTACT_PHONE = oil changer's number (setting); messages = Ari's 3 texts (thank-you → 2-month check → change at target km, "we come to you"); nothing sent automatically. Replaces ML reminder timing (D-036, D-066 send-date rule) | APPROVED by Ari |
-| D-114 | 10-27 | Artlab plan: our code only reads (fixed allow-list of read requests, others refused + tested). Artlab provides sales + customer settlement data; API access is full rights only. Develop on Artlab TEST account first. Asked Artlab: IP restriction to our server, separate API user, activity log, docs, plate/phone fields, lump-sum payment allocation. Real connection needs OK from whoever is responsible for accounting. Individuals' register numbers not requested | APPROVED |
-| D-115 | 10-29 | Automatic Viber sending rejected for now: chatbot costs EUR 100/month + per message and can only message subscribers. One-tap button stays. SMS gateway = alternative later | APPROVED by Ari |
-| D-116 | 10-29 | Auto-km for new routes (Nominatim + OSRM) → Later; less important after D-111 | APPROVED |
+| D-127 | 11-04 | Automatic SMS via **CallPro Text, Багц 02** (needs API; Багц 01 has none). Offer: one-time 103,300₮ (likely 3,300 IP72 number + 100,000 deposit), monthly 224,400₮ (likely 220,000 package + 4,400 LIME BASIC number) + 22₮/SMS, VAT incl. Before paying, confirm in writing: all operators? 22₮ per SMS part? API docs + test account? Sign ~Dec 1–10 (not earlier: no reminders before mid-Dec). Unitel not signed | APPROVED by Ari (boss) |
+| D-128 | 11-04 | Oil interval **12,000 km** (boss). target_km + interval_km stored per service at save; old services backfilled 15,000 | APPROVED |
+| D-129 | 11-04 | Pace rules as in §1. km/day from driver reading (Messenger/manual) else last→next service; reminder = due − 5, not before reading date, cap service + 145; no s → 75; one reminder per service; flagged readings never used; mine trucks no reminder | APPROVED by Ari |
+| D-130 | 11-04 | Km check at day 34 (boss estimate 500 km/day × 5 days/week → 12,000 km ≈ 34 days) for any truck without usable s. Reply moves the first reminder. Excel history (median return ~104 days) disagrees with the boss estimate → real readings will decide | APPROVED by Ari |
+| D-131 | 11-04 | Messenger: driver must write first (SMS has m.me link with ref code). Free replies within 24 h of his message. Next reminder in Messenger only with One-Time Notification permission (1 permission = 1 message), else SMS. Old tags CONFIRMED_EVENT_UPDATE/ACCOUNT_UPDATE/POST_PURCHASE_UPDATE fail since 2026-04-27. Needs pages_messaging advanced access (App Review) + verification. ref may fail on some Android → driver also types plate. Store only reading + PSID, no profile data. **No QR at service** (oil changer will not do it). AI chat = 9.15b with rules | APPROVED (plan) |
+| D-132 | 11-04 | Photos (9.2): photo saved per service (1600 px, q80, EXIF rotate then strip), newest on top of truck card, history row with date + photo + payment; tap = full size; «Зураггүй»; deleted after 12 months (row kept). Do after real use starts; OneDrive copy (rclone) = 9.2b | APPROVED |
+| D-133 | 11-04 | 9.12-3: unpaid lookback 90 days for every bill (day 90 listed, 91 not). ARTLAB_* never in API env (RISK-22) → API uses default 90; to change later rename to a non-Artlab setting | APPROVED (PM) |
 
 ---
 
-## 4. Artlab integration (9.6) — agreed design
+## 4. Artlab (9.6) — unchanged from v2.20
 
-- **Flow:** oil changer works as today (our app + Artlab receipt with plate + phone). A sync robot on our server logs in to Artlab every 30 min (credentials only in .env), copies recent receipts + all still-unpaid ones into our DB.
-- **Matching:** normalized plate (normalize_plate) + receipt date within ±1 day of the service; phone = fallback. Never "latest receipt".
-- **Statuses per service:** Төлсөн (paid) · Төлбөр хүлээгдэж буй (unpaid, amount left + days waiting) · Баримтгүй (no receipt by end of next day) · Шалгах (2+ matches, a person decides).
-- **Tables (sketch):** artlab_receipts (artlab_id, receipt_date, plate_raw, plate_normalized, phone, amount, paid_amount, synced_at) + service_payments (service_id PK, artlab_id, status CHECK 4 values, checked_at). Unpaid re-checked every run → credit payments switch to paid by themselves.
-- **Risk:** if Artlab books lump-sum payments only against the company balance, show paid/owes per company instead of per service.
-- **Status:** Artlab CTO replied (sales + settlement data possible; no read-only access; test account offered). Ari replied with safeguard questions. Waiting.
+- Гео Эксперт Трейд ХХК (reg. 8351384). Contact Ider Zorigoo (CTO). Base https://api.artlab.mn/v2. Test DB works; real-DB access requested 11-02 (read-only). Need from accountant: OK, bank account codes (ARTLAB_BANK_ACCOUNTS), confirm credit = LOAN. First real run = probe summaries only, no personal data printed.
 
 ---
 
 ## 5. Before real use (checklist)
 
-1. 8.5 logins + roles done and deployed.
-2. Personal-data check: driver names, phones, photos on a server in Singapore (open question).
-3. Off-server backup (8.2c), including photos once 9.2 exists.
-4. CONTACT_PHONE set on the server.
-5. Demo wipe (9.8) — Ari's 2 test trucks go too (re-enter if real).
-6. Drivers can opt out (stop list exists in 9.5b).
+1. ✅ Logins. 2. ✅ CONTACT_PHONE=89069494. 3. ✅ Backups (D-120). 4. ✅ Personal data risk accepted (D-124). 5. ✅ Deploys (9.12, 9.12-3, 9.14a) + OIL_INTERVAL_KM=12000.
+6. ⬜ Demo wipe (9.8) on the morning of the first real truck. Do NOT import old customers.
+7. ⬜ First km checks ~day 34 after first real truck → oil changer sends from «Км шалгах», types replies via «Хариу бүртгэх».
+8. ⬜ Optional: reminder text change (TXT-1).
 
 ---
 
 ## 6. Server & deploy facts
 
-- DigitalOcean Singapore, 1 vCPU / 2 GB, Ubuntu 24.04. `ssh root@168.144.143.203`, repo `~/oil-change-predictor`, `alias dc='docker compose -f docker-compose.prod.yml'`.
-- Prompts: `root@ubuntu…#` = server, `➜` = Mac.
-- Standard deploy: `git status --short` (must be empty) → `git pull && dc build && dc run --rm api python -m scripts.migrate && dc up -d` → `dc ps` (api/db/ui healthy, caddy Up) → `git log --oneline -1`.
-- DB change? Run `systemctl start ocp-backup.service` first.
-- Backups: /root/backups, `journalctl -u ocp-backup`, `scripts/restore_test.sh`.
-- .env keys (values never in git): UI_PASSWORD (changed), DOMAIN, OLD_DOMAIN, GEO_EXPERT_PHONE, CONTACT_PHONE (to set), OIL_INTERVAL_KM (default 15000), later Artlab credentials.
-- Data now: demo seed + 2 trucks/1 company added by Ari (42 trucks, 107 services, 7 companies).
-- Server DNS had a one-time resolver timeout (Oct 22); fine since.
+- DigitalOcean Singapore 1 vCPU / 2 GB. `ssh root@168.144.143.203`, repo `~/oil-change-predictor`. `gh` Mac-only.
+- Deploy: `systemctl start ocp-backup.service` (if DB change; check `ls -lt /root/backups | head -3`) → `git pull` → `docker compose -f docker-compose.prod.yml build` → `… run --rm api python -m scripts.migrate` (BEFORE up) → `… up -d` (`--force-recreate api ui` after .env change) → `… ps`.
+- DB shell: `docker compose -f docker-compose.prod.yml exec db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "\dt"'` (user is not "postgres").
+- .env: UI_PASSWORD, AUTH_SECRET, DOMAIN, OLD_DOMAIN, GEO_EXPERT_PHONE/CONTACT_PHONE=89069494, **OIL_INTERVAL_KM=12000**, optional REMINDER_DAYS=75, AT_RISK_DAYS=150, REMINDER_LEAD_DAYS=5, KM_CHECK_DAYS=34. Later sync only: ARTLAB_*. Append only with `>>`.
+- Migrations on server: up to **010**. API contract **v0.19** (docs/api_contract.md is the source of truth).
+- CI runs on ubuntu-24.04 (pinned).
 
 ---
 
 ## 7. Open questions
 
-1. Backblaze B2 for off-server backups — yes/no?
-2. Who manages geoexpert.mn DNS (accountant's invoice / website builder)? Add A record `app` → 168.144.143.203.
-3. Personal-data law for driver data + photos abroad.
-4. 8.5 — running, finished, or not started?
-5. Artlab: test account, API docs, answers on IP restriction / separate user / activity log / plate+phone fields / lump-sum payments.
-6. Mine trucks: engine-hours interval (skipped for now).
-7. Optional: different orange text when the photo itself failed («Зураг уншигдсангүй — дахин авах эсвэл гараар оруулна уу»).
-8. Ari proofreads Mongolian wording of 9.5a/9.5b screens.
-9. 8.0b Label Studio token reset.
+1. **First real truck date** → demo wipe day.
+2. **Reminder text (TXT-1):** A «Сайн байна уу! {plate} машины тосыг {date}-нд солиулсан. Дахин солих хугацаа болж байна. Wolf Oil - Гео-Эксперт: {contact}» (2 SMS, drops oil — breaks the plate/date/oil/contact rule) · B «Сайн байна уу! {plate}: {date}-нд {oil} тос солиулсан. Дахин солих хугацаа боллоо. Wolf Oil: {contact}» (2 SMS, keeps oil, drops «Гео-Эксперт»; PM pick if drivers know "Wolf Oil") · or unchanged (3 SMS).
+3. **CallPro:** all operators? 22₮ per part? API docs/test account? deposit refund, sender name, delivery report, minimum contract, how long undelivered SMS are kept.
+4. **Meta:** is Ari admin of the Geo-Expert Facebook Page? Is the Meta Business verified (business.facebook.com → Settings → Security Center)? Marketing Messages available in Mongolia?
+5. **Mine trucks:** engine-hours interval (needed before they get reminders).
+6. OneDrive: personal or company account; copy kept forever or 12 months.
+7. Artlab real access + accountant OK + bank codes + acc-txn sample.
+8. Smartcar email; DNS registrar; 8.0b token.
 
 ---
 
@@ -155,34 +138,49 @@ Internal website for Geo-Expert (phone browser + computer), login, HTTPS. Users:
 
 | ID | Risk | Mitigation |
 |---|---|---|
-| RISK-06 | Personal data leak (phones, photos, Excel export) | Roles (8.5) before real users; export only manager + accountant; photos via login-only endpoint; gitleaks in CI; public repo holds no data |
-| RISK-09 | Ultralytics YOLO AGPL-3.0 | Repo public helps; decide license before commercial scaling |
-| RISK-22 | Artlab credentials = full write access to accounting | Read-only allow-list in our code + tests; IP restriction; separate API user; test account first; approval before production |
-| RISK-23 | Backups only on the droplet | 8.2c off-server copy |
-| RISK-24 | Lower plate reading after 2560 px resize on whole-truck photos | 8.4c measurement |
-| RISK-25 | Simple target-km rule may be less accurate than ML for some trucks | Compare on real data after 2–3 months (D-112) |
-| RISK-26 | Reminders list long on real data (every truck 30+ days) | Expected by design; watch workload |
+| RISK-06 | Shared password shows phones + Excel | Accepted (D-117); change UI_PASSWORD when someone leaves |
+| RISK-22 | Artlab creds have write rights | Allow-list + tests; creds only in sync service; ARTLAB_* never in API env |
+| RISK-23 | Backups in same DO account | 2FA; optional monthly dump to Mac |
+| RISK-27 | Auto SMS reach | CallPro must confirm all operators before signing |
+| RISK-28/29/30 | Artlab matching unproven; wrong account code silent; lump-sum transfers | Probe summaries; 12-zero-run warning; accepted v1 |
+| RISK-31 | Boss estimate (500 km/day) vs Excel history (median return ~104 days) → reminders may come too early | Day-34 km check + real readings decide; review after 2–3 months |
+| RISK-32 | Meta App Review / verification time unknown → 9.15a late | Km replies typed via «Хариу бүртгэх» meanwhile |
+| RISK-33 | Km-check text has 9 chars margin; adding Messenger link → 3 SMS | Decide in 9.15a (shorter text or accept 3 SMS) |
+| RISK-34 | Plausible typo reading moves a reminder | Confirm screen shows km/day + due date; «Буцаах» |
+| RISK-35 | m.me ref may not work on some Android | Driver also types plate; mismatch → flagged |
+| RISK-09 | Ultralytics AGPL-3.0 | decide before commercial scaling |
 
 ---
 
 ## 9. Ready briefs + Later list
 
-**9.2 brief (ready):**
+**9.2 STEP 1 brief (ready, migration 011):**
 ```
-TASK ID: 9.2 — Keep each saved service photo 12 months (D-109).
-- On save: keep resized JPEG (≤2560 px, EXIF stripped), linked to the service (migration).
-- Docker volume on server; shown only via login-protected endpoint, never a public URL.
-- Daily job deletes photos older than 12 months (timer like backups).
-- Record text «Зураг хадгалагдахгүй» → «Зураг 12 сар хадгалагдана».
-- Dashboard truck history: small photo per service (tap → full size); «Зураггүй» when none.
-- Report disk use per 100 photos; propose photo backup (do not build).
-DONE WHEN: tests pass, CI green (gh run link); runbook section in deploy.md.
-DO NOT: keep photos of retakes/unsaved attempts; commit photos.
+TASK 9.2 — STEP 1 (PLAN ONLY, no code changes)
+GOAL: Keep the photo of every saved service for 12 months and show it
+in the truck card with date, service details and payment status.
+FIRST: git status --short --branch; anything uncommitted → STOP, report.
+SCOPE: save only the photo of the saved service (no retakes); resize long
+side 1600 px, JPEG q80; apply EXIF rotation then strip ALL EXIF (GPS).
+Link photo to service: migration 011. Docker volume, never in git, served
+only behind login (D-118). Truck card: newest photo on top with date;
+history rows = date, small photo, service details, payment status (hidden
+until Artlab, as now). Tap = full size. No photo = «Зураггүй».
+Text «Зураг 12 сар хадгалагдана». Daily deletion after 12 months (DB link
+cleared, row kept). Report photo disk use.
+PLAN MUST SAY: how the photo travels recognize → save today and your
+change; files/endpoints/migration; where deletion runs (API vs systemd
+timer); tests; storage per 1000 photos; risks.
+DELIVERABLE: plan as text. DO NOT: code, commit, deploy, Artlab, OneDrive,
+edit PROJECT_STATE.
 ```
 
-**Later list (merged):** admin edit page (view/edit/delete records); search-page camera like record page; auto-km for new routes (D-116); automatic Viber/SMS sending (D-115); new ML model without route on real data + comparison; promote/retrain plate reader with kept photos (field-test set, segmentation fix for 4/27 plates); fallback upload of original photo when browser processing fails (D-107); read-only demo mode for sharing; README polish; Next.js frontend; data drift monitoring + continuous training; offline mode for mine sites; LLM assistant for drivers; oil lab reports.
+**9.15a outline (STEP 1 after Meta check):** webhook (verify Meta signature), m.me link with ref per service, parse plate + km in any order (normalize_plate, Latin look-alikes), confirm buttons «Тийм/Үгүй», save to odometer_readings source=messenger via the existing pace engine, store PSID per vehicle, warm scripted reply with km/day + next change, One-Time Notification opt-in, non-km messages → human (Page inbox). New public route needs a D-118 exception (signed Meta requests only).
 
----
+**9.11 outline:** daily 10:00 send of due reminders + km checks via CallPro API; Messenger first if permission, else SMS; skip stop list/invalid numbers; daily cap; kill switch; dry-run week; log channel 'sms'; API key only in server .env; manual buttons stay as fallback.
+
+**Later list:** 9.15b AI replies; 9.2b OneDrive; transfers «Төлсөн (дараа)» (9.6b-T); company balances; rename unpaid lookback setting (D-133); «Өмнөх удаа» line still shows old destination; dashboard date/"Дарж шүүнэ" header position (cosmetic); dashboard photo gallery; km from dashboard photo (OCR); hours interval for mine trucks; km/day average over 3+ services; admin edit page; plate-reader retrain with kept photos; read-only demo mode; README polish; drift monitoring; offline mode for mines; cleanup unused prediction.segment_of(); ML model on real data (compare with pace rule, RISK-25).
+
 ---
 
 # ARCHIVE — v2.18 (capstone, unchanged; headings demoted)
