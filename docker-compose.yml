@@ -67,6 +67,17 @@ services:
       # Task 9.14a: reminder this many days before the km/day due day; km check this many days after the service.
       REMINDER_LEAD_DAYS: ${REMINDER_LEAD_DAYS:-5}
       KM_CHECK_DAYS: ${KM_CHECK_DAYS:-34}
+      # Task 9.15a: Messenger km bot. Both switches off by default (safe to deploy before Meta).
+      # The META_* values live ONLY in the server .env (never in git, never logged); empty defaults
+      # so `compose config` works before Meta is set up. MESSENGER_ENABLED=true with any of them
+      # empty -> the API does not start. docs/deploy.md §14.
+      MESSENGER_ENABLED: ${MESSENGER_ENABLED:-false}
+      MESSENGER_OTN_ENABLED: ${MESSENGER_OTN_ENABLED:-false}
+      META_APP_SECRET: ${META_APP_SECRET:-}
+      META_VERIFY_TOKEN: ${META_VERIFY_TOKEN:-}
+      META_PAGE_TOKEN: ${META_PAGE_TOKEN:-}
+      META_PAGE_ID: ${META_PAGE_ID:-}
+      META_GRAPH_VERSION: ${META_GRAPH_VERSION:-}
     volumes:
       - ./models:/app/models:ro
     ports:

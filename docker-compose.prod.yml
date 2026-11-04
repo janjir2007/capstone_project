@@ -78,6 +78,17 @@ services:
       # password lives here now (not in ui). New UI_PASSWORD -> every cookie invalid = all logged out.
       UI_PASSWORD: ${UI_PASSWORD:?set UI_PASSWORD in .env (company login, D-061)}
       AUTH_SECRET: ${AUTH_SECRET:?set AUTH_SECRET in .env (openssl rand -hex 32, task 8.5r)}
+      # Task 9.15a: Messenger km bot. Both switches off by default (safe to deploy before Meta).
+      # The META_* values live ONLY in the server .env (never in git, never logged); empty defaults
+      # so `compose config` works before Meta is set up. MESSENGER_ENABLED=true with any of them
+      # empty -> the API does not start. docs/deploy.md §14.
+      MESSENGER_ENABLED: ${MESSENGER_ENABLED:-false}
+      MESSENGER_OTN_ENABLED: ${MESSENGER_OTN_ENABLED:-false}
+      META_APP_SECRET: ${META_APP_SECRET:-}
+      META_VERIFY_TOKEN: ${META_VERIFY_TOKEN:-}
+      META_PAGE_TOKEN: ${META_PAGE_TOKEN:-}
+      META_PAGE_ID: ${META_PAGE_ID:-}
+      META_GRAPH_VERSION: ${META_GRAPH_VERSION:-}
     volumes:
       - ./models:/app/models:ro
     expose:

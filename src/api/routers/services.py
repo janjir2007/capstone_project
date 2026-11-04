@@ -13,6 +13,7 @@ Steps, all in ONE transaction (either everything is saved or nothing):
 5. service record inserted with interval_km = OIL_INTERVAL_KM and target_km = odometer_km + it
    (task 9.14a: stored, so a later change of the setting does not move old targets; none for mine
    trucks), plus its 'service' odometer reading, checked against the service before it.
+6. task 9.15a: its Messenger ref code (the m.me link of its km-check SMS); none for mine trucks.
 """
 
 from datetime import date
@@ -28,6 +29,7 @@ from src.api.config import oil_interval_km
 from src.api.db import get_session
 from src.api.history import service_reading, service_records
 from src.api.matching import clean_company_name, company_key, fleet_no_key
+from src.api.messenger.refs import add_ref
 from src.api.models import Company, Destination, ServiceRecord, Vehicle
 from src.api.schemas import ServiceCreate, ServiceCreated, ServiceOut
 from src.common.plates import normalize_plate
@@ -197,6 +199,7 @@ def create_service(
     try:
         session.flush()  # the service's id, for its 'service' reading (9.14a)
         session.add(service_reading(previous, record))
+        add_ref(session, record)  # 9.15a
         session.commit()
     except IntegrityError as exc:
         # E.g. the same new plate saved twice at the same moment: the unique

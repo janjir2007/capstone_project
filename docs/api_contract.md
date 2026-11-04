@@ -1,6 +1,6 @@
 # API contract — data, model and reminder endpoints (tasks 4.2, 4.2b, 4.3, 4.4)
 
-- **Version:** 0.19 (task 9.14a-3, 2026-11-04) · **Owner:** Backend Engineer
+- **Version:** 0.20 (task 9.15a-2, 2026-11-04) · **Owner:** Backend Engineer
 - Extends PROJECT_STATE §8 "API contract" with exact fields. The live, always
   current version is the OpenAPI page of the running API: `http://localhost:8000/docs`.
 - Field names follow [`data_dictionary.md`](data_dictionary.md). Code:
@@ -78,9 +78,9 @@ else is **flagged** and never used (`not_higher`, `too_slow`, `too_fast`; higher
 | `unit` | `km` \| `hours` | |
 | `value` | number | |
 | `reading_date` | date | |
-| `source` | `service` \| `manual` \| `messenger` | `service` = the service's own odometer / engine hours (one per service); `manual` = the driver's reply, typed in; `messenger` = later (nothing writes it yet) |
+| `source` | `service` \| `manual` \| `messenger` | `service` = the service's own odometer / engine hours (one per service); `manual` = the driver's reply, typed in; `messenger` = the driver's reply confirmed in Messenger (v0.20, task 9.15a) |
 | `status` | `ok` \| `flagged` | `flagged` = not used for the pace |
-| `flag_reason` | `not_higher` \| `too_slow` \| `too_fast` \| null | only when flagged |
+| `flag_reason` | `not_higher` \| `too_slow` \| `too_fast` \| `plate_mismatch` \| null | only when flagged. v0.20: `plate_mismatch` = Messenger reading whose typed plate is not the truck of the driver's m.me link (stored, never used for the pace) |
 | `rate_per_day` | number \| null | per day from the reading it was checked against (null: nothing before it) |
 | `created_at` | datetime with offset | |
 
@@ -285,6 +285,7 @@ latest service has no `odometer_km` (mine trucks, engine hours only) and phones 
 | `pace_source` | `reading` \| `services` \| null | v0.18 |
 | `basis` | `pace` \| `fixed` | v0.18 |
 | `segment` | `new` \| `returning` \| `loyal` \| `at_risk` | segment on `as_of` (the rule above); the UI shows «Эрсдэлтэй» by it |
+| `messenger_ready` | bool | v0.20 (task 9.15a): an unused, unexpired One-Time Notification token exists for this truck → `POST /reminders/{service_id}/messenger` can send it. Always **false** while `MESSENGER_OTN_ENABLED=false` |
 | `message_mn` | string | the Mongolian text (`src/api/reminders.py`): plate, last change date, oil, "Wolf Oil - Гео-Эксперт: " + `CONTACT_PHONE` (approved by PM + Ari). Cyrillic = UCS-2 SMS: **3 parts** with a usual plate / oil grade (v0.18 measured with `sms_parts`; was described as "≤ 160 characters") |
 
 Removed in v0.15: `stage`. Removed in v0.13: `method`, `buffer_days`, `predicted_date`, `days_left`, `status`.
@@ -315,8 +316,8 @@ one that cannot be used is still stored, `status: flagged` + `flag_reason`.
 is stored** → **200** `{unit, value, reading_date, status, flag_reason, rate_per_day, pace}` = what the save
 would store and the Pace after it. The UI's «Км бүртгэх» confirm step uses it (the UI has no copy of the rules).
 
-`DELETE /readings/{id}` removes a typed-in reading (a typo): **204** · **404** unknown · **422** not
-`source = manual` (a service's own reading is part of the service).
+`DELETE /readings/{id}` removes a driver reading (a typo; v0.20: also `source = messenger`, «Буцаах», RISK-34):
+**204** · **404** unknown · **422** `source = service` (a service's own reading is part of the service).
 
 ### `GET /km-checks/due?as_of=` · `POST /km-checks/{service_id}/sent` (v0.18, task 9.14a)
 «Км шалгах»: asks the driver for his current km. **Not a reminder** (own table `km_checks`, not in
@@ -336,6 +337,54 @@ the truck a pace: it leaves this list and its reminder day moves.
 "manual", check_on, sent_at, already_sent: false}` · **200** already marked (that row, `already_sent: true`)
 · **404** unknown service · **409** `not_latest_service` (as for reminders) · **422** check day not come
 yet, no odometer (mine truck), or the phone asked to stop
+
+### Messenger km bot (v0.20, task 9.15a-2)
+Plan: `docs/plans/9.15a_plan.md`. Code: `src/api/routers/messenger.py`, `src/api/messenger/`.
+**Off by default** (`MESSENGER_ENABLED=false`, `MESSENGER_OTN_ENABLED=false`).
+
+`GET /messenger/webhook?hub.mode=&hub.verify_token=&hub.challenge=` — Meta's set-up check. **Public**
+(Caddy, no login; D-118 exception). Works also when `MESSENGER_ENABLED=false`, so the webhook can be set up first.
+- **200** text/plain = `hub.challenge` when `hub.mode = subscribe` and `hub.verify_token` = `META_VERIFY_TOKEN`
+  (constant-time compare) · **403** anything else (also when `META_VERIFY_TOKEN` is empty)
+
+`POST /messenger/webhook` — Meta's events. **Public** (Caddy), signed requests only. In this order:
+1. body > 64 KB → **413**
+2. `X-Hub-Signature-256` must be `sha256=` + HMAC-SHA256(`META_APP_SECRET`, raw body); missing / wrong → **403**, nothing read
+3. `MESSENGER_ENABLED=false` → **200** and nothing else (nothing stored, nothing sent)
+4. not JSON → **400** · `object` ≠ `page` or `entry.id` ≠ `META_PAGE_ID` → ignored
+5. each event once (`message.mid`, else a hash; table `messenger_seen`), each in its own transaction
+6. **200** `EVENT_RECEIVED`; replies go out after it (Send API, `messaging_type: RESPONSE`)
+
+What an event does:
+| Event | Result |
+|---|---|
+| m.me link tap (`referral`, or Get Started `postback` with `referral`) | PSID linked to the ref's truck + service (`messenger_links`, `ref`); greeting |
+| text with exactly one plate + one number (3–7 digits, any order, Latin look-alikes, «км») | the truck (below); the reading checks of `POST /vehicles/{id}/readings` **without saving**; plate + km kept 24 h (`messenger_pending`, no text); «{plate} — {km} км. Зөв үү?» + quick replies «Тийм» / «Үгүй» |
+| «Тийм» (quick reply `KM_YES` or typed) within 24 h | saved like the manual form (same code), `source = messenger`, `reading_date` = the Ulaanbaatar day of the ORIGINAL message; reply with km/day + next change date, or «… ажилтан шалгаад холбогдоно» when flagged |
+| «Үгүй», or «Тийм» after 24 h | nothing saved; «Дахин бичнэ үү: улсын дугаар + км» |
+| anything else | **no reply** (a person answers in the Page inbox) |
+
+Which truck: the typed plate's truck if it is in our DB; else the truck of the PSID's newest ref link whose
+service is still that truck's latest. A typed plate ≠ that ref truck (or unknown with a ref truck) →
+saved **flagged `plate_mismatch`**. No truck at all, or the checks refuse the day → «Баярлалаа, манай
+ажилтан шалгаад холбогдоно.», nothing stored.
+
+`POST /reminders/{service_id}/messenger` — internal (behind the login). Sends the reminder text
+(`message_mn`) with the truck's One-Time Notification token, only when the oil changer taps the button (P2).
+- **201** the stored reminder (`channel: messenger`, `phone: null`); the token is used
+- **200** already marked sent (any channel): that row, `already_sent: true`, nothing sent
+- **404** unknown service · **409** `not_latest_service` · **422** `MESSENGER_OTN_ENABLED=false`, not due,
+  no odometer, phone stopped, or no unused token · **502** `{code: "meta_error", message}` — Meta refused:
+  **no row stored, token not used** (send by SMS)
+- OTN request / opt-in / send format: **UNVERIFIED** (Meta's OTN page answered 404 on 2026-11-04); check in dev mode first
+
+Every `POST /services` with an odometer also stores a random 8-character ref code (`messenger_refs`, A–Z 2–9)
+for the m.me link (used by the SMS text in 9.15a-3). Not in any answer yet.
+
+Settings (server `.env` only; never logged): `MESSENGER_ENABLED`, `MESSENGER_OTN_ENABLED` (needs
+`MESSENGER_ENABLED`), `META_APP_SECRET`, `META_VERIFY_TOKEN`, `META_PAGE_TOKEN`, `META_PAGE_ID`,
+`META_GRAPH_VERSION` (e.g. `v26.0`, the only place the Graph version is set). `MESSENGER_ENABLED=true` with any
+`META_*` empty → the API does not start.
 
 ### `GET /reminders/stops` · `POST /reminders/stops` · `DELETE /reminders/stops/{phone}` (v0.13)
 Phones that asked for no more messages (`reminder_stops`, migration 006).
@@ -404,3 +453,4 @@ The only API routes besides `/health` that Caddy makes public. Not used by the U
 | 0.17 | 2026-11-02 | Task 9.12-1: **additive, read only**. New `GET /stats/period?period=today\|week\|month&as_of=` (services, new vehicles = first-ever service, liters, reminders sent; week = Monday to today, UB). `GET /vehicles/search?segment=` (truck filter, same segment rule). `at_risk_days` added to `GET /stats/segments` |
 | 0.18 | 2026-11-04 | Task 9.14a-2: per-truck km/day engine. ServiceOut `target_km` now **stored** (+ `interval_km`; `OIL_INTERVAL_KM` default 12000, was 15000; older services 15000 by migration 010). VehicleCard `pace` + `readings` (additive). `GET /reminders/due`: `send_on` = the km/day reminder day when the pace is known (meaning change; else 75 days as before) + `next_due_date`, `rate_per_day`, `pace_source`, `basis` (additive); `target_km` nullable. New: `POST /vehicles/{id}/readings`, `DELETE /readings/{id}`, `GET /km-checks/due`, `POST /km-checks/{service_id}/sent`. `GET /stats/period` + `km_checks_sent` (additive). Settings `REMINDER_LEAD_DAYS` (5), `KM_CHECK_DAYS` (34) |
 | 0.19 | 2026-11-04 | Task 9.14a-3: `POST /vehicles/{id}/readings/preview` (additive): what a reading would give, nothing stored — for the UI's confirm step |
+| 0.20 | 2026-11-04 | Task 9.15a-2: Messenger km bot, **additive, off by default**. New `GET/POST /messenger/webhook` (public via Caddy, signed only) and `POST /reminders/{service_id}/messenger` (OTN, behind `MESSENGER_OTN_ENABLED`). `messenger_ready` in `GET /reminders/due` items. Reading `source` `messenger` now written; `flag_reason` + `plate_mismatch`; reminder `channel` + `messenger`. `DELETE /readings/{id}` also removes `messenger` readings. Settings `MESSENGER_ENABLED`, `MESSENGER_OTN_ENABLED`, `META_*`. Needs migration 011 (run `scripts.migrate` before the new API starts). KmCheck `message_mn` **unchanged** (the m.me text is 9.15a-3) |

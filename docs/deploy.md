@@ -384,3 +384,97 @@ Each phone logs in once and is remembered for 30 days again.
   (`openssl rand -hex 32`) + `dc up -d api` also logs everyone out.
 - Rollback: put the old `UI_PASSWORD` back + `dc up -d api` — cookies made before the change work again
   (they are still valid for their 30 days), cookies made with the new password stop.
+
+## 14. Messenger km bot (task 9.15a-2, plan `docs/plans/9.15a_plan.md`)
+
+Deployed **switched off** (`MESSENGER_ENABLED=false`): nothing changes for users until Meta is set up.
+The bot only answers drivers who write first (D-131); replies go out within Meta's 24 h window.
+
+### What this deploy changes
+
+- **Migration 011** (5 `messenger_*` tables, `plate_mismatch`, channel `messenger`). It must run
+  **before** the new API starts: the new `POST /services` writes a ref code into `messenger_refs`.
+- **Caddy:** one new public path, `/messenger/webhook` (no login; the API refuses every POST that
+  Meta did not sign, before reading it). Every other API route stays private (`tests/test_deploy.py`).
+  `log_skip` keeps the path out of Caddy's access log (the verify token is in its query string).
+- **New `.env` values** (names in `.env.prod.example`, all empty / false there). Real values only in the
+  server `.env`, never in git, never in a chat:
+
+| Name | What | Where from |
+|---|---|---|
+| `MESSENGER_ENABLED` | `true` = the bot works. Default `false` | — |
+| `MESSENGER_OTN_ENABLED` | `true` = One-Time Notification reminders (needs `MESSENGER_ENABLED`). Default `false` | PM decides after the OTN check (step 11) |
+| `META_APP_SECRET` | checks Meta's signature | App settings → Basic → App Secret |
+| `META_VERIFY_TOKEN` | webhook set-up password | you make it: `openssl rand -hex 32` |
+| `META_PAGE_TOKEN` | sends the replies | Messenger settings → Page access token |
+| `META_PAGE_ID` | the Page's number | Page → About / Messenger settings |
+| `META_GRAPH_VERSION` | Graph API version, e.g. `v26.0` (the only place it is set) | app dashboard |
+
+`MESSENGER_ENABLED=true` with any `META_*` empty → the API **does not start** (`dc logs api` names the
+missing setting, never a value).
+
+### Deploy (Ari, on the server)
+
+```bash
+cd ~/oil-change-predictor
+git pull
+dc build
+dc run --rm api python -m scripts.migrate        # applies 011 — BEFORE `up`
+dc up -d                                         # api + caddy pick up the new code / Caddyfile
+dc restart caddy                                 # re-reads the Caddyfile (mounted read-only)
+curl -s -o /dev/null -w "%{http_code}\n" "https://<DOMAIN>/messenger/webhook?hub.mode=subscribe&hub.verify_token=x&hub.challenge=1"
+#   403 = public path reached the API, wrong token refused
+curl -s -o /dev/null -w "%{http_code}\n" -X POST https://<DOMAIN>/messenger/webhook -d '{}'
+#   403 = unsigned POST refused
+curl -s -o /dev/null -w "%{http_code}\n" https://<DOMAIN>/vehicles/1   # 302: data routes still private
+```
+
+Daily cleanup (event ids > 7 days, expired «Зөв үү?» questions), once:
+
+```bash
+cp deploy/systemd/ocp-messenger-cleanup.service deploy/systemd/ocp-messenger-cleanup.timer /etc/systemd/system/
+systemctl daemon-reload && systemctl enable --now ocp-messenger-cleanup.timer
+systemctl list-timers ocp-messenger-cleanup.timer      # NEXT = 03:30 Ulaanbaatar
+systemctl start ocp-messenger-cleanup.service && journalctl -u ocp-messenger-cleanup -n 5
+#   "messenger cleanup: 0 seen ids, 0 expired questions deleted"
+```
+
+Rollback (back up first, §12): check out the previous commit, then run the down file by hand
+(`scripts.migrate` only applies; it deletes `plate_mismatch` readings and `messenger` reminders first —
+see the file) and remove its record:
+
+```bash
+dc exec -T db psql -U oil -d oil_change --single-transaction -v ON_ERROR_STOP=1 < src/data/migrations/011_messenger.down.sql
+dc exec -T db psql -U oil -d oil_change -c "DELETE FROM schema_migrations WHERE version = '011'"
+```
+
+### Meta set-up (after the deploy above; plan §8)
+
+1. Confirm you are admin of the Geo-Expert Facebook Page. Note the Page **username** (≤ 16 characters, for
+   the SMS link in 9.15a-3) and the **Page ID**.
+2. business.facebook.com → Settings → Security Center: is the business verified? (needed for App Review later)
+3. developers.facebook.com → Create app (Business) → add the **Messenger** product.
+4. Messenger settings → connect the Page → generate the **Page access token**.
+5. App settings → Basic → **App Secret** (show → copy).
+6. Server `.env` (append with `>>` or `nano`; also keep a copy in the password manager):
+   `META_APP_SECRET`, `META_PAGE_TOKEN`, `META_PAGE_ID`, `META_GRAPH_VERSION`, `META_VERIFY_TOKEN`
+   (`openssl rand -hex 32`), then `MESSENGER_ENABLED=true` → `dc up -d --force-recreate api`
+   → `dc logs --tail 20 api` ("Application startup complete").
+7. Webhook: callback `https://<DOMAIN>/messenger/webhook`, Verify Token = the same value → Verify and save.
+   Subscribe the Page to `messages`, `messaging_postbacks`, `messaging_referrals`.
+8. **Rotate the verify token** (P5): new `openssl rand -hex 32` in `.env` **and** in the dashboard field
+   (verify again), `dc up -d --force-recreate api`.
+9. Set the **Get Started** button (a new thread delivers the ref only through it).
+10. App roles → add testers; each accepts on developers.facebook.com. Until App Review only role users can
+    use the bot (dev mode).
+11. OTN: check in the Page / app settings whether One-Time Notification can still be requested; tell the PM.
+    Only then `MESSENGER_OTN_ENABLED=true` (its format is UNVERIFIED, test with a tester first).
+
+### After every deploy or outage
+
+Meta disables the webhook after about an hour of failed deliveries. After a long deploy or a server
+outage: App dashboard → Messenger → Webhooks — if it shows disabled / unsubscribed, verify again and
+re-subscribe the three fields (step 7). Messages sent meanwhile are still in the Page inbox.
+
+Logs show only the event type and result (`messenger event: asked`, `saved`, `not_km`, …), never a PSID,
+message text, token or secret.

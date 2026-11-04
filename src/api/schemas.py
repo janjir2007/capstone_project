@@ -254,7 +254,7 @@ class PlateRecognitionOut(BaseModel):
 
 MeterUnit = Literal["km", "hours"]
 ReadingSource = Literal["service", "manual", "messenger"]
-ReadingFlag = Literal["not_higher", "too_slow", "too_fast"]
+ReadingFlag = Literal["not_higher", "too_slow", "too_fast", "plate_mismatch"]  # 9.15a: + plate_mismatch
 
 
 class ReadingOut(BaseModel):
@@ -269,10 +269,11 @@ class ReadingOut(BaseModel):
     value: float
     reading_date: date
     source: ReadingSource = Field(description="service = the service's own meter · manual = the driver's reply, "
-                                              "typed in · messenger = later")
+                                              "typed in · messenger = the driver's reply confirmed in Messenger (9.15a)")
     status: Literal["ok", "flagged"] = Field(description="flagged = never used for the pace")
     flag_reason: ReadingFlag | None = Field(description="not_higher · too_slow (< 20 km/day) · too_fast "
-                                                        "(> 1200 km/day, > 24 h/day, or higher on the same day)")
+                                                        "(> 1200 km/day, > 24 h/day, or higher on the same day) · "
+                                                        "plate_mismatch (9.15a: Messenger plate <> the ref link's truck)")
     rate_per_day: float | None = Field(description="Units/day from the reading it was checked against")
     created_at: datetime
 
@@ -440,7 +441,7 @@ class PeriodStats(BaseModel):
 
 # 9.5c stores 'single'; '1m' / '2m' / '3m' only on rows from 9.5b (kept as history).
 ReminderStage = Literal["single", "1m", "2m", "3m"]
-ReminderChannel = Literal["manual", "sms"]
+ReminderChannel = Literal["manual", "sms", "messenger"]  # 9.15a: + messenger (OTN)
 
 
 class DueReminder(BaseModel):
@@ -471,6 +472,9 @@ class DueReminder(BaseModel):
     segment: Segment = Field(description="Segment on as_of; at_risk = AT_RISK_DAYS (150)+ days since the latest "
                                          "service: shown as «Эрсдэлтэй» (9.5c)")
     message_mn: str = Field(description="Mongolian reminder text (copy into Viber)")
+    messenger_ready: bool = Field(default=False, description="9.15a: true = an unused One-Time Notification token "
+                                                             "exists: POST /reminders/{service_id}/messenger can send "
+                                                             "it; always false while MESSENGER_OTN_ENABLED=false")
 
 
 class DueReminders(BaseModel):

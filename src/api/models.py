@@ -107,7 +107,7 @@ class ReminderSent(Base):
     phone: Mapped[str | None] = mapped_column(Text)
     message_text: Mapped[str] = mapped_column(Text)
     stage: Mapped[str | None] = mapped_column(Text)  # 'single' (9.5c); '1m'/'2m'/'3m' (9.5b); None = prediction row
-    channel: Mapped[str] = mapped_column(Text, server_default="manual")  # 'manual' / 'sms' (migration 007)
+    channel: Mapped[str] = mapped_column(Text, server_default="manual")  # 'manual' / 'sms' (007) / 'messenger' (011)
     method: Mapped[str | None] = mapped_column(Text)
     model_version: Mapped[str | None] = mapped_column(Text)
     predicted_date: Mapped[date | None]
@@ -126,7 +126,8 @@ class ReminderStop(Base):
 
 class OdometerReading(Base):
     """odometer_readings (migration 010, task 9.14a): one meter value of a truck on one day.
-    source 'service' = a service's own odometer / engine hours; 'manual' = the driver's reply typed in."""
+    source 'service' = a service's own odometer / engine hours; 'manual' = the driver's reply typed in;
+    'messenger' = the driver's reply confirmed in Messenger (task 9.15a)."""
 
     __tablename__ = "odometer_readings"
 
@@ -138,7 +139,7 @@ class OdometerReading(Base):
     reading_date: Mapped[date]
     source: Mapped[str] = mapped_column(Text)  # 'service' / 'manual' / 'messenger'
     status: Mapped[str] = mapped_column(Text)  # 'ok' / 'flagged'
-    flag_reason: Mapped[str | None] = mapped_column(Text)  # 'not_higher' / 'too_slow' / 'too_fast'
+    flag_reason: Mapped[str | None] = mapped_column(Text)  # 'not_higher' / 'too_slow' / 'too_fast' / 'plate_mismatch' (011)
     rate_per_day: Mapped[Decimal | None] = mapped_column(Numeric(9, 1))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -156,3 +157,65 @@ class KmCheck(Base):
     channel: Mapped[str] = mapped_column(Text, server_default="manual")
     check_on: Mapped[date]
     sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# ---------------------------------------------------------------- task 9.15a: Messenger (migration 011)
+
+
+class MessengerRef(Base):
+    """messenger_refs: the random code of one service's m.me link (?ref=...)."""
+
+    __tablename__ = "messenger_refs"
+
+    ref: Mapped[str] = mapped_column(Text, primary_key=True)
+    service_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("service_records.id"))
+    vehicle_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("vehicles.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class MessengerLink(Base):
+    """messenger_links: a Facebook PSID linked to a truck ('ref' = tapped its link, 'plate' = confirmed a reading)."""
+
+    __tablename__ = "messenger_links"
+
+    psid: Mapped[str] = mapped_column(Text, primary_key=True)
+    vehicle_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("vehicles.id"), primary_key=True)
+    linked_via: Mapped[str] = mapped_column(Text)
+    service_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("service_records.id"))
+    linked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class MessengerPending(Base):
+    """messenger_pending: the parsed plate + km waiting for «Тийм» (no message text)."""
+
+    __tablename__ = "messenger_pending"
+
+    psid: Mapped[str] = mapped_column(Text, primary_key=True)
+    plate: Mapped[str] = mapped_column(Text)
+    value: Mapped[Decimal] = mapped_column(Numeric(9, 1))
+    reading_date: Mapped[date]
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class MessengerSeen(Base):
+    """messenger_seen: an event id already handled (Meta re-sends events)."""
+
+    __tablename__ = "messenger_seen"
+
+    mid: Mapped[str] = mapped_column(Text, primary_key=True)
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class MessengerOtn(Base):
+    """messenger_otn: a One-Time Notification token (one message) for one truck."""
+
+    __tablename__ = "messenger_otn"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    psid: Mapped[str] = mapped_column(Text)
+    vehicle_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("vehicles.id"))
+    token: Mapped[str] = mapped_column(Text)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

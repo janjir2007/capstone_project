@@ -23,3 +23,8 @@ def today_ulaanbaatar() -> date:
 def get_today() -> date:
     """FastAPI dependency: today's date (override in tests)."""
     return today_ulaanbaatar()
+
+
+def get_now() -> datetime:
+    """FastAPI dependency: the current moment, timezone-aware (task 9.15a: OTN token expiry; override in tests)."""
+    return datetime.now(timezone.utc)

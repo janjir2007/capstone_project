@@ -48,7 +48,9 @@ SQL_FILES = ["schema.sql", "migrations/001_destinations.up.sql", "migrations/002
              "sample_data.sql",
              # 9.14a: AFTER the sample data, like on a server with data: its backfill fills target_km /
              # interval_km (15000) and the 'service' readings of the sample services
-             "migrations/010_km_readings.up.sql"]
+             "migrations/010_km_readings.up.sql",
+             # 9.15a: one ref per sample service (POST /services adds one for new ones)
+             "migrations/011_messenger.up.sql"]
 TODAY = date(2026, 9, 30)
 
 

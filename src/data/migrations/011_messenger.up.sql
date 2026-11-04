@@ -1,0 +1,108 @@
+-- =====================================================================
+-- Migration 011 UP — Messenger km bot (Task 9.15a-2, plan docs/plans/9.15a_plan.md §3)
+--
+-- 1. messenger_refs: the random code in the m.me link of a km-check SMS (?ref=K7Q2M9XA), one per
+--    service (D-131), so the bot knows which truck / service the SMS was about. 8 characters from
+--    A-Z 2-9, made with a strong random source (Python `secrets` in POST /services; here
+--    gen_random_uuid(), built into PostgreSQL 13+), so codes cannot be guessed in order.
+--    Backfill: one per existing service with an odometer (mine trucks get no km check).
+-- 2. messenger_links: Facebook PSID <-> truck, the ONLY Facebook data we keep (D-131). Many-to-many
+--    (one driver, several trucks; one truck, several drivers). linked_via 'ref' = the driver tapped
+--    the m.me link of that service (service_id set); 'plate' = he confirmed a reading of that truck.
+-- 3. messenger_pending: the parsed plate + km between the driver's message and his «Тийм»
+--    (PM 9.15a-2: parsed values only, NO message text). One per PSID; expires after 24 h (P3).
+-- 4. messenger_seen: message ids already handled (Meta re-sends events). Rows older than 7 days
+--    and expired pending rows are deleted by the daily cleanup (src/api/messenger/cleanup.py).
+-- 5. messenger_otn: One-Time Notification tokens (1 token = 1 message, D-131). Written only with
+--    MESSENGER_OTN_ENABLED=true. The token is never logged.
+-- 6. odometer_readings.flag_reason + 'plate_mismatch' (P1: typed plate <> the truck of the ref
+--    link; stored flagged = never used for the pace).
+-- 7. reminders_sent.channel + 'messenger' (a reminder sent with an OTN token, P2).
+--
+-- Run (the runner provides the transaction):  python -m scripts.migrate
+-- Undo: 011_messenger.down.sql
+-- =====================================================================
+
+-- ---------------------------------------------------------------- 1. refs
+
+CREATE TABLE messenger_refs (
+    ref         TEXT        PRIMARY KEY CHECK (ref ~ '^[A-Z2-9]{8}$'),
+    service_id  BIGINT      NOT NULL UNIQUE,
+    vehicle_id  BIGINT      NOT NULL REFERENCES vehicles (id),
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT messenger_refs_service_same_vehicle_fk
+        FOREIGN KEY (service_id, vehicle_id) REFERENCES service_records (id, vehicle_id)
+);
+
+-- 8 random bytes of a v4 UUID (bytes 6 and 8 hold the version / variant bits: skipped), each
+-- mapped onto the 34 characters. The UUID is made in the CTE's select list, so once PER ROW
+-- (a version with the UUID inside a LATERAL subquery gave every row the same code: tested).
+WITH raw AS MATERIALIZED (
+    SELECT id, vehicle_id, uuid_send(gen_random_uuid()) AS b
+    FROM service_records
+    WHERE odometer_km IS NOT NULL
+)
+INSERT INTO messenger_refs (ref, service_id, vehicle_id)
+SELECT (SELECT string_agg(substr('ABCDEFGHIJKLMNOPQRSTUVWXYZ23456789', get_byte(raw.b, i) % 34 + 1, 1), ''
+                          ORDER BY i)
+        FROM unnest(ARRAY[0, 1, 2, 3, 4, 5, 10, 11]) AS i),
+       id, vehicle_id
+FROM raw;
+
+-- ---------------------------------------------------------------- 2. links
+
+CREATE TABLE messenger_links (
+    psid        TEXT        NOT NULL CHECK (psid ~ '^[0-9]{1,32}$'),
+    vehicle_id  BIGINT      NOT NULL REFERENCES vehicles (id),
+    linked_via  TEXT        NOT NULL CHECK (linked_via IN ('ref', 'plate')),
+    -- 'ref': the service of the tapped link (the bot uses it only while it is the truck's latest).
+    service_id  BIGINT      REFERENCES service_records (id),
+    linked_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (psid, vehicle_id),
+    CONSTRAINT messenger_links_ref_has_service CHECK ((linked_via = 'ref') = (service_id IS NOT NULL))
+);
+CREATE INDEX messenger_links_vehicle_idx ON messenger_links (vehicle_id);
+
+-- ---------------------------------------------------------------- 3. pending «Тийм / Үгүй»
+
+CREATE TABLE messenger_pending (
+    psid            TEXT          PRIMARY KEY CHECK (psid ~ '^[0-9]{1,32}$'),
+    -- The typed plate, normalized (src/common/plates.py) — it may not be in our database.
+    plate           TEXT          NOT NULL CHECK (plate ~ '^[0-9]{4}[А-ЯЁӨҮ]{3}$'),
+    value           NUMERIC(9, 1) NOT NULL CHECK (value > 0),
+    -- Ulaanbaatar day of the driver's ORIGINAL message (P3), not of his «Тийм».
+    reading_date    DATE          NOT NULL,
+    expires_at      TIMESTAMPTZ   NOT NULL,
+    created_at      TIMESTAMPTZ   NOT NULL DEFAULT now()
+);
+
+-- ---------------------------------------------------------------- 4. seen events
+
+CREATE TABLE messenger_seen (
+    mid          TEXT        PRIMARY KEY CHECK (btrim(mid) <> ''),
+    received_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX messenger_seen_received_idx ON messenger_seen (received_at);
+
+-- ---------------------------------------------------------------- 5. OTN tokens
+
+CREATE TABLE messenger_otn (
+    id          BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    psid        TEXT        NOT NULL CHECK (psid ~ '^[0-9]{1,32}$'),
+    vehicle_id  BIGINT      NOT NULL REFERENCES vehicles (id),
+    token       TEXT        NOT NULL UNIQUE CHECK (btrim(token) <> ''),
+    expires_at  TIMESTAMPTZ NOT NULL,
+    used_at     TIMESTAMPTZ,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX messenger_otn_vehicle_idx ON messenger_otn (vehicle_id) WHERE used_at IS NULL;
+
+-- ---------------------------------------------------------------- 6 + 7. CHECK lists
+
+ALTER TABLE odometer_readings DROP CONSTRAINT odometer_readings_flag_reason_check;
+ALTER TABLE odometer_readings ADD CONSTRAINT odometer_readings_flag_reason_check
+    CHECK (flag_reason IN ('not_higher', 'too_slow', 'too_fast', 'plate_mismatch'));
+
+ALTER TABLE reminders_sent DROP CONSTRAINT reminders_sent_channel_check;
+ALTER TABLE reminders_sent ADD CONSTRAINT reminders_sent_channel_check
+    CHECK (channel IN ('manual', 'sms', 'messenger'));

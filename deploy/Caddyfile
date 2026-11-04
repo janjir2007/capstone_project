@@ -25,6 +25,21 @@
 		}
 	}
 
+	# Task 9.15a (D-118 exception, PM): Meta's webhook for the Messenger km bot. No login (Meta
+	# cannot log in): the API refuses every POST without Meta's X-Hub-Signature-256 BEFORE reading
+	# it, and the GET only answers the right verify token. This is the ONLY API path besides /health
+	# and /auth/* that is public (tests/test_deploy.py). 64 KB = the API's own body limit.
+	# log_skip: no access-log line for this path even if a `log` directive is added later, so the
+	# verify token (sent in the query string) never lands in Caddy's log (P5). Caddy has no access
+	# log today (no `log` directive in this file).
+	handle /messenger/webhook {
+		log_skip
+		request_body {
+			max_size 64KB
+		}
+		reverse_proxy api:8000
+	}
+
 	# Everything else = the UI, but only with a valid login cookie: forward_auth asks the API
 	# (GET /auth/check, the browser's Cookie header copied) before EVERY request, including
 	# Streamlit's websocket /_stcore/stream. 2xx -> passed on; otherwise the API's 302 to

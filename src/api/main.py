@@ -20,15 +20,17 @@ from fastapi import FastAPI
 from sqlalchemy import Engine
 
 from src.api.auth import LoginLimiter, load_auth_config
-from src.api.config import load_settings, oil_interval_km, reminder_rules, unpaid_lookback_days
+from src.api.config import load_settings, messenger_settings, oil_interval_km, reminder_rules, unpaid_lookback_days
 from src.api.config import model_dir as model_dir_from_env
 from src.api.db import create_db_engine
+from src.api.messenger.logs import install_log_filter
+from src.api.messenger.send import GraphSender
 from src.api.prediction import load_predictor
-from src.api.routers import (auth, destinations, health, km_checks, payments, plates, readings, reminders, services,
-                             stats, vehicles)
+from src.api.routers import (auth, destinations, health, km_checks, messenger, payments, plates, readings, reminders,
+                             services, stats, vehicles)
 from src.cv.plate_reader import PlateRecognizer
 
-API_VERSION = "0.19.0"  # = docs/api_contract.md version
+API_VERSION = "0.20.0"  # = docs/api_contract.md version
 log = logging.getLogger("uvicorn.error")
 
 
@@ -57,6 +59,10 @@ def create_app(engine: Engine | None = None, model_dir: Path | None = None) -> F
         unpaid_lookback_days()  # 9.12-3: a bad ARTLAB_UNPAID_LOOKBACK_DAYS stops it too
         # 8.5r: UI_PASSWORD + AUTH_SECRET read once; UI_PASSWORD set without AUTH_SECRET stops the start
         app.state.auth = load_auth_config()
+        # 9.15a: MESSENGER_ENABLED=true with an empty META_* value stops the start here
+        bot = messenger_settings()
+        app.state.messenger_sender = (GraphSender(bot.page_id, bot.page_token, bot.graph_version) if bot.enabled
+                                      else None)
         app.state.engine = engine if engine is not None else create_db_engine(load_settings().database_url)
         folder = model_dir if model_dir is not None else model_dir_from_env()
         app.state.predictor = _load("prediction model", load_predictor, folder)
@@ -64,6 +70,7 @@ def create_app(engine: Engine | None = None, model_dir: Path | None = None) -> F
         yield
         app.state.engine.dispose()  # close pooled connections on shutdown
 
+    install_log_filter()  # 9.15a: the webhook's verify token never reaches the access log
     app = FastAPI(title="Oil Change Predictor API", version=API_VERSION, lifespan=lifespan)
     app.state.clock = time.time                # tests replace it to test token expiry and the lock
     app.state.login_limiter = LoginLimiter()   # wrong-password counts, in memory (8.5r)
@@ -78,6 +85,7 @@ def create_app(engine: Engine | None = None, model_dir: Path | None = None) -> F
     app.include_router(payments.router)  # task 9.6b-4: Artlab payments, read only
     app.include_router(readings.router)   # task 9.14a: driver km readings
     app.include_router(km_checks.router)  # task 9.14a: «Км шалгах» list
+    app.include_router(messenger.router)  # task 9.15a: Messenger km bot (webhook public via Caddy, signed only)
     return app
 
 

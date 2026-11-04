@@ -1,0 +1,12 @@
+# Messenger cleanup every day at 03:30 Asia/Ulaanbaatar (after the 03:00 backup), task 9.15a-2.
+# Persistent=true: runs once after a server restart if 03:30 was missed.
+[Unit]
+Description=Messenger cleanup at 03:30 Asia/Ulaanbaatar
+
+[Timer]
+OnCalendar=*-*-* 03:30:00 Asia/Ulaanbaatar
+Persistent=true
+Unit=ocp-messenger-cleanup.service
+
+[Install]
+WantedBy=timers.target

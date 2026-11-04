@@ -102,13 +102,25 @@ def _handle_blocks() -> dict[str, str]:
     return {m.group(1): m.group(2) for m in re.finditer(r"^\thandle ?(\S*) \{\n(.*?)^\t\}", site, re.S | re.M)}
 
 
-def test_caddy_makes_only_health_and_auth_of_the_api_public() -> None:
-    """D-061 + D-117: of the API only /health and /auth/* are public."""
+def test_caddy_makes_only_health_auth_and_the_webhook_of_the_api_public() -> None:
+    """D-061 + D-117: of the API only /health and /auth/* are public; 9.15a (D-118 exception) adds
+    /messenger/webhook (signed Meta requests only) and nothing else."""
     blocks = _handle_blocks()
-    assert set(blocks) == {"/health", "/auth/*", ""}
+    assert set(blocks) == {"/health", "/auth/*", "/messenger/webhook", ""}
     api_public = {m for m, body in blocks.items() if re.search(r"reverse_proxy api:8000", body)}
-    assert api_public == {"/health", "/auth/*"}
+    assert api_public == {"/health", "/auth/*", "/messenger/webhook"}
     assert "reverse_proxy ui:8501" in blocks[""]
+
+
+def test_webhook_block_is_exact_small_and_not_logged() -> None:
+    """9.15a: the webhook path only (no wildcard), 64 KB body, never in Caddy's access log (the verify
+    token is in its query string), no login (Meta cannot log in; the API checks the signature)."""
+    body = _handle_blocks()["/messenger/webhook"]
+    assert [line.strip() for line in body.strip().splitlines()] == [
+        "log_skip", "request_body {", "max_size 64KB", "}", "reverse_proxy api:8000"]
+    assert "forward_auth" not in body
+    site = re.search(r"^\{\$DOMAIN\} \{\n(.*?)^\}", CADDYFILE, re.S | re.M).group(1)
+    assert not re.search(r"^\s*log\b(?!_skip)", site, re.M)        # no access log today
 
 
 def test_caddy_checks_the_cookie_before_every_ui_request() -> None:
@@ -205,3 +217,37 @@ def test_rejected(tmp_path: Path, cases: str, code: int) -> None:
 
 def test_missing_report_fails(tmp_path: Path) -> None:
     assert C.main([str(tmp_path / "nope.xml"), "134"]) == 1
+
+
+# ==========================================================================
+# Task 9.15a: Messenger settings
+# ==========================================================================
+
+MESSENGER_VARS = ("MESSENGER_ENABLED", "MESSENGER_OTN_ENABLED", "META_APP_SECRET", "META_VERIFY_TOKEN",
+                  "META_PAGE_TOKEN", "META_PAGE_ID", "META_GRAPH_VERSION")
+
+
+def test_messenger_settings_reach_only_the_api_and_are_off_by_default() -> None:
+    env = SERVICES["api"]["environment"]
+    assert (env["MESSENGER_ENABLED"], env["MESSENGER_OTN_ENABLED"]) == \
+        ("${MESSENGER_ENABLED:-false}", "${MESSENGER_OTN_ENABLED:-false}")
+    for var in MESSENGER_VARS[2:]:
+        assert env[var] == "${" + var + ":-}"                           # no value in git, empty default
+    for name in ("ui", "caddy", "db", "artlab-sync"):
+        assert not any(k.startswith(("META_", "MESSENGER_")) for k in SERVICES[name].get("environment") or {}), name
+
+
+@pytest.mark.parametrize("example", [".env.example", ".env.prod.example"])
+def test_env_examples_have_empty_meta_placeholders(example: str) -> None:
+    values = dict(line.split("=", 1) for line in (ROOT / example).read_text(encoding="utf-8").splitlines()
+                  if line and not line.startswith("#"))
+    assert (values["MESSENGER_ENABLED"], values["MESSENGER_OTN_ENABLED"]) == ("false", "false")
+    for var in MESSENGER_VARS[2:]:
+        assert values[var] == "", var
+
+
+def test_cleanup_timer_runs_the_cleanup_daily() -> None:
+    service = (ROOT / "deploy" / "systemd" / "ocp-messenger-cleanup.service").read_text(encoding="utf-8")
+    timer = (ROOT / "deploy" / "systemd" / "ocp-messenger-cleanup.timer").read_text(encoding="utf-8")
+    assert "exec -T api python -m src.api.messenger.cleanup" in service
+    assert "OnCalendar=*-*-* 03:30:00 Asia/Ulaanbaatar" in timer and "Unit=ocp-messenger-cleanup.service" in timer

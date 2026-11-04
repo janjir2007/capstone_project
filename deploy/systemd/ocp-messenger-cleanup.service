@@ -1,0 +1,14 @@
+# Daily Messenger cleanup (task 9.15a-2), started by ocp-messenger-cleanup.timer. Install: docs/deploy.md §14.
+# Deletes event ids older than 7 days and expired «Зөв үү?» questions; prints only the two counts.
+# Runs inside the RUNNING api container (exec), so it needs the stack to be up.
+# One run by hand: systemctl start ocp-messenger-cleanup.service && journalctl -u ocp-messenger-cleanup -n 5
+[Unit]
+Description=Oil change predictor: Messenger cleanup
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/root/oil-change-predictor
+ExecStart=/usr/bin/docker compose -f docker-compose.prod.yml exec -T api python -m src.api.messenger.cleanup
+TimeoutStartSec=5min

@@ -16,7 +16,7 @@ stopped phone. The ML model is not needed here (prediction code stays for the ca
 No SMS / Viber is sent by the API (D-010): the manager sends the text and marks it sent (channel 'manual').
 """
 
-from datetime import date
+from datetime import date, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -24,11 +24,11 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
-from src.api.clock import get_today
-from src.api.config import Contact, ReminderRules, reminder_contact, reminder_rules
+from src.api.clock import get_now, get_today
+from src.api.config import Contact, MessengerSettings, ReminderRules, messenger_settings, reminder_contact, reminder_rules
 from src.api.db import get_session
 from src.api.history import driver_readings, records_as_of, schedule_of, service_records
-from src.api.models import ReminderSent, ReminderStop, ServiceRecord, Vehicle
+from src.api.models import MessengerOtn, ReminderSent, ReminderStop, ServiceRecord, Vehicle
 from src.api.reminders import STAGE, days_since, message_mn, segment_of
 from src.api.schemas import DueReminder, DueReminders, ReminderSentOut, StopIn, StopOut, normalize_phone
 
@@ -48,12 +48,27 @@ def get_rules() -> ReminderRules:
     return reminder_rules()
 
 
+def get_messenger_settings() -> MessengerSettings:
+    """FastAPI dependency: the Messenger settings (task 9.15a; checked at startup, override in tests)."""
+    return messenger_settings()
+
+
 ContactDep = Annotated[Contact, Depends(get_contact)]
 RulesDep = Annotated[ReminderRules, Depends(get_rules)]
+MessengerDep = Annotated[MessengerSettings, Depends(get_messenger_settings)]
+NowDep = Annotated[datetime, Depends(get_now)]
 
 
 def stopped_phones(session: Session) -> set[str]:
     return set(session.scalars(select(ReminderStop.phone)).all())
+
+
+def otn_ready_vehicles(session: Session, vehicle_ids: list[int], now: datetime) -> set[int]:
+    """Trucks with an unused, unexpired One-Time Notification token (task 9.15a)."""
+    if not vehicle_ids:
+        return set()
+    return set(session.scalars(select(MessengerOtn.vehicle_id).where(
+        MessengerOtn.vehicle_id.in_(vehicle_ids), MessengerOtn.used_at.is_(None), MessengerOtn.expires_at > now)).all())
 
 
 def text_for(vehicle: Vehicle, service: ServiceRecord, contact: Contact) -> str:
@@ -67,6 +82,8 @@ def due_reminders(
     today: TodayDep,
     contact: ContactDep,
     rules: RulesDep,
+    messenger: MessengerDep,
+    now: NowDep,
     as_of: Annotated[date | None, Query(description="Default: today (Ulaanbaatar). Uses only services up to this day")] = None,
 ) -> DueReminders:
     """Trucks whose reminder day has come on as_of and nothing was sent for that service (oldest first)."""
@@ -85,6 +102,7 @@ def due_reminders(
            and service.id not in sent and plans[vid].reminder_on <= as_of]
     vehicles = {v.id: v for v in session.scalars(
         select(Vehicle).options(selectinload(Vehicle.company)).where(Vehicle.id.in_(due))).all()}
+    ready = otn_ready_vehicles(session, due, now) if messenger.otn_enabled else set()  # 9.15a
     items = []
     for vid in due:
         vehicle, service, plan = vehicles[vid], latest[vid], plans[vid]
@@ -98,7 +116,7 @@ def due_reminders(
             rate_per_day=None if plan.pace.rate_per_day is None else round(plan.pace.rate_per_day, 1),
             pace_source=plan.pace.source, basis=plan.basis,
             segment=segment_of(len(records[vid]), service.service_date, as_of, rules),
-            message_mn=text_for(vehicle, service, contact),
+            message_mn=text_for(vehicle, service, contact), messenger_ready=vid in ready,
         ))
     items.sort(key=lambda r: (r.send_on, r.vehicle_id))
     return DueReminders(as_of=as_of, contact_is_placeholder=contact.is_placeholder, reminders=items)

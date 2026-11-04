@@ -10,8 +10,9 @@ Two ways to point the API at a database, same rule as tests/test_schema.py:
 """
 
 import os
+import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import quote
 
@@ -204,3 +205,59 @@ def reminder_contact(env: Mapping[str, str] | None = None) -> Contact:
              or PLACEHOLDER_PHONE)
     name = env.get("GEO_EXPERT_NAME", "").strip() or "Geo-Expert"
     return Contact(name=name, phone=phone, is_placeholder=phone == PLACEHOLDER_PHONE)
+
+
+# Task 9.15a: Messenger km bot. Secrets come ONLY from the server .env (never in git, never logged):
+# META_APP_SECRET (checks Meta's signature), META_VERIFY_TOKEN (webhook set-up), META_PAGE_TOKEN
+# (Send API). META_GRAPH_VERSION = the ONE place the Graph API version is set (e.g. v26.0; take it
+# from the app dashboard). Both switches default to off: safe to deploy before Meta is ready.
+MESSENGER_REQUIRED = ("META_APP_SECRET", "META_VERIFY_TOKEN", "META_PAGE_TOKEN", "META_PAGE_ID", "META_GRAPH_VERSION")
+_TRUE, _FALSE = ("1", "true", "yes", "on"), ("", "0", "false", "no", "off")
+
+
+@dataclass(frozen=True)
+class MessengerSettings:
+    """Messenger bot settings. repr=False on the secrets: printing the object never shows them."""
+
+    enabled: bool = False
+    otn_enabled: bool = False
+    app_secret: str = field(default="", repr=False)
+    verify_token: str = field(default="", repr=False)
+    page_token: str = field(default="", repr=False)
+    page_id: str = ""
+    graph_version: str = ""
+
+
+def _switch(env: Mapping[str, str], name: str) -> bool:
+    raw = env.get(name, "").strip().lower()
+    if raw in _TRUE:
+        return True
+    if raw in _FALSE:
+        return False
+    raise ConfigError(f"{name} must be true or false")  # the value is not repeated: never echo settings
+
+
+def messenger_settings(env: Mapping[str, str] | None = None) -> MessengerSettings:
+    """MESSENGER_ENABLED / MESSENGER_OTN_ENABLED (default false) + the META_* values.
+
+    ConfigError (the API does not start) when MESSENGER_ENABLED=true and a META_* value is empty,
+    MESSENGER_OTN_ENABLED=true without MESSENGER_ENABLED, or META_GRAPH_VERSION / META_PAGE_ID look
+    wrong. Errors name the setting only, never its value.
+    """
+    env = os.environ if env is None else env
+    settings = MessengerSettings(
+        enabled=_switch(env, "MESSENGER_ENABLED"), otn_enabled=_switch(env, "MESSENGER_OTN_ENABLED"),
+        app_secret=env.get("META_APP_SECRET", "").strip(), verify_token=env.get("META_VERIFY_TOKEN", "").strip(),
+        page_token=env.get("META_PAGE_TOKEN", "").strip(), page_id=env.get("META_PAGE_ID", "").strip(),
+        graph_version=env.get("META_GRAPH_VERSION", "").strip())
+    if settings.otn_enabled and not settings.enabled:
+        raise ConfigError("MESSENGER_OTN_ENABLED=true needs MESSENGER_ENABLED=true")
+    if settings.enabled:
+        missing = [name for name in MESSENGER_REQUIRED if not env.get(name, "").strip()]
+        if missing:
+            raise ConfigError(f"MESSENGER_ENABLED=true but empty in .env: {', '.join(missing)}")
+    if settings.graph_version and not re.fullmatch(r"v[0-9]+\.[0-9]+", settings.graph_version):
+        raise ConfigError("META_GRAPH_VERSION must look like v26.0")
+    if settings.page_id and not settings.page_id.isdigit():
+        raise ConfigError("META_PAGE_ID must be the Page's number")
+    return settings
