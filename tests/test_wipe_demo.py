@@ -21,10 +21,11 @@ SQL_FILES = ["schema.sql", "migrations/001_destinations.up.sql", "migrations/002
              "migrations/005_destinations_cross_border.up.sql",
              "migrations/006_reminder_stages.up.sql", "migrations/007_single_reminder.up.sql",
              "migrations/008_artlab.up.sql", "migrations/009_sync_runs_account.up.sql",
+             "migrations/010_km_readings.up.sql",
              "sample_data.sql"]
 # artlab_bills (9.6b-4): found through its foreign key to service_records, like predictions / reminders.
-EMPTIED = ["artlab_bills", "companies", "predictions", "reminder_stops", "reminders", "reminders_sent",
-           "service_records", "vehicles"]
+EMPTIED = ["artlab_bills", "companies", "km_checks", "odometer_readings", "predictions", "reminder_stops",
+           "reminders", "reminders_sent", "service_records", "vehicles"]
 
 
 @pytest.fixture

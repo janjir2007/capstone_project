@@ -29,6 +29,8 @@ Supabase), Next.js, Docker, GitHub Actions.
 - Write pytest tests for core functions. Run `pytest -v` before finishing.
 - Feature engineering lives ONLY in `src/common/features.py` (training and API
   share it). Plate normalization lives ONLY in `src/common/plates.py`.
+- The reminder km/day engine lives ONLY in `src/api/pace.py` (a business rule,
+  not a model feature, so not in features.py; task 9.14a).
 
 ## Privacy (RISK-06)
 - `data/raw/` holds REAL customer records and photos (driver names, phones,

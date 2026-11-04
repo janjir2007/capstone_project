@@ -67,10 +67,13 @@ services:
       # Task 9.5b: the oil changer's number at the end of every reminder (wins over GEO_EXPERT_PHONE).
       CONTACT_PHONE: ${CONTACT_PHONE:-}
       # Task 9.5a: target km of the next oil change = odometer at the last change + this.
-      OIL_INTERVAL_KM: ${OIL_INTERVAL_KM:-15000}
+      OIL_INTERVAL_KM: ${OIL_INTERVAL_KM:-12000}   # 9.14a: was 15000; stored on each service
       # Task 9.5c: reminder REMINDER_DAYS after the latest service; at risk after AT_RISK_DAYS.
       REMINDER_DAYS: ${REMINDER_DAYS:-75}
       AT_RISK_DAYS: ${AT_RISK_DAYS:-150}
+      # Task 9.14a: reminder this many days before the km/day due day; km check this many days after the service.
+      REMINDER_LEAD_DAYS: ${REMINDER_LEAD_DAYS:-5}
+      KM_CHECK_DAYS: ${KM_CHECK_DAYS:-34}
       # Task 8.5r (D-117): the API serves the login page and signs the 30-day cookie, so the
       # password lives here now (not in ui). New UI_PASSWORD -> every cookie invalid = all logged out.
       UI_PASSWORD: ${UI_PASSWORD:?set UI_PASSWORD in .env (company login, D-061)}

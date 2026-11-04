@@ -24,10 +24,11 @@ from src.api.config import load_settings, oil_interval_km, reminder_rules, unpai
 from src.api.config import model_dir as model_dir_from_env
 from src.api.db import create_db_engine
 from src.api.prediction import load_predictor
-from src.api.routers import auth, destinations, health, payments, plates, reminders, services, stats, vehicles
+from src.api.routers import (auth, destinations, health, km_checks, payments, plates, readings, reminders, services,
+                             stats, vehicles)
 from src.cv.plate_reader import PlateRecognizer
 
-API_VERSION = "0.17.0"  # = docs/api_contract.md version
+API_VERSION = "0.18.0"  # = docs/api_contract.md version
 log = logging.getLogger("uvicorn.error")
 
 
@@ -52,7 +53,7 @@ def create_app(engine: Engine | None = None, model_dir: Path | None = None) -> F
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         oil_interval_km()  # 9.5a: a bad OIL_INTERVAL_KM stops the start here, not every card request
-        reminder_rules()   # 9.5c: bad REMINDER_DAYS / AT_RISK_DAYS, or AT_RISK_DAYS <= REMINDER_DAYS, stop it too
+        reminder_rules()   # 9.5c/9.14a: bad REMINDER_DAYS / AT_RISK_DAYS / REMINDER_LEAD_DAYS / KM_CHECK_DAYS stop it too
         unpaid_lookback_days()  # 9.12-3: a bad ARTLAB_UNPAID_LOOKBACK_DAYS stops it too
         # 8.5r: UI_PASSWORD + AUTH_SECRET read once; UI_PASSWORD set without AUTH_SECRET stops the start
         app.state.auth = load_auth_config()
@@ -75,6 +76,8 @@ def create_app(engine: Engine | None = None, model_dir: Path | None = None) -> F
     app.include_router(plates.router)
     app.include_router(reminders.router)
     app.include_router(payments.router)  # task 9.6b-4: Artlab payments, read only
+    app.include_router(readings.router)   # task 9.14a: driver km readings
+    app.include_router(km_checks.router)  # task 9.14a: «Км шалгах» list
     return app
 
 

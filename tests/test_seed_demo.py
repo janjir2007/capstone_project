@@ -23,7 +23,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import Connection, create_engine, func, select
+from sqlalchemy import Connection, create_engine, func, select, text
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
@@ -46,7 +46,8 @@ SQL_FILES = ["schema.sql", "migrations/001_destinations.up.sql", "migrations/002
              "migrations/003_reminders_sent.up.sql", "migrations/004_destinations_name_mn_rest.up.sql",
              "migrations/005_destinations_cross_border.up.sql",
              "migrations/006_reminder_stages.up.sql", "migrations/007_single_reminder.up.sql",
-             "migrations/008_artlab.up.sql", "migrations/009_sync_runs_account.up.sql"]
+             "migrations/008_artlab.up.sql", "migrations/009_sync_runs_account.up.sql",
+             "migrations/010_km_readings.up.sql"]
 TODAY = date(2026, 10, 12)
 CONTACT = Contact(name="Geo-Expert", phone="99000001", is_placeholder=False)
 
@@ -101,7 +102,7 @@ def test_real_served_model_builds_a_seedable_demo(clean: pd.DataFrame) -> None:
     built = D.build_demo(clean, real, TODAY)
     assert D.problems(D.summary(built, real, TODAY)) == []
     overdue = by_plate(built, D.PLATE_OVERDUE)
-    assert overdue.prediction.status == "overdue" and not D.is_due(overdue, real, TODAY)  # 9.5c: < 75 days
+    assert overdue.prediction.status == "overdue" and D.is_due(overdue, real, TODAY)  # 9.14a: its km/day
 
 
 def test_problems_reports_what_is_missing() -> None:
@@ -148,7 +149,9 @@ def test_documented_plates(trucks: list[D.DemoTruck], predictor: P.Predictor) ->
     new, at_risk = by_plate(trucks, D.PLATE_NEW), by_plate(trucks, D.PLATE_AT_RISK)
     assert (D.segment(loyal, TODAY), loyal.prediction.status, loyal.prediction.method) == ("loyal", "ok", "ridge")
     assert len(loyal.services) == 5
-    assert (overdue.prediction.status, D.is_due(overdue, predictor, TODAY)) == ("overdue", False)  # 9.5c: < 75 d
+    # 9.14a: 2 services -> its own km/day puts the reminder before today (it was < 75 days, not due)
+    assert (overdue.prediction.status, D.is_due(overdue, predictor, TODAY)) == ("overdue", True)
+    assert D.plan(overdue).basis == "pace"
     assert (D.segment(new, TODAY), new.prediction.method) == ("new", "b1")   # first visit -> B1
     assert D.segment(at_risk, TODAY) == "at_risk"
     assert at_risk.reminder_sent and not D.is_due(at_risk, predictor, TODAY)
@@ -284,6 +287,24 @@ def test_sent_reminders_stored_like_the_api_would(seeded: Connection, trucks: li
         for row in rows:  # 9.5c: as POST /reminders/{id}/sent stores it
             assert (row.stage, row.channel, row.method, row.predicted_date) == ("single", "manual", None, None)
             assert row.sent_at.date() == row.send_on and row.message_text.endswith(" 99000001")
+
+
+def test_readings_and_targets_stored_like_the_api_would(seeded: Connection, client: TestClient,
+                                                       trucks: list[D.DemoTruck]) -> None:
+    """9.14a: every service has interval_km / target_km and one 'service' reading; PLATE_NEW's reply is
+    used for its km/day, the typo on another first-visit truck is flagged."""
+    services = sum(len(t.services) for t in trucks)
+    row = seeded.execute(text("SELECT count(*), count(target_km), min(interval_km), max(interval_km) "
+                              "FROM service_records")).one()
+    assert tuple(row) == (services, services, 12000, 12000)
+    by_source = dict(seeded.execute(text("SELECT source, count(*) FROM odometer_readings GROUP BY source")).all())
+    assert by_source == {"service": services, "manual": 2}
+    flagged = seeded.execute(text("SELECT flag_reason FROM odometer_readings WHERE status = 'flagged' "
+                                  "AND source = 'manual'")).scalars().all()
+    assert flagged == ["not_higher"]
+    vid = client.get("/vehicles/lookup", params={"q": "1003 УНА"}).json()["vehicles"][0]["id"]
+    pace = client.get(f"/vehicles/{vid}").json()["pace"]
+    assert (pace["source"], pace["rate_per_day"], pace["basis"]) == ("reading", float(D.DEMO_REPLY_KM_PER_DAY), "pace")
 
 
 def test_seed_refuses_a_database_that_is_not_empty(seeded: Connection, trucks: list[D.DemoTruck],

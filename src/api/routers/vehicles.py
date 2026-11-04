@@ -24,17 +24,19 @@ from sqlalchemy.orm import Session, selectinload
 from src.api.clock import get_today
 from src.api.config import reminder_rules
 from src.api.db import get_session
-from src.api.history import records_as_of, service_records, to_visit, visits_oldest_first
+from src.api.history import (driver_readings, pace_out, records_as_of, schedule_of, service_records, to_visit,
+                             visits_oldest_first)
 from src.api.matching import clean_company_name, company_key, fleet_no_key, search_matches
-from src.api.models import ServiceRecord, Vehicle
+from src.api.models import OdometerReading, ServiceRecord, Vehicle
 from src.api.payments import ServicePayment, connected, payment_of, service_payments
 from src.api.prediction import Predictor
 from src.api.reminders import segment_of
-from src.api.schemas import (CompanyOut, LookupResult, PaymentStatus, PredictionOut, Route, SearchOptions, Segment,
-                             ServiceOut, VehicleCard, VehicleRow, VehicleSearch, normalize_phone)
+from src.api.schemas import (CompanyOut, LookupResult, PaymentStatus, PredictionOut, ReadingOut, Route, SearchOptions,
+                             Segment, ServiceOut, VehicleCard, VehicleRow, VehicleSearch, normalize_phone)
 from src.common.plates import normalize_plate
 
 router = APIRouter(prefix="/vehicles", tags=["vehicles"])
+CARD_READINGS = 5  # newest meter readings on the card (9.14a)
 
 
 
@@ -87,6 +89,12 @@ def build_card(session: Session, vehicle: Vehicle, today: date, predictor: Predi
     prediction = predict(predictor, vehicle.id, records, today)
     # One rule everywhere (src/api/reminders.py): at_risk = AT_RISK_DAYS (150)+ days since the latest service.
     segment = segment_of(len(records), records[0].service_date, today, reminder_rules()) if records else None
+    # 9.14a: km/day + next due day of the latest service, and the newest readings (every source)
+    plan = schedule_of(list(reversed(records)), driver_readings(session, [vehicle.id]).get(vehicle.id, []),
+                       reminder_rules())
+    readings = session.scalars(select(OdometerReading).where(OdometerReading.vehicle_id == vehicle.id)
+                               .order_by(OdometerReading.reading_date.desc(), OdometerReading.id.desc())
+                               .limit(CARD_READINGS)).all()
     return VehicleCard(
         id=vehicle.id,
         identifier_type=vehicle.identifier_type,
@@ -100,6 +108,8 @@ def build_card(session: Session, vehicle: Vehicle, today: date, predictor: Predi
         last_service=history[0] if history else None,
         history=history,
         prediction=prediction,
+        pace=None if plan is None else pace_out(plan),
+        readings=[ReadingOut.model_validate(r) for r in readings],
     )
 
 

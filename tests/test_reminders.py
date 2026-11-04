@@ -28,7 +28,7 @@ from src.api.clock import get_today
 from src.api.config import PLACEHOLDER_PHONE, ConfigError, Contact, ReminderRules, reminder_contact, reminder_rules
 from src.api.db import get_session
 from src.api.main import create_app
-from src.api.reminders import is_due, message_mn, reminder_day, segment_of
+from src.api.reminders import is_due, km_check_message, message_mn, reminder_day, segment_of, sms_parts
 from src.api.routers.reminders import get_contact
 from src.cv import plate_reader as R
 from tests.test_api_data import pg  # noqa: F401  (Postgres: schema + 001 + 003 + sample data)
@@ -44,20 +44,47 @@ RULES = ReminderRules(reminder_days=75, at_risk_days=150)
 
 @pytest.fixture(autouse=True)
 def default_rules(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Every test starts from the defaults (75 / 150), whatever the developer's shell has."""
-    monkeypatch.delenv("REMINDER_DAYS", raising=False)
-    monkeypatch.delenv("AT_RISK_DAYS", raising=False)
+    """Every test starts from the defaults (75 / 150 / 5 / 34, 12000 km), whatever the developer's shell has."""
+    for name in ("REMINDER_DAYS", "AT_RISK_DAYS", "REMINDER_LEAD_DAYS", "KM_CHECK_DAYS", "OIL_INTERVAL_KM"):
+        monkeypatch.delenv(name, raising=False)
 
 
 # ==========================================================================
 # Message + contact (9.5c: one short text)
 # ==========================================================================
 
-def test_message_exact_text_and_short() -> None:
+def test_message_exact_text_and_sms_parts() -> None:
+    """9.14a: Cyrillic = UCS-2 (70 per SMS, 67 per part): the live text is 3 parts (135 characters),
+    not "<= 160" as tested before. Shorter wordings are proposed to Ari; the text stays until he picks."""
     text = message_mn("1234 УБА", date(2026, 8, 10), "15W-40", CONTACT)
     assert text == ("Сайн байна уу! 1234 УБА машины тосыг 2026.08.10-нд солиулсан (15W-40). "
                     "Дахин солих хугацаа болж байна. Wolf Oil - Гео-Эксперт: 99000001")
-    assert len(text) <= 160
+    assert (len(text), sms_parts(text)) == (135, 3)
+
+
+@pytest.mark.parametrize(("text", "parts"), [
+    ("", 0), ("a" * 160, 1), ("a" * 161, 2), ("a" * 306, 2), ("a" * 307, 3),   # GSM-7: 160 / 153
+    ("[]" * 40, 1), ("[]" * 40 + "a", 2),                                    # extension chars count 2
+    ("Б" * 70, 1), ("Б" * 71, 2), ("Б" * 134, 2), ("Б" * 135, 3),            # UCS-2: 70 / 67
+    ("a" * 69 + "Б", 1), ("a" * 70 + "Б", 2),                                # one Cyrillic letter -> UCS-2
+    ("😀" * 35, 1), ("😀" * 36, 2),                                          # emoji = 2 UTF-16 units
+])
+def test_sms_parts(text: str, parts: int) -> None:
+    assert sms_parts(text) == parts
+
+
+# Worst case the app can produce today: plates are 8 characters ("1234 УБА"), fleet numbers so far
+# <= 6 ("HT-12"): 10 leaves room; CONTACT_PHONE as "+976" + 8 digits; the longest oil grade name seen.
+WORST_ID, WORST_PHONE, WORST_OIL = "HT-1234-AB", "+97699112233", "Shell Rimula R4 X 15W-40"
+
+
+def test_km_check_text_exact_and_at_most_2_sms() -> None:
+    text = km_check_message("1234 УБА", date(2026, 8, 10), CONTACT)
+    assert text == ("Сайн байна уу! 1234 УБА машины тосыг 2026.08.10-нд солиулсан. Одоогийн км-ээ хариу "
+                    "бичнэ үү. Wolf Oil - Гео-Эксперт: 99000001")
+    assert (len(text), sms_parts(text)) == (125, 2)
+    worst = km_check_message(WORST_ID, date(2026, 12, 31), Contact("Geo-Expert", WORST_PHONE, False))
+    assert sms_parts(worst) == 2, len(worst)
     assert len(message_mn("1234 УБА", date(2026, 8, 10), "Shell Rimula R4 X 15W-40", CONTACT)) <= 160
 
 
@@ -74,9 +101,10 @@ def test_contact_phone_wins_then_old_setting_then_placeholder() -> None:
 # ==========================================================================
 
 def test_rules_default_and_values() -> None:
-    assert reminder_rules({}) == RULES
+    assert reminder_rules({}) == RULES == ReminderRules(75, 150, lead_days=5, km_check_days=34)
     assert reminder_rules({"REMINDER_DAYS": " 60 ", "AT_RISK_DAYS": "120"}) == ReminderRules(60, 120)
     assert reminder_rules({"REMINDER_DAYS": "", "AT_RISK_DAYS": "200"}) == ReminderRules(75, 200)
+    assert reminder_rules({"REMINDER_LEAD_DAYS": "7", "KM_CHECK_DAYS": "30"}) == ReminderRules(75, 150, 7, 30)
 
 
 @pytest.mark.parametrize(("env", "name"), [
@@ -84,6 +112,9 @@ def test_rules_default_and_values() -> None:
     ({"AT_RISK_DAYS": "-1"}, "AT_RISK_DAYS"), ({"AT_RISK_DAYS": "abc"}, "AT_RISK_DAYS"),
     ({"REMINDER_DAYS": "150"}, "greater than"),                       # 150 <= 150
     ({"REMINDER_DAYS": "80", "AT_RISK_DAYS": "70"}, "greater than"),
+    ({"REMINDER_LEAD_DAYS": "0"}, "REMINDER_LEAD_DAYS"), ({"KM_CHECK_DAYS": "x"}, "KM_CHECK_DAYS"),
+    ({"REMINDER_LEAD_DAYS": "150"}, "REMINDER_LEAD_DAYS .* less than AT_RISK_DAYS"),     # 9.14a
+    ({"KM_CHECK_DAYS": "75"}, "KM_CHECK_DAYS .* less than REMINDER_DAYS"),              # check after the reminder
 ])
 def test_rules_reject_bad_values(env: dict[str, str], name: str) -> None:
     with pytest.raises(ConfigError, match=name):
@@ -345,29 +376,39 @@ def sent(client: TestClient, service_id: int):
     return client.post(f"/reminders/{service_id}/sent")
 
 
-def test_due_list_75_days(client: TestClient) -> None:
-    """Sample data on 10-12: v1 08-10 (63 d), v2 09-10, v3 09-20, v6 09-01 -> not yet ·
-    v4 05-10 (155 d) -> due and at risk · v5 mine truck (engine hours) -> no reminder."""
+def test_due_list_pace_or_75_days(client: TestClient) -> None:
+    """Sample data on 10-12 (9.14a; stored interval 15000 from the migration 010 backfill):
+    v1 05-20 -> 08-10, 23 500 km in 82 days = 286.6 km/day: due 08-10 + 52 = 10-01, reminder 09-26 -> due ·
+    v6 06-01 -> 09-01, 271.7 km/day: due 10-26, reminder 10-21 -> not yet ·
+    v2 06-15 -> 09-10, 74.7 km/day: due 2027-03-29, capped at 09-10 + 150 - 5 = 2027-02-02 ·
+    v3 one service (no pace) -> 75 days: 12-04 · v4 one service 05-10 -> 75 days: 07-24, due and at risk ·
+    v5 mine truck (engine hours) -> no reminder."""
     result = due(client)
     assert result["as_of"] == TODAY.isoformat() and result["contact_is_placeholder"] is False
-    assert [r["vehicle_id"] for r in result["reminders"]] == [4]
-    v4 = result["reminders"][0]
-    assert (v4["segment"], v4["days_since"], v4["send_on"]) == ("at_risk", 155, "2026-07-24")
+    assert [r["vehicle_id"] for r in result["reminders"]] == [4, 1]   # oldest reminder day first
+    v4, v1 = result["reminders"]
+    assert (v4["segment"], v4["days_since"], v4["send_on"], v4["basis"]) == ("at_risk", 155, "2026-07-24", "fixed")
+    assert (v4["rate_per_day"], v4["pace_source"], v4["next_due_date"]) == (None, None, None)
     assert "stage" not in v4                                   # contract v0.15: one reminder, no stage
-    later = due(client, as_of="2026-11-01")["reminders"]      # v1: 83 days -> due, loyal
-    assert [r["vehicle_id"] for r in later] == [4, 1]          # oldest reminder day first
-    v1 = later[1]
-    assert (v1["service_id"], v1["send_on"], v1["odometer_km"], v1["target_km"], v1["segment"]) == \
-        (3, "2026-10-24", 255_500, 270_500, "loyal")
+    assert (v1["service_id"], v1["send_on"], v1["next_due_date"], v1["basis"]) == \
+        (3, "2026-09-26", "2026-10-01", "pace")
+    assert (v1["rate_per_day"], v1["pace_source"], v1["days_since"]) == (286.6, "services", 63)
+    assert (v1["odometer_km"], v1["target_km"], v1["segment"]) == (255_500, 270_500, "loyal")
+    later = due(client, as_of="2026-11-01")["reminders"]
+    assert [r["vehicle_id"] for r in later] == [4, 1, 6]
+    assert later[2]["send_on"] == "2026-10-21"
+    assert 2 not in due_ids(client, as_of="2027-02-01") and 2 in due_ids(client, as_of="2027-02-02")  # the cap
     assert (v1["identifier"], v1["phone"], v1["last_change_date"], v1["oil_grade"]) == \
         ("1234 УБА", "99110002", "2026-08-10", "15W-40")
     assert v1["message_mn"] == message_mn("1234 УБА", date(2026, 8, 10), "15W-40", CONTACT)
 
 
 def test_reminder_days_is_a_setting(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("REMINDER_DAYS", "60")                   # v1 (63 d) is due now
-    assert due_ids(client) == [4, 1]
-    assert next(r for r in due(client)["reminders"] if r["vehicle_id"] == 1)["send_on"] == "2026-10-09"
+    """REMINDER_DAYS moves trucks without a pace (v4), REMINDER_LEAD_DAYS those with one (v1)."""
+    monkeypatch.setenv("REMINDER_DAYS", "60")
+    monkeypatch.setenv("REMINDER_LEAD_DAYS", "10")
+    send_on = {r["vehicle_id"]: r["send_on"] for r in due(client)["reminders"]}
+    assert send_on == {4: "2026-07-09", 1: "2026-09-21"}
     monkeypatch.setenv("AT_RISK_DAYS", "160")                   # v4 (155 d) is no longer at risk
     assert client.get("/stats/segments").json()["counts"]["at_risk"] == 0
     assert client.get("/vehicles/4").json()["segment"] != "at_risk"
@@ -384,9 +425,10 @@ def test_sent_once_then_gone_until_a_new_service(client: TestClient) -> None:
         ("single", "manual", False, "2026-09-14")
     assert vid not in due_ids(client) and vid not in due_ids(client, as_of="2027-06-01")  # never again
     back = new_service(client, "0002 ТЕС", "2026-09-01", km=118_000)  # came back: new cycle
-    assert vid not in due_ids(client)                                  # 41 days: not yet
-    item = next(r for r in due(client, as_of="2026-11-15")["reminders"] if r["vehicle_id"] == vid)
-    assert (item["service_id"], item["target_km"], item["segment"]) == (back["service"]["id"], 133_000, "returning")
+    # 9.14a: 18 000 km in 62 days = 290.3 km/day -> 12 000 km due 09-01 + 41 = 10-12, reminder 10-07
+    item = next(r for r in due(client)["reminders"] if r["vehicle_id"] == vid)
+    assert (item["service_id"], item["target_km"], item["segment"]) == (back["service"]["id"], 130_000, "returning")
+    assert (item["send_on"], item["next_due_date"], item["basis"]) == ("2026-10-07", "2026-10-12", "pace")
     assert sent(client, old_id).status_code == 200                     # stored before: still idempotent
 
 
@@ -429,7 +471,7 @@ def test_old_prediction_row_does_not_count(client: TestClient, pg: Connection) -
 
 
 @pytest.mark.parametrize(("service_id", "code"), [
-    (3, 422),        # v1, 63 days: not due yet
+    (5, 422),        # v2: reminder day 2027-02-02 (9.14a pace, capped): not due yet
     (9, 422),        # v5 mine truck (engine hours only): no reminders
     (999_999, 404),
 ])

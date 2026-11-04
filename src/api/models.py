@@ -86,6 +86,9 @@ class ServiceRecord(Base):
     destination_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("destinations.id"))
     destination_raw: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # Task 9.14a (migration 010): the interval in force when saved, and odometer_km + it. None for mine trucks.
+    interval_km: Mapped[int | None] = mapped_column(Integer)
+    target_km: Mapped[int | None] = mapped_column(Integer)
 
     vehicle: Mapped[Vehicle] = relationship()
     destination: Mapped[Destination | None] = relationship()
@@ -119,3 +122,37 @@ class ReminderStop(Base):
 
     phone: Mapped[str] = mapped_column(Text, primary_key=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class OdometerReading(Base):
+    """odometer_readings (migration 010, task 9.14a): one meter value of a truck on one day.
+    source 'service' = a service's own odometer / engine hours; 'manual' = the driver's reply typed in."""
+
+    __tablename__ = "odometer_readings"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    vehicle_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("vehicles.id"))
+    service_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("service_records.id"))
+    unit: Mapped[str] = mapped_column(Text)  # 'km' / 'hours'
+    value: Mapped[Decimal] = mapped_column(Numeric(9, 1))
+    reading_date: Mapped[date]
+    source: Mapped[str] = mapped_column(Text)  # 'service' / 'manual' / 'messenger'
+    status: Mapped[str] = mapped_column(Text)  # 'ok' / 'flagged'
+    flag_reason: Mapped[str | None] = mapped_column(Text)  # 'not_higher' / 'too_slow' / 'too_fast'
+    rate_per_day: Mapped[Decimal | None] = mapped_column(Numeric(9, 1))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class KmCheck(Base):
+    """km_checks (migration 010, task 9.14a): a «Км шалгах» message sent for one service. Not a reminder."""
+
+    __tablename__ = "km_checks"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    vehicle_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("vehicles.id"))
+    service_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("service_records.id"))
+    phone: Mapped[str | None] = mapped_column(Text)
+    message_text: Mapped[str] = mapped_column(Text)
+    channel: Mapped[str] = mapped_column(Text, server_default="manual")
+    check_on: Mapped[date]
+    sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

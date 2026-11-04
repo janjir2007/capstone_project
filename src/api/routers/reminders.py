@@ -6,9 +6,11 @@ GET    /reminders/stops                         phones that asked for no more me
 POST   /reminders/stops      {phone}            add one (idempotent)
 DELETE /reminders/stops/{phone}                 remove one (a mistaken tap)
 
-Rules (src/api/reminders.py, D-119): due on the truck's LATEST service + REMINDER_DAYS (75), once
-per service; a 1m / 2m / 3m row of 9.5b for that service counts as sent; a new service starts a new
-cycle. A truck AT_RISK_DAYS (150) past it stays on the list (segment at_risk) until it is marked sent
+Rules (src/api/reminders.py, D-119): due on the reminder day of the truck's LATEST service, once per
+service. Task 9.14a (src/api/pace.py): with the truck's km/day known, the reminder day is its due day
+- REMINDER_LEAD_DAYS (5) (at most AT_RISK_DAYS - 5 after the service); without, REMINDER_DAYS (75)
+after the service. A 1m / 2m / 3m row of 9.5b for that service counts as sent; a new service starts a
+new cycle. A truck AT_RISK_DAYS (150) past it stays on the list (segment at_risk) until it is marked sent
 or comes back. No reminder for a truck without an odometer (mine trucks: engine hours only) or to a
 stopped phone. The ML model is not needed here (prediction code stays for the card's model API, D-065).
 No SMS / Viber is sent by the API (D-010): the manager sends the text and marks it sent (channel 'manual').
@@ -23,11 +25,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from src.api.clock import get_today
-from src.api.config import Contact, ReminderRules, oil_interval_km, reminder_contact, reminder_rules
+from src.api.config import Contact, ReminderRules, reminder_contact, reminder_rules
 from src.api.db import get_session
-from src.api.history import records_as_of, service_records
+from src.api.history import driver_readings, records_as_of, schedule_of, service_records
 from src.api.models import ReminderSent, ReminderStop, ServiceRecord, Vehicle
-from src.api.reminders import STAGE, days_since, is_due, message_mn, reminder_day, segment_of
+from src.api.reminders import STAGE, days_since, message_mn, segment_of
 from src.api.schemas import DueReminder, DueReminders, ReminderSentOut, StopIn, StopOut, normalize_phone
 
 router = APIRouter(prefix="/reminders", tags=["reminders"])
@@ -75,22 +77,26 @@ def due_reminders(
     sent = set(session.scalars(select(ReminderSent.service_id).where(
         ReminderSent.service_id.in_([s.id for s in latest.values()]), ReminderSent.stage.is_not(None))).all())
     stops = stopped_phones(session)
+    readings = driver_readings(session, list(latest), as_of)  # 9.14a: only readings known on as_of
+    plans = {vid: schedule_of(records[vid], readings.get(vid, []), rules) for vid in latest}
     due = [vid for vid, service in latest.items()
            if service.odometer_km is not None                                      # not a mine truck
            and not (service.driver_phone and service.driver_phone in stops)        # driver did not say stop
-           and is_due(service.service_date, as_of, service.id in sent, rules)]
+           and service.id not in sent and plans[vid].reminder_on <= as_of]
     vehicles = {v.id: v for v in session.scalars(
         select(Vehicle).options(selectinload(Vehicle.company)).where(Vehicle.id.in_(due))).all()}
     items = []
     for vid in due:
-        vehicle, service = vehicles[vid], latest[vid]
+        vehicle, service, plan = vehicles[vid], latest[vid], plans[vid]
         items.append(DueReminder(
             service_id=service.id, vehicle_id=vid, identifier_type=vehicle.identifier_type,
             identifier=vehicle.identifier, plate_normalized=vehicle.plate_normalized, company=vehicle.company.name,
             phone=service.driver_phone, driver_name=service.driver_name, last_change_date=service.service_date,
             oil_grade=service.oil_grade, liters=float(service.liters), odometer_km=service.odometer_km,
-            target_km=service.odometer_km + oil_interval_km(),
-            days_since=days_since(service.service_date, as_of), send_on=reminder_day(service.service_date, rules),
+            target_km=service.target_km, days_since=days_since(service.service_date, as_of), send_on=plan.reminder_on,
+            next_due_date=plan.next_due,
+            rate_per_day=None if plan.pace.rate_per_day is None else round(plan.pace.rate_per_day, 1),
+            pace_source=plan.pace.source, basis=plan.basis,
             segment=segment_of(len(records[vid]), service.service_date, as_of, rules),
             message_mn=text_for(vehicle, service, contact),
         ))
@@ -132,16 +138,17 @@ def mark_sent(service_id: int, response: Response, session: SessionDep, today: T
             "message": "the truck has a newer service; reload the due list",
             "latest_service_id": records[0].id,
         })
-    if reminder_day(service.service_date, rules) > today:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "the reminder is not due yet")
     if service.odometer_km is None:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "no reminders for a truck without odometer")
+    plan = schedule_of(list(reversed(records)), driver_readings(session, [service.vehicle_id], today).get(
+        service.vehicle_id, []), rules)
+    if plan.reminder_on > today:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "the reminder is not due yet")
     if service.driver_phone and service.driver_phone in stopped_phones(session):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "this phone asked for no more messages")
     vehicle = session.get(Vehicle, service.vehicle_id)
     row = ReminderSent(vehicle_id=service.vehicle_id, service_id=service_id, stage=STAGE, phone=service.driver_phone,
-                       message_text=text_for(vehicle, service, contact),
-                       send_on=reminder_day(service.service_date, rules))
+                       message_text=text_for(vehicle, service, contact), send_on=plan.reminder_on)
     session.add(row)
     try:
         session.commit()

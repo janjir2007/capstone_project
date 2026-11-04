@@ -48,7 +48,8 @@ def test_period_start(which, end, start):
 
 def test_default_is_today_in_ub(client: TestClient) -> None:  # noqa: F811
     assert period(client) == {"period": "today", "date_from": "2026-09-30", "date_to": "2026-09-30",
-                              "services": 0, "new_vehicles": 0, "liters": 0.0, "reminders_sent": 0}
+                              "services": 0, "new_vehicles": 0, "liters": 0.0, "reminders_sent": 0,
+                              "km_checks_sent": 0}
 
 
 def test_month_counts_services_liters_and_first_ever_vehicles(client: TestClient) -> None:  # noqa: F811

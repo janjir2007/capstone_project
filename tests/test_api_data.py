@@ -45,7 +45,10 @@ SQL_FILES = ["schema.sql", "migrations/001_destinations.up.sql", "migrations/002
              "migrations/005_destinations_cross_border.up.sql",
              "migrations/006_reminder_stages.up.sql", "migrations/007_single_reminder.up.sql",
              "migrations/008_artlab.up.sql", "migrations/009_sync_runs_account.up.sql",
-             "sample_data.sql"]
+             "sample_data.sql",
+             # 9.14a: AFTER the sample data, like on a server with data: its backfill fills target_km /
+             # interval_km (15000) and the 'service' readings of the sample services
+             "migrations/010_km_readings.up.sql"]
 TODAY = date(2026, 9, 30)
 
 
@@ -137,12 +140,13 @@ def _service_out(**fields: Any) -> ServiceOut:
     return ServiceOut.model_validate({**base, **fields})
 
 
-def test_target_km_is_odometer_plus_interval(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Task 9.5a: target = odometer at this change + OIL_INTERVAL_KM (default 15000), in the JSON too."""
-    monkeypatch.delenv("OIL_INTERVAL_KM", raising=False)
-    assert _service_out().model_dump()["target_km"] == 165000
+def test_target_km_is_the_stored_value(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Task 9.14a: target_km / interval_km are what the service stored, in the JSON too; today's
+    OIL_INTERVAL_KM does not move them (9.5a computed them when shown)."""
+    stored = _service_out(interval_km=15000, target_km=165000)
     monkeypatch.setenv("OIL_INTERVAL_KM", "12000")
-    assert _service_out().target_km == 162000
+    assert (stored.model_dump()["target_km"], stored.interval_km) == (165000, 15000)
+    assert _service_out().target_km is None                        # a row saved without them (raw SQL)
 
 
 def test_target_km_none_for_engine_hours_only() -> None:
@@ -157,7 +161,7 @@ def test_oil_interval_km_rejects_bad_values(raw: str) -> None:
 
 
 def test_oil_interval_km_default_and_value() -> None:
-    assert oil_interval_km({}) == DEFAULT_OIL_INTERVAL_KM == 15000
+    assert oil_interval_km({}) == DEFAULT_OIL_INTERVAL_KM == 12000                  # 9.14a (was 15000)
     assert oil_interval_km({"OIL_INTERVAL_KM": " 10000 "}) == 10000
 
 
@@ -575,8 +579,10 @@ def test_new_plate_without_company_is_422_and_saves_nothing(client: TestClient, 
     assert (count(pg, "service_records"), count(pg, "vehicles")) == before
 
 
-def test_service_without_destination_saved(client: TestClient, pg: Connection) -> None:
+def test_service_without_destination_saved(client: TestClient, pg: Connection,
+                                           monkeypatch: pytest.MonkeyPatch) -> None:
     """Task 9.5a: no destination -> saved with route/destination empty; old rows untouched."""
+    monkeypatch.delenv("OIL_INTERVAL_KM", raising=False)
     with_destination = text("SELECT count(*) FROM service_records "
                             "WHERE destination_id IS NOT NULL OR destination_raw IS NOT NULL")
     before = pg.execute(with_destination).scalar_one()
@@ -584,7 +590,7 @@ def test_service_without_destination_saved(client: TestClient, pg: Connection) -
     assert response.status_code == 201
     service = response.json()["service"]
     assert (service["route"], service["destination"], service["destination_raw"]) == (None, None, None)
-    assert service["target_km"] == 120000 + 15000
+    assert (service["target_km"], service["interval_km"]) == (120000 + 12000, 12000)  # 9.14a: stored, 12000
     assert pg.execute(with_destination).scalar_one() == before
 
 

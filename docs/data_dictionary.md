@@ -129,6 +129,8 @@ erDiagram
 | `destination_id` | BIGINT | yes | — | FK → `destinations.id`. "Where are you heading next?", asked at every service (D-033). NULL for old records and for places not in the list. *Migration 001* | app / synthetic |
 | `destination_raw` | TEXT | yes | free text, e.g. `Сайншанд` | not blank if given. What the driver said when the place is not in `destinations`. *Migration 001* | app |
 | `created_at` | TIMESTAMPTZ | no | Asia/Ulaanbaatar | default `now()`; differs from `service_date` for late entries | system |
+| `interval_km` | INTEGER | yes | km | > 0. The `OIL_INTERVAL_KM` in force when the service was saved (12000 since task 9.14a; services saved before: 15000, migration 010 backfill). NULL for mine trucks. *Migration 010* | API |
+| `target_km` | INTEGER | yes | km | `odometer_km` + `interval_km`; both set or both NULL (CHECK). Stored, so changing the setting never moves an old target. *Migration 010* | API |
 
 Driver + phone are stored here, not on the vehicle, because drivers change between trips (D-004).
 
@@ -199,7 +201,43 @@ The due list itself is computed by the API (`GET /reminders/due`), not stored. U
 | `method` | TEXT | yes | `b0` | `ridge` / `b1` / `b0` — 4.4 rows only (nullable since 006) | API |
 | `model_version` | TEXT | yes | `ridge-c8b211cb` | not blank; 4.4 rows only | API |
 | `predicted_date` | DATE | yes | 2026-07-07 | 4.4 rows only | API |
-| `send_on` | DATE | no | 2026-10-24 | 9.5c: latest service + `REMINDER_DAYS`; 9.5b: + 30/60/90; 4.4: predicted_date − buffer | API |
+| `send_on` | DATE | no | 2026-10-24 | 9.14a: the reminder day (km/day due − 5, or latest service + `REMINDER_DAYS` without a pace); 9.5c: latest service + `REMINDER_DAYS`; 9.5b: + 30/60/90; 4.4: predicted_date − buffer | API |
+| `sent_at` | TIMESTAMPTZ | no | now() | when it was marked sent | DB |
+
+### 2.7 `odometer_readings` — one meter value of a truck on one day (migration 010, task 9.14a)
+
+One timeline per truck for its km/day (`src/api/pace.py`). A service writes its own odometer here
+(`source = service`, one per service); a driver's reply typed in by the oil changer is `manual`
+(`POST /vehicles/{id}/readings`); `messenger` is for later. No personal data.
+
+| Column | Type | Null | Example | Rule | Source |
+|---|---|---|---|---|---|
+| `id` | BIGINT | no | 1 | identity PK | DB |
+| `vehicle_id` | BIGINT | no | 1 | FK → `vehicles.id` | API |
+| `service_id` | BIGINT | no | 3 | the service the reading counts from (`service` rows: that service); FK (`service_id`, `vehicle_id`) → `service_records (id, vehicle_id)`; partial UNIQUE (`service_id`) WHERE `source = 'service'` | API |
+| `unit` | TEXT | no | `km` | `km` / `hours` (mine trucks) | API |
+| `value` | NUMERIC(9,1) | no | 255500.0 | ≥ 0 | API / driver |
+| `reading_date` | DATE | no | 2026-10-11 | after the latest service, not in the future (API rule for `manual`) | API |
+| `source` | TEXT | no | `manual` | `service` / `manual` / `messenger` | API |
+| `status` | TEXT | no | `ok` | `ok` / `flagged`; flagged = never used for the pace | API |
+| `flag_reason` | TEXT | yes | `too_fast` | `not_higher` / `too_slow` (< 20 km/day) / `too_fast` (> 1200 km/day, > 24 h/day, or higher on the same day); set exactly when `status = flagged` (CHECK) | API |
+| `rate_per_day` | NUMERIC(9,1) | yes | 286.6 | units/day from the reading it was checked against; NULL = nothing before it | API |
+| `created_at` | TIMESTAMPTZ | no | now() | | DB |
+
+### 2.8 `km_checks` — a «Км шалгах» message that went out (migration 010, task 9.14a)
+
+Asks the driver for his current km when the truck has no usable km/day. One per service. **Not a
+reminder**: kept apart from `reminders_sent` and from the «Сануулга илгээсэн» count.
+
+| Column | Type | Null | Example | Rule | Source |
+|---|---|---|---|---|---|
+| `id` | BIGINT | no | 1 | identity PK | DB |
+| `vehicle_id` | BIGINT | no | 3 | FK → `vehicles.id` | API |
+| `service_id` | BIGINT | no | 6 | the vehicle's latest service when sent; FK (`service_id`, `vehicle_id`) → `service_records`; **UNIQUE** | API |
+| `phone` | TEXT | yes | `99110004` | 8 digits; NULL = no phone recorded. **Personal data** (like `reminders_sent.phone`) | API |
+| `message_text` | TEXT | no | `Сайн байна уу! …` | not blank; the exact text sent | API |
+| `channel` | TEXT | no | `manual` | `manual` / `sms` (not used yet) | API / DB |
+| `check_on` | DATE | no | 2026-10-24 | latest service + `KM_CHECK_DAYS` (34) | API |
 | `sent_at` | TIMESTAMPTZ | no | now() | when it was marked sent | DB |
 
 ## 3. Computed objects (not stored)
@@ -300,6 +338,7 @@ databases use synthetic rows only.
 | 0.4 | 2026-10-12 | Task 1.1c, migration 002: `destinations.name_mn` (Mongolian label, 5 road destinations filled). Demo database: `src/data/seed_demo.py`, [`demo_data.md`](demo_data.md) |
 | 0.5 | 2026-10-17 | Task 6.1, migration 004: `name_mn` for `Ulaanbaatar city (local work)` (`Улаанбаатар хот`) and `Other / several / unknown` (`Бусад`). New bookkeeping table `schema_migrations` + runner `scripts/migrate.py` (§8) |
 | 0.6 | 2026-11-02 | Task 9.5c, migration 007: `reminders_sent.stage` `'single'`, new column `channel`; §2.6 updated for 006 + 007. API `at_risk` = `AT_RISK_DAYS` (150)+ days (§5 lists the SQL function `vehicle_segments()`, D-007, now marked deprecated in §3 / §5) |
+| 0.7 | 2026-11-04 | Task 9.14a, migration 010: `service_records.interval_km` + `target_km` (stored, was computed when shown); new tables `odometer_readings` (§2.7) and `km_checks` (§2.8); `reminders_sent.send_on` follows the km/day reminder day |
 
 ## 8. Migrations
 
@@ -323,6 +362,7 @@ A second run changes nothing. `--dry-run` lists what would run. A database migra
 | 007 | `007_single_reminder.up.sql` / `.down.sql` | Task 9.5c (D-119): `stage` may be `'single'` (one reminder per service; UNIQUE (`service_id`, `stage`) kept); new column `channel` TEXT NOT NULL DEFAULT `'manual'` CHECK (`'manual'`, `'sms'`). No existing row changed (old 1m/2m/3m rows count as sent in the API). Down turns `'single'` into `'3m'` (no row deleted) and drops `channel`. Tested by `tests/test_reminders.py` |
 | 004 | `004_destinations_name_mn_rest.up.sql` / `.down.sql` | `name_mn` for UB city + Other (task 6.1); stops if one is missing. Tested by `tests/test_migrate.py` |
 | 005 | `005_destinations_cross_border.up.sql` / `.down.sql` | 4 cross-border destinations (task 1.6, D-081). Tested by `tests/test_migration_005.py` |
+| 010 | `010_km_readings.up.sql` / `.down.sql` | Task 9.14a: `service_records.interval_km` + `target_km` (CHECK both or none, target = odometer + interval; backfill 15000 for every service with an odometer); new tables `odometer_readings` (backfill: one `service` reading per service, flagged by the same rules as `src/api/pace.py` against the service before it) and `km_checks`. Down drops both tables and both columns. Tested by `tests/test_migration_010.py` (up → down → up, backfill = Python rule, constraints) |
 
 - **New dev DB** (`docker compose down -v && docker compose up -d db`): docker-compose runs
   only `schema.sql` (same as production, task 7.2); then

@@ -1,6 +1,6 @@
 # API contract — data, model and reminder endpoints (tasks 4.2, 4.2b, 4.3, 4.4)
 
-- **Version:** 0.17 (task 9.12-1, 2026-11-02) · **Owner:** Backend Engineer
+- **Version:** 0.18 (task 9.14a-2, 2026-11-04) · **Owner:** Backend Engineer
 - Extends PROJECT_STATE §8 "API contract" with exact fields. The live, always
   current version is the OpenAPI page of the running API: `http://localhost:8000/docs`.
 - Field names follow [`data_dictionary.md`](data_dictionary.md). Code:
@@ -19,7 +19,8 @@
 | `id`, `vehicle_id` | int | |
 | `service_date` | date `YYYY-MM-DD` | |
 | `odometer_km` | int \| null | |
-| `target_km` | int \| null | v0.12 (task 9.5a): odometer of the next oil change = `odometer_km` + `OIL_INTERVAL_KM` (API setting, default 15000, D-030). Null without `odometer_km` (mine trucks: engine hours only). Computed, not stored |
+| `target_km` | int \| null | v0.12 (task 9.5a): odometer of the next oil change = `odometer_km` + `interval_km`. Null without `odometer_km` (mine trucks: engine hours only). v0.18 (task 9.14a): **stored** when the service is saved (was computed when shown with today's setting); services saved before have 15000 (migration 010 backfill) |
+| `interval_km` | int \| null | v0.18: the `OIL_INTERVAL_KM` in force when the service was saved (default **12000** since 9.14a, was 15000); null for mine trucks |
 | `engine_hours` | number \| null | |
 | `oil_grade` | string | |
 | `liters` | number | |
@@ -48,6 +49,40 @@
 | `last_service` | ServiceOut \| null | pre-fills the recording form |
 | `history` | ServiceOut[] | newest first |
 | `prediction` | Prediction \| null | next oil change (task 4.3); null if the vehicle has no service or the model files are not loaded |
+| `pace` | Pace \| null | v0.18 (task 9.14a): km/day + the dates of the latest service; null without services |
+| `readings` | Reading[] | v0.18: the 5 newest meter readings (every source), newest first |
+
+**Pace** (v0.18, task 9.14a; rules in `src/api/pace.py`)
+
+| Field | Type | Note |
+|---|---|---|
+| `unit` | `km` \| `hours` | `hours` = mine truck (engine hours only) |
+| `rate_per_day` | number \| null | km (or hours) per day, 1 decimal; null = no usable pace |
+| `source` | `reading` \| `services` \| null | `reading` = the newest usable driver reading after the latest service, counted from that service's odometer; else `services` = previous → latest service; null = none (one service only, or the pair is flagged) |
+| `reading_value`, `reading_date` | number, date \| null | the driver reading used (`source = reading`) |
+| `interval_km` | int \| null | stored on the latest service |
+| `next_due_date` | date \| null | latest service + floor(`interval_km` ÷ `rate_per_day`) days; km trucks with a pace only |
+| `reminder_on` | date \| null | `pace`: `next_due_date` − `REMINDER_LEAD_DAYS` (5), never before the day the pace became known (a late reply = due that day), never after service + `AT_RISK_DAYS` − `REMINDER_LEAD_DAYS` (145 days); `fixed`: service + `REMINDER_DAYS` (75). Null for mine trucks (no reminders) |
+| `basis` | `pace` \| `fixed` \| null | null for mine trucks |
+| `km_check_on` | date \| null | service + `KM_CHECK_DAYS` (34): km trucks without a pace only |
+
+Usable = higher than the reading it counts from and 20–1200 km/day (engine hours: at most 24 h/day). Anything
+else is **flagged** and never used (`not_higher`, `too_slow`, `too_fast`; higher on the same day = `too_fast`).
+
+**Reading** (v0.18, `odometer_readings`)
+
+| Field | Type | Note |
+|---|---|---|
+| `id`, `vehicle_id` | int | |
+| `service_id` | int | the service it counts from (`source = service`: that service) |
+| `unit` | `km` \| `hours` | |
+| `value` | number | |
+| `reading_date` | date | |
+| `source` | `service` \| `manual` \| `messenger` | `service` = the service's own odometer / engine hours (one per service); `manual` = the driver's reply, typed in; `messenger` = later (nothing writes it yet) |
+| `status` | `ok` \| `flagged` | `flagged` = not used for the pace |
+| `flag_reason` | `not_higher` \| `too_slow` \| `too_fast` \| null | only when flagged |
+| `rate_per_day` | number \| null | per day from the reading it was checked against (null: nothing before it) |
+| `created_at` | datetime with offset | |
 
 **Prediction** (next oil change after the vehicle's NEWEST service)
 
@@ -210,15 +245,18 @@ List for the "where are you heading next?" picker; send the chosen `id` as `dest
 Work numbers of one period, both ends included, in **Ulaanbaatar time**:
 - `period`: `today` (default) \| `week` (**Monday** to `as_of`) \| `month` (the 1st to `as_of`); `as_of` (YYYY-MM-DD,
   optional) = the period's last day, default today.
-- **200** `{period, date_from, date_to, services, new_vehicles, liters, reminders_sent}`:
+- **200** `{period, date_from, date_to, services, new_vehicles, liters, reminders_sent, km_checks_sent}`:
   `services` = service records dated in the range · `new_vehicles` = vehicles whose **first-ever** service is in
   the range (not "created in the system") · `liters` = their oil liters (number) · `reminders_sent` = reminders
-  marked sent with `sent_at` on a UB day in the range (any stage / channel).
+  marked sent with `sent_at` on a UB day in the range (any stage / channel) · `km_checks_sent` (v0.18) = «Км шалгах»
+  messages marked sent the same way; **not** counted in `reminders_sent` (a km check is not a reminder).
 - **422** unknown `period`, bad `as_of`
 
-### `GET /reminders/due?as_of=` (v0.15, task 9.5c: one reminder per service)
-Trucks to remind on `as_of`: **one reminder per service**, due on the truck's latest service date +
-**`REMINDER_DAYS` (default 75)**, if nothing was marked sent for that service yet. A row of the old
+### `GET /reminders/due?as_of=` (v0.15, task 9.5c: one reminder per service; v0.18: reminder day from km/day)
+Trucks to remind on `as_of`: **one reminder per service**, due on the latest service's **reminder day**
+(v0.18, task 9.14a = Pace `reminder_on`: from the truck's km/day when known, else the latest service date +
+**`REMINDER_DAYS` (default 75)**), if nothing was marked sent for that service yet. Only driver readings up
+to `as_of` count. A row of the old
 1m / 2m / 3m stages (v0.13) for that service also counts as sent. A new service = new `service_id`
 → a new cycle (the old reminder is no longer due). A truck `AT_RISK_DAYS`+ days out stays on the list
 with `segment: at_risk` («Эрсдэлтэй») until it is marked sent or comes back. Left out: trucks whose
@@ -239,11 +277,15 @@ latest service has no `odometer_km` (mine trucks, engine hours only) and phones 
 | `company` | string | company name |
 | `phone`, `driver_name` | string \| null | from the latest service (D-004); null = not recorded |
 | `last_change_date`, `oil_grade`, `liters`, `odometer_km` | | the latest service |
-| `target_km` | int | `odometer_km` + `OIL_INTERVAL_KM` (v0.12) |
+| `target_km` | int \| null | v0.18: stored on the service (`odometer_km` + `interval_km`); null only for a service written outside the API |
 | `days_since` | int | `as_of − last_change_date` |
-| `send_on` | date | the day the reminder became due (`last_change_date` + `REMINDER_DAYS`) |
+| `send_on` | date | the reminder day (v0.18: Pace `reminder_on`; was always `last_change_date` + `REMINDER_DAYS`) |
+| `next_due_date` | date \| null | v0.18: Pace `next_due_date` |
+| `rate_per_day` | number \| null | v0.18: km per day |
+| `pace_source` | `reading` \| `services` \| null | v0.18 |
+| `basis` | `pace` \| `fixed` | v0.18 |
 | `segment` | `new` \| `returning` \| `loyal` \| `at_risk` | segment on `as_of` (the rule above); the UI shows «Эрсдэлтэй» by it |
-| `message_mn` | string | the Mongolian text (`src/api/reminders.py`): plate, last change date, oil, "Wolf Oil - Гео-Эксперт: " + `CONTACT_PHONE` (approved by PM + Ari); ≤ 160 characters with a usual plate / oil grade |
+| `message_mn` | string | the Mongolian text (`src/api/reminders.py`): plate, last change date, oil, "Wolf Oil - Гео-Эксперт: " + `CONTACT_PHONE` (approved by PM + Ari). Cyrillic = UCS-2 SMS: **3 parts** with a usual plate / oil grade (v0.18 measured with `sms_parts`; was described as "≤ 160 characters") |
 
 Removed in v0.15: `stage`. Removed in v0.13: `method`, `buffer_days`, `predicted_date`, `days_left`, `status`.
 
@@ -256,8 +298,40 @@ reminder day (`reminders_sent`, migrations 003 + 006 + 007: `stage = 'single'`, 
   (rows from v0.13 have `stage` `1m` / `2m` / `3m`; rows from before v0.13 have `stage: null` and the prediction fields)
 - **200** already marked for this service (also by a v0.13 `1m` / `2m` / `3m` row) → that stored row, `already_sent: true` (idempotent)
 - **404** unknown service · **409** `{code: "not_latest_service", message, latest_service_id}` — the
-  truck has a newer service (reload the due list) · **422** the reminder is not due yet, the truck has
-  no odometer, or its phone asked to stop
+  truck has a newer service (reload the due list) · **422** the reminder is not due yet (v0.18: its Pace
+  `reminder_on` is after today; `send_on` stores that day), the truck has no odometer, or its phone asked to stop
+
+### `POST /vehicles/{id}/readings` · `DELETE /readings/{id}` (v0.18, task 9.14a)
+The driver's current km, typed in by the oil changer (`source = manual`). Body `{value, reading_date?}`:
+`value` > 0 (km; mine trucks: engine hours, 1 decimal), `reading_date` default today. It counts from the
+truck's **latest** service and is checked against it (and against earlier usable replies of the same service);
+one that cannot be used is still stored, `status: flagged` + `flag_reason`.
+
+- **201** `{reading: Reading, pace: Pace}` (the truck's pace after it)
+- **404** unknown truck · **422** no service yet, `reading_date` in the future or not after the latest
+  service (the same day is refused too), `value` ≤ 0, unknown fields
+
+`DELETE /readings/{id}` removes a typed-in reading (a typo): **204** · **404** unknown · **422** not
+`source = manual` (a service's own reading is part of the service).
+
+### `GET /km-checks/due?as_of=` · `POST /km-checks/{service_id}/sent` (v0.18, task 9.14a)
+«Км шалгах»: asks the driver for his current km. **Not a reminder** (own table `km_checks`, not in
+`reminders_sent`, not in `reminders_sent` of `GET /stats/period`). A truck is listed on `as_of` when its
+latest service has an odometer, **no usable pace** (Pace `source` null), `km_check_on` ≤ `as_of` <
+`reminder_on` (34 ≤ days < 75 by default), no check was marked for that service and its phone is not in
+`GET /reminders/stops`. Oldest `check_on` first (then `vehicle_id`). A usable reply (POST readings) gives
+the truck a pace: it leaves this list and its reminder day moves.
+
+- **200** `{as_of, contact_is_placeholder, checks: KmCheck[]}`; KmCheck = `{service_id, vehicle_id,
+  identifier_type, identifier, plate_normalized, company, phone, driver_name, last_change_date, odometer_km,
+  days_since, check_on, reminder_on, segment, message_mn}`. `message_mn` = «Сайн байна уу! {plate} машины
+  тосыг {date}-нд солиулсан. Одоогийн км-ээ хариу бичнэ үү. Wolf Oil - Гео-Эксперт: {CONTACT_PHONE}»
+  (2 SMS parts, also with a 10-character plate and a 12-character phone)
+
+`POST /km-checks/{service_id}/sent`: **201** `{id, service_id, vehicle_id, phone, message_text, channel:
+"manual", check_on, sent_at, already_sent: false}` · **200** already marked (that row, `already_sent: true`)
+· **404** unknown service · **409** `not_latest_service` (as for reminders) · **422** check day not come
+yet, no odometer (mine truck), or the phone asked to stop
 
 ### `GET /reminders/stops` · `POST /reminders/stops` · `DELETE /reminders/stops/{phone}` (v0.13)
 Phones that asked for no more messages (`reminder_stops`, migration 006).
@@ -324,3 +398,4 @@ The only API routes besides `/health` that Caddy makes public. Not used by the U
 | 0.15 | 2026-11-02 | Task 9.5c (D-119): **breaking** — one reminder per service at `REMINDER_DAYS` (75) after the latest service replaces the 1m/2m/3m stages: `stage` removed from `GET /reminders/due` items; `POST /reminders/{id}/sent` takes no `?stage=` (stores `single`); old 1m/2m/3m rows count as sent. `channel` added to the sent row (additive). `at_risk` = `AT_RISK_DAYS` (150)+ days everywhere. New settings `REMINDER_DAYS`, `AT_RISK_DAYS` (bad value or `AT_RISK_DAYS <= REMINDER_DAYS` → the API does not start). Migration 007 |
 | 0.16 | 2026-11-02 | Task 9.6b-4: Artlab payments, **additive + read only**. ServiceOut gets `payment_status`, `amount_due`, `match_confidence` (card `history` / `last_service`, lookup cards, search rows; null in the `POST /services` answer and before the first successful sync). `GET /vehicles/search?payment_status=`. New `GET /payments/unpaid`, `GET /payments/sync-status`. Needs migrations 008 + 009 (run `scripts.migrate` before the new API starts) |
 | 0.17 | 2026-11-02 | Task 9.12-1: **additive, read only**. New `GET /stats/period?period=today\|week\|month&as_of=` (services, new vehicles = first-ever service, liters, reminders sent; week = Monday to today, UB). `GET /vehicles/search?segment=` (truck filter, same segment rule). `at_risk_days` added to `GET /stats/segments` |
+| 0.18 | 2026-11-04 | Task 9.14a-2: per-truck km/day engine. ServiceOut `target_km` now **stored** (+ `interval_km`; `OIL_INTERVAL_KM` default 12000, was 15000; older services 15000 by migration 010). VehicleCard `pace` + `readings` (additive). `GET /reminders/due`: `send_on` = the km/day reminder day when the pace is known (meaning change; else 75 days as before) + `next_due_date`, `rate_per_day`, `pace_source`, `basis` (additive); `target_km` nullable. New: `POST /vehicles/{id}/readings`, `DELETE /readings/{id}`, `GET /km-checks/due`, `POST /km-checks/{service_id}/sent`. `GET /stats/period` + `km_checks_sent` (additive). Settings `REMINDER_LEAD_DAYS` (5), `KM_CHECK_DAYS` (34) |

@@ -49,6 +49,14 @@ def test_only_caddy_publishes_ports() -> None:
     assert {p.split(":")[0] for p in SERVICES["caddy"]["ports"]} == {"80", "443"}
 
 
+def test_api_gets_the_reminder_settings() -> None:
+    """Task 9.14a: the engine settings reach the API with the decided defaults (interval 12000, was 15000)."""
+    env = SERVICES["api"]["environment"]
+    assert env["OIL_INTERVAL_KM"] == "${OIL_INTERVAL_KM:-12000}"
+    assert (env["REMINDER_LEAD_DAYS"], env["KM_CHECK_DAYS"]) == ("${REMINDER_LEAD_DAYS:-5}", "${KM_CHECK_DAYS:-34}")
+    assert "OIL_INTERVAL_KM=12000" in ENV_EXAMPLE.splitlines()
+
+
 def test_models_mounted_read_only_into_api() -> None:
     """D-069 / D-089: ./models (with plate_ocr/char_cnn_version.json) is mounted, not baked in."""
     assert "./models:/app/models:ro" in SERVICES["api"]["volumes"]

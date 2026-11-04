@@ -19,7 +19,7 @@ from src.api.config import reminder_rules
 from src.api.db import get_session
 from src.api.history import records_as_of
 from src.api.reminders import segment_of
-from src.api.models import ReminderSent, ServiceRecord
+from src.api.models import KmCheck, ReminderSent, ServiceRecord
 from src.api.schemas import PeriodStats, SegmentCounts, SegmentStats
 
 router = APIRouter(prefix="/stats", tags=["stats"])
@@ -66,8 +66,9 @@ def _ub_midnight(day: date) -> datetime:
 
 
 def period_numbers(session: Session, start: date, end: date) -> dict[str, float | int]:
-    """Services, liters, new vehicles (first-EVER service in the range, PM 9.12) and reminders
-    marked sent (sent_at on a UB day in the range), start..end both included."""
+    """Services, liters, new vehicles (first-EVER service in the range, PM 9.12), reminders marked
+    sent and km checks marked sent (9.14a; not reminders) — sent_at on a UB day in the range —
+    start..end both included."""
     in_range = ServiceRecord.service_date.between(start, end)
     services, liters = session.execute(
         select(func.count(ServiceRecord.id), func.coalesce(func.sum(ServiceRecord.liters), 0)).where(in_range)
@@ -75,9 +76,12 @@ def period_numbers(session: Session, start: date, end: date) -> dict[str, float 
     first = (select(ServiceRecord.vehicle_id, func.min(ServiceRecord.service_date).label("first_day"))
              .group_by(ServiceRecord.vehicle_id).subquery())
     new_vehicles = session.scalar(select(func.count()).select_from(first).where(first.c.first_day.between(start, end)))
+    since, until = _ub_midnight(start), _ub_midnight(end + timedelta(days=1))
     sent = session.scalar(select(func.count(ReminderSent.id)).where(
-        ReminderSent.sent_at >= _ub_midnight(start), ReminderSent.sent_at < _ub_midnight(end + timedelta(days=1))))
-    return {"services": services, "liters": float(liters), "new_vehicles": new_vehicles or 0, "reminders_sent": sent or 0}
+        ReminderSent.sent_at >= since, ReminderSent.sent_at < until))
+    checks = session.scalar(select(func.count(KmCheck.id)).where(KmCheck.sent_at >= since, KmCheck.sent_at < until))
+    return {"services": services, "liters": float(liters), "new_vehicles": new_vehicles or 0,
+            "reminders_sent": sent or 0, "km_checks_sent": checks or 0}
 
 
 @router.get("/period", response_model=PeriodStats)

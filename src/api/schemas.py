@@ -16,9 +16,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, computed_field, field_validator, model_validator
-
-from src.api.config import oil_interval_km
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator, model_validator
 
 Route = Literal["ub_city", "mn_china", "mn_russia", "mine_site", "mixed"]
 Segment = Literal["new", "returning", "loyal", "at_risk"]
@@ -166,12 +164,11 @@ class ServiceOut(BaseModel):
     amount_due: float | None = Field(None, description="Credit still owed (MNT); only when payment_status = unpaid")
     match_confidence: MatchConfidence | None = Field(
         None, description="How the receipt was linked: plate + phone, plate only, phone only (weakest of its receipts)")
-
-    @computed_field(description="Task 9.5a: odometer of the next oil change = odometer_km + OIL_INTERVAL_KM "
-                                "(default 15000); null without odometer_km (mine trucks: engine hours only)")
-    @property
-    def target_km(self) -> int | None:
-        return None if self.odometer_km is None else self.odometer_km + oil_interval_km()
+    # Task 9.14a (migration 010): STORED when the service is saved (was computed when shown, 9.5a).
+    interval_km: int | None = Field(None, description="OIL_INTERVAL_KM in force when the service was saved "
+                                                      "(15000 for services saved before 9.14a); null for mine trucks")
+    target_km: int | None = Field(None, description="Odometer of the next oil change = odometer_km + interval_km; "
+                                                    "null without odometer_km (mine trucks: engine hours only)")
 
 
 class ServiceCreated(BaseModel):
@@ -251,6 +248,73 @@ class PlateRecognitionOut(BaseModel):
     ms: float = Field(description="Server time for detect + read, milliseconds")
 
 
+# --------------------------------------------------------------------------
+# Task 9.14a: meter readings + the truck's pace (km/day)
+# --------------------------------------------------------------------------
+
+MeterUnit = Literal["km", "hours"]
+ReadingSource = Literal["service", "manual", "messenger"]
+ReadingFlag = Literal["not_higher", "too_slow", "too_fast"]
+
+
+class ReadingOut(BaseModel):
+    """One meter reading (odometer_readings)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    vehicle_id: int
+    service_id: int = Field(description="The service it counts from (source 'service': that service)")
+    unit: MeterUnit
+    value: float
+    reading_date: date
+    source: ReadingSource = Field(description="service = the service's own meter · manual = the driver's reply, "
+                                              "typed in · messenger = later")
+    status: Literal["ok", "flagged"] = Field(description="flagged = never used for the pace")
+    flag_reason: ReadingFlag | None = Field(description="not_higher · too_slow (< 20 km/day) · too_fast "
+                                                        "(> 1200 km/day, > 24 h/day, or higher on the same day)")
+    rate_per_day: float | None = Field(description="Units/day from the reading it was checked against")
+    created_at: datetime
+
+
+class PaceOut(BaseModel):
+    """The truck's pace and the dates of its latest service (src/api/pace.py)."""
+
+    unit: MeterUnit
+    rate_per_day: float | None = Field(description="km (or engine hours) per day; null = not known")
+    source: Literal["reading", "services"] | None = Field(
+        description="reading = the driver's reading after the latest service · services = previous -> latest "
+                    "service · null = no usable pace")
+    reading_value: float | None = Field(description="The driver reading used (source = reading)")
+    reading_date: date | None
+    interval_km: int | None = Field(description="Interval stored on the latest service")
+    next_due_date: date | None = Field(description="Latest service + floor(interval_km / rate_per_day); km trucks "
+                                                   "with a pace only")
+    reminder_on: date | None = Field(description="The reminder day; null for mine trucks (no reminders)")
+    basis: Literal["pace", "fixed"] | None = Field(
+        description="pace = from km/day (due - REMINDER_LEAD_DAYS, at most AT_RISK_DAYS - REMINDER_LEAD_DAYS after "
+                    "the service) · fixed = REMINDER_DAYS after the service · null for mine trucks")
+    km_check_on: date | None = Field(description="Day to ask the driver for his km (KM_CHECK_DAYS after the "
+                                                 "service); km trucks without a pace only")
+
+
+class ReadingIn(BaseModel):
+    """POST /vehicles/{id}/readings: the driver's current km (or engine hours), typed in."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    value: Decimal = Field(gt=0, max_digits=9, decimal_places=1, description="Odometer km (mine trucks: engine hours)")
+    reading_date: date | None = Field(default=None, description="Default: today (Ulaanbaatar). After the latest "
+                                                                "service, not in the future")
+
+
+class ReadingSaved(BaseModel):
+    """POST /vehicles/{id}/readings answer: the stored reading and the truck's pace after it."""
+
+    reading: ReadingOut
+    pace: PaceOut
+
+
 class VehicleCard(BaseModel):
     """GET /vehicles/{id}: everything the lookup screen shows about one truck."""
 
@@ -269,6 +333,9 @@ class VehicleCard(BaseModel):
     prediction: PredictionOut | None = Field(
         default=None, description="Next oil change (task 4.3); null if the vehicle has no service or the model is not loaded"
     )
+    pace: PaceOut | None = Field(default=None, description="Task 9.14a: km/day + next due day; null without services")
+    readings: list[ReadingOut] = Field(default_factory=list, description="Task 9.14a: the 5 newest meter readings "
+                                                                        "(every source), newest first")
 
 
 class LookupResult(BaseModel):
@@ -352,6 +419,7 @@ class PeriodStats(BaseModel):
     new_vehicles: int = Field(description="Vehicles whose FIRST-EVER service is in the period")
     liters: float = Field(description="Oil liters of those services")
     reminders_sent: int = Field(description="Reminders marked sent (sent_at on a UB day in the period)")
+    km_checks_sent: int = Field(description="Task 9.14a: «Км шалгах» messages marked sent (not reminders)")
 
 
 # --------------------------------------------------------------------------
@@ -378,9 +446,16 @@ class DueReminder(BaseModel):
     oil_grade: str
     liters: float
     odometer_km: int = Field(description="Odometer at the latest service (trucks without one get no reminders)")
-    target_km: int = Field(description="odometer_km + OIL_INTERVAL_KM (task 9.5a)")
+    target_km: int | None = Field(description="Stored on the service (9.14a): odometer_km + interval_km")
     days_since: int = Field(description="Days from the latest service to as_of")
-    send_on: date = Field(description="Day the reminder became due: last_change_date + REMINDER_DAYS (75)")
+    send_on: date = Field(description="Reminder day (9.14a): with a pace = next_due_date - REMINDER_LEAD_DAYS (5), "
+                                      "not before the day the pace became known, at most last_change_date + "
+                                      "AT_RISK_DAYS - REMINDER_LEAD_DAYS; without = last_change_date + REMINDER_DAYS (75)")
+    next_due_date: date | None = Field(description="9.14a: latest service + floor(interval / km per day); null "
+                                                   "without a pace")
+    rate_per_day: float | None = Field(description="9.14a: the truck's km per day; null = not known")
+    pace_source: Literal["reading", "services"] | None = Field(description="9.14a: where the km/day comes from")
+    basis: Literal["pace", "fixed"] = Field(description="9.14a: pace = send_on from km/day · fixed = REMINDER_DAYS")
     segment: Segment = Field(description="Segment on as_of; at_risk = AT_RISK_DAYS (150)+ days since the latest "
                                          "service: shown as «Эрсдэлтэй» (9.5c)")
     message_mn: str = Field(description="Mongolian reminder text (copy into Viber)")
@@ -435,6 +510,55 @@ class StopOut(BaseModel):
 
     phone: str
     created_at: datetime
+
+
+# --------------------------------------------------------------------------
+# Task 9.14a: «Км шалгах» (asks the driver for his km; not a reminder)
+# --------------------------------------------------------------------------
+
+class KmCheckDue(BaseModel):
+    """One truck to ask for its km: GET /km-checks/due."""
+
+    service_id: int = Field(description="Latest service = the check's id: POST /km-checks/{service_id}/sent")
+    vehicle_id: int
+    identifier_type: Literal["plate", "fleet_no"]
+    identifier: str
+    plate_normalized: str | None
+    company: str
+    phone: str | None = Field(description="driver_phone of the latest service; null = no phone recorded")
+    driver_name: str | None
+    last_change_date: date
+    odometer_km: int
+    days_since: int = Field(description="Days from the latest service to as_of")
+    check_on: date = Field(description="last_change_date + KM_CHECK_DAYS (34)")
+    reminder_on: date = Field(description="The reminder day if no reply comes: last_change_date + REMINDER_DAYS (75); "
+                                          "the check leaves the list on that day")
+    segment: Segment
+    message_mn: str = Field(description="Mongolian km-check text")
+
+
+class KmChecksDue(BaseModel):
+    """GET /km-checks/due."""
+
+    as_of: date
+    contact_is_placeholder: bool
+    checks: list[KmCheckDue] = Field(description="check_on <= as_of < reminder_on, no pace, not sent; oldest first")
+
+
+class KmCheckOut(BaseModel):
+    """POST /km-checks/{service_id}/sent: the stored check."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    service_id: int
+    vehicle_id: int
+    phone: str | None
+    message_text: str
+    channel: ReminderChannel
+    check_on: date
+    sent_at: datetime
+    already_sent: bool = Field(default=False, description="true = it was marked before; nothing changed")
 
 
 # ---------------------------------------------------------------- task 9.6b-4: payments (read only)

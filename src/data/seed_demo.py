@@ -17,7 +17,12 @@ generator's fake names. Oil grade and liters are demo values, not facts.
 The dates are relative to the seed day, so the demo slowly goes stale:
 re-seed on the demo day (docs/demo_data.md).
 
-Run on an EMPTY database (schema.sql + migrations 001–007), model files in models/:
+Task 9.14a: every service stores interval_km / target_km and its 'service' odometer reading, like
+POST /services; two demo driver replies (manual readings): PLATE_NEW's usable one (the card shows a
+reading-based km/day) and a typo on another first-visit truck (flagged). The due list follows the
+km/day engine (src/api/pace.py), as the API does.
+
+Run on an EMPTY database (schema.sql + migrations 001–010), model files in models/:
     POSTGRES_PASSWORD=oil_dev_password python -m src.data.seed_demo [--as-of 2026-10-20]
 The script refuses to write into a database that already has companies,
 vehicles or service records (it must never mix with real data).
@@ -39,11 +44,14 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from src.api.clock import ULAANBAATAR, today_ulaanbaatar
-from src.api.config import Contact, ReminderRules, load_settings, model_dir, reminder_contact, reminder_rules
+from src.api.config import (Contact, ReminderRules, load_settings, model_dir, oil_interval_km, reminder_contact,
+                            reminder_rules)
 from src.api.db import create_db_engine
-from src.api.models import Company, Destination, ReminderSent, ServiceRecord, Vehicle
+from src.api.history import service_reading
+from src.api.models import Company, Destination, OdometerReading, ReminderSent, ServiceRecord, Vehicle
+from src.api.pace import Reading, Schedule, new_reading_flag, rate, schedule
 from src.api.prediction import Prediction, Predictor, Visit, load_predictor
-from src.api.reminders import STAGE, is_due as reminder_is_due, message_mn, reminder_day, segment_of
+from src.api.reminders import STAGE, message_mn, segment_of
 from src.common.plates import normalize_plate
 from src.data.generator import DEFAULT_CONFIG, generate_clean, load_config
 
@@ -58,6 +66,8 @@ LITERS = (28.0, 30.0, 32.0, 36.0, 38.0, 40.0)  # demo values
 OIL_CHANGER = "Демо ажилтан"
 UB_CITY = "Ulaanbaatar city (local work)"
 RAW_DESTINATION = "Сайншанд"  # typed by hand, not in the list -> destination_raw + route 'mixed'
+DEMO_REPLY_KM_PER_DAY = 350   # 9.14a: PLATE_NEW's driver reply (demo value)
+DEMO_TYPO_KM = 1000           # 9.14a: the flagged reply is this much LOWER than the odometer (a typo)
 
 
 @dataclass(frozen=True)
@@ -154,6 +164,7 @@ class DemoTruck:
     services: tuple[DemoService, ...]
     reminder_sent: bool
     prediction: Prediction
+    readings: tuple[Reading, ...] = ()  # 9.14a: driver replies (manual readings), oldest first
 
     @property
     def identifier(self) -> str:
@@ -269,7 +280,36 @@ def build_demo(clean: pd.DataFrame, predictor: Predictor, today: date,
         services, prediction = fit_dates(services, slot.days_left, predictor, today)
         trucks.append(DemoTruck(plate_normalized=plate, company=COMPANIES[i % len(COMPANIES)],
                                 services=services, reminder_sent=slot.reminder_sent, prediction=prediction))
-    return share_driver(trucks)
+    return with_replies(share_driver(trucks), today)
+
+
+def with_replies(trucks: list[DemoTruck], today: date) -> list[DemoTruck]:
+    """9.14a demo replies, both dated yesterday (a reply must come at least a day after the service):
+    PLATE_NEW's driver at DEMO_REPLY_KM_PER_DAY (usable), the next first-visit truck with a typo
+    DEMO_TYPO_KM below its odometer (flagged, not used). Skipped for a truck serviced yesterday or today."""
+    day = today - timedelta(days=1)
+    firsts = [i for i, t in enumerate(trucks) if len(t.services) == 1 and t.services[-1].service_date < day]
+    new = next((i for i in firsts if trucks[i].plate_normalized == PLATE_NEW), None)
+    typo = next((i for i in firsts if i != new), None)
+    out = list(trucks)
+    if new is not None:
+        last = out[new].services[-1]
+        km = last.odometer_km + DEMO_REPLY_KM_PER_DAY * (day - last.service_date).days
+        out[new] = replace(out[new], readings=(Reading(day, float(km)),))
+    if typo is not None:
+        out[typo] = replace(out[typo], readings=(Reading(day, float(out[typo].services[-1].odometer_km - DEMO_TYPO_KM)),))
+    return out
+
+
+def plan(truck: DemoTruck, rules: ReminderRules | None = None) -> Schedule:
+    """The truck's reminder schedule, the same engine as the API (src/api/pace.py): flagged replies are
+    left out, as the API leaves them out."""
+    rules = rules or reminder_rules()
+    s = truck.services
+    service = Reading(s[-1].service_date, float(s[-1].odometer_km))
+    previous = Reading(s[-2].service_date, float(s[-2].odometer_km)) if len(s) > 1 else None
+    usable = [r for r in truck.readings if new_reading_flag("km", service, [], r) is None]
+    return schedule("km", service, previous, usable, oil_interval_km(), rules)
 
 
 def share_driver(trucks: list[DemoTruck]) -> list[DemoTruck]:
@@ -294,15 +334,14 @@ def segment(truck: DemoTruck, today: date, rules: ReminderRules | None = None) -
 
 def is_sent(truck: DemoTruck, today: date, rules: ReminderRules | None = None) -> bool:
     """9.5c: a 'reminder_sent' truck has its reminder marked sent once its reminder day has come."""
-    rules = rules or reminder_rules()
-    return truck.reminder_sent and reminder_day(truck.services[-1].service_date, rules) <= today
+    return truck.reminder_sent and plan(truck, rules).reminder_on <= today
 
 
 def is_due(truck: DemoTruck, predictor: Predictor, today: date, rules: ReminderRules | None = None) -> bool:
-    """On GET /reminders/due (9.5c): the reminder day has come and it is not marked sent (demo trucks
-    all have an odometer and no stopped phone). ``predictor`` is unused since 9.5b (kept for callers)."""
-    rules = rules or reminder_rules()
-    return reminder_is_due(truck.services[-1].service_date, today, is_sent(truck, today, rules), rules)
+    """On GET /reminders/due (9.5c; 9.14a: reminder day from the km/day engine): the reminder day has
+    come and it is not marked sent (demo trucks all have an odometer and no stopped phone).
+    ``predictor`` is unused since 9.5b (kept for callers)."""
+    return not is_sent(truck, today, rules) and plan(truck, rules).reminder_on <= today
 
 
 def summary(trucks: Sequence[DemoTruck], predictor: Predictor, today: date) -> dict[str, Counter | int]:
@@ -353,6 +392,7 @@ def insert_demo(session: Session, trucks: Sequence[DemoTruck], predictor: Predic
     if needed - destinations.keys():
         raise RuntimeError(f"destinations missing (run migration 001): {sorted(needed - destinations.keys())}")
 
+    interval = oil_interval_km()
     companies = {name: Company(name=name) for name in sorted({t.company for t in trucks})}
     session.add_all(companies.values())
     for truck in trucks:
@@ -362,18 +402,37 @@ def insert_demo(session: Session, trucks: Sequence[DemoTruck], predictor: Predic
                                  oil_grade=s.oil_grade, liters=Decimal(str(s.liters)), route=s.route,
                                  destination_id=destinations.get(s.destination) if s.destination else None,
                                  destination_raw=s.destination_raw, driver_name=s.driver_name,
-                                 driver_phone=s.driver_phone, oil_changer=OIL_CHANGER)
+                                 driver_phone=s.driver_phone, oil_changer=OIL_CHANGER,
+                                 interval_km=interval, target_km=s.odometer_km + interval)  # 9.14a: stored
                    for s in truck.services]
         session.add_all([vehicle, *records])
+        session.flush()  # ids for the readings + the reminder row
+        session.add_all(service_reading(prev, r) for prev, r in zip([None, *records], records))
+        session.add_all(reply_rows(records[-1], truck.readings))
         if is_sent(truck, truck.prediction.today):  # the seed day
-            session.flush()  # ids for the reminder row
-            session.add(sent_reminder(vehicle, records[-1], contact))
+            session.add(sent_reminder(vehicle, records[-1], contact, plan(truck)))
     session.flush()
 
 
-def sent_reminder(vehicle: Vehicle, newest: ServiceRecord, contact: Contact) -> ReminderSent:
+def reply_rows(newest: ServiceRecord, replies: Sequence[Reading]) -> list[OdometerReading]:
+    """The demo driver replies as POST /vehicles/{id}/readings stores them (status checked the same way)."""
+    service = Reading(newest.service_date, float(newest.odometer_km))
+    rows, earlier = [], []
+    for reply in replies:
+        flag = new_reading_flag("km", service, earlier, reply)
+        per_day = rate(service, reply)
+        rows.append(OdometerReading(vehicle_id=newest.vehicle_id, service_id=newest.id, unit="km",
+                                    value=Decimal(str(reply.value)), reading_date=reply.day, source="manual",
+                                    status="ok" if flag is None else "flagged", flag_reason=flag,
+                                    rate_per_day=None if per_day is None else round(per_day, 1)))
+        if flag is None:
+            earlier.append(reply)
+    return rows
+
+
+def sent_reminder(vehicle: Vehicle, newest: ServiceRecord, contact: Contact, schedule_: Schedule) -> ReminderSent:
     """The row POST /reminders/{id}/sent would have stored on the reminder day (10:00 UB), 9.5c."""
-    send_on = reminder_day(newest.service_date, reminder_rules())
+    send_on = schedule_.reminder_on
     return ReminderSent(vehicle_id=vehicle.id, service_id=newest.id, stage=STAGE, phone=newest.driver_phone,
                         message_text=message_mn(vehicle.identifier, newest.service_date, newest.oil_grade, contact),
                         send_on=send_on, sent_at=datetime.combine(send_on, time(10, 0), tzinfo=ULAANBAATAR))

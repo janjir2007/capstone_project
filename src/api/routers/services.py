@@ -10,7 +10,9 @@ Steps, all in ONE transaction (either everything is saved or nothing):
    match ignoring case and extra spaces (task 4.2b, src/api/matching.py).
 4. duplicate guard (task 4.2b): the same vehicle already has a service on
    the same date -> 409, unless the request has ?force=true.
-5. service record inserted.
+5. service record inserted with interval_km = OIL_INTERVAL_KM and target_km = odometer_km + it
+   (task 9.14a: stored, so a later change of the setting does not move old targets; none for mine
+   trucks), plus its 'service' odometer reading, checked against the service before it.
 """
 
 from datetime import date
@@ -22,7 +24,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from src.api.clock import get_today
+from src.api.config import oil_interval_km
 from src.api.db import get_session
+from src.api.history import service_reading, service_records
 from src.api.matching import clean_company_name, company_key, fleet_no_key
 from src.api.models import Company, Destination, ServiceRecord, Vehicle
 from src.api.schemas import ServiceCreate, ServiceCreated, ServiceOut
@@ -167,10 +171,17 @@ def create_service(
         vehicle, company_created = create_vehicle(session, body)
         vehicle_created = True
 
+    # 9.14a: the service before this one (on or before its day; an existing same-day service counts as
+    # before it) -> its 'service' reading is checked against that one.
+    previous = None if vehicle_created else next(
+        (r for r in service_records(session, vehicle.id) if r.service_date <= service_date), None)
+    interval = oil_interval_km() if body.odometer_km is not None else None  # 9.14a: stored, not computed later
     record = ServiceRecord(
         vehicle=vehicle,
         service_date=service_date,
         odometer_km=body.odometer_km,
+        interval_km=interval,
+        target_km=None if interval is None else body.odometer_km + interval,
         engine_hours=body.engine_hours,
         oil_grade=body.oil_grade,
         liters=body.liters,
@@ -184,6 +195,8 @@ def create_service(
     )
     session.add(record)
     try:
+        session.flush()  # the service's id, for its 'service' reading (9.14a)
+        session.add(service_reading(previous, record))
         session.commit()
     except IntegrityError as exc:
         # E.g. the same new plate saved twice at the same moment: the unique

@@ -99,12 +99,13 @@ class Contact:
 
 
 # Task 9.5a: target km of the next oil change = odometer at the last change + this interval.
-# 15,000 km = the recommended interval in Mongolia (D-030). Mine trucks (engine hours only) get none.
-DEFAULT_OIL_INTERVAL_KM = 15000
+# Task 9.14a: 12,000 km (was 15,000, D-030), stored on each service when it is saved
+# (service_records.interval_km / target_km, migration 010). Mine trucks (engine hours only) get none.
+DEFAULT_OIL_INTERVAL_KM = 12000
 
 
 def oil_interval_km(env: Mapping[str, str] | None = None) -> int:
-    """OIL_INTERVAL_KM from the environment (default 15000). Not a whole number > 0 -> ConfigError."""
+    """OIL_INTERVAL_KM from the environment (default 12000). Not a whole number > 0 -> ConfigError."""
     env = os.environ if env is None else env
     raw = env.get("OIL_INTERVAL_KM", "").strip()
     if not raw:
@@ -122,14 +123,21 @@ def oil_interval_km(env: Mapping[str, str] | None = None) -> int:
 # AT_RISK_DAYS after it without a new service.
 DEFAULT_REMINDER_DAYS = 75
 DEFAULT_AT_RISK_DAYS = 150
+# Task 9.14a: with the truck's km/day known, the reminder goes REMINDER_LEAD_DAYS before the due day;
+# without it, a «Км шалгах» message asks the driver for his km KM_CHECK_DAYS after the service.
+DEFAULT_REMINDER_LEAD_DAYS = 5
+DEFAULT_KM_CHECK_DAYS = 34
 
 
 @dataclass(frozen=True)
 class ReminderRules:
-    """Day counts of the reminder rule, both counted from the truck's latest service."""
+    """Day counts of the reminder rule, all counted from the truck's latest service
+    (lead_days: back from the km/day due day)."""
 
     reminder_days: int
     at_risk_days: int
+    lead_days: int = DEFAULT_REMINDER_LEAD_DAYS
+    km_check_days: int = DEFAULT_KM_CHECK_DAYS
 
 
 def _whole_days(env: Mapping[str, str], name: str, default: int) -> int:
@@ -147,16 +155,28 @@ def _whole_days(env: Mapping[str, str], name: str, default: int) -> int:
 
 
 def reminder_rules(env: Mapping[str, str] | None = None) -> ReminderRules:
-    """REMINDER_DAYS (default 75) and AT_RISK_DAYS (default 150) from the environment.
+    """REMINDER_DAYS (75), AT_RISK_DAYS (150), REMINDER_LEAD_DAYS (5) and KM_CHECK_DAYS (34) from the
+    environment.
 
-    ConfigError if one is not a whole number > 0, or AT_RISK_DAYS <= REMINDER_DAYS (a truck would
-    be at risk before its reminder is due). main.py calls this at startup, so a bad value stops it.
+    ConfigError if one is not a whole number > 0, AT_RISK_DAYS <= REMINDER_DAYS (a truck would be at
+    risk before its reminder is due), REMINDER_LEAD_DAYS >= AT_RISK_DAYS (the latest reminder day,
+    AT_RISK_DAYS - REMINDER_LEAD_DAYS, would be on or before the service) or KM_CHECK_DAYS >=
+    REMINDER_DAYS (the km check would come after the reminder it is meant to move). main.py calls
+    this at startup, so a bad value stops it.
     """
     env = os.environ if env is None else env
     rules = ReminderRules(reminder_days=_whole_days(env, "REMINDER_DAYS", DEFAULT_REMINDER_DAYS),
-                          at_risk_days=_whole_days(env, "AT_RISK_DAYS", DEFAULT_AT_RISK_DAYS))
+                          at_risk_days=_whole_days(env, "AT_RISK_DAYS", DEFAULT_AT_RISK_DAYS),
+                          lead_days=_whole_days(env, "REMINDER_LEAD_DAYS", DEFAULT_REMINDER_LEAD_DAYS),
+                          km_check_days=_whole_days(env, "KM_CHECK_DAYS", DEFAULT_KM_CHECK_DAYS))
     if rules.at_risk_days <= rules.reminder_days:
         raise ConfigError(f"AT_RISK_DAYS ({rules.at_risk_days}) must be greater than "
+                          f"REMINDER_DAYS ({rules.reminder_days})")
+    if rules.lead_days >= rules.at_risk_days:
+        raise ConfigError(f"REMINDER_LEAD_DAYS ({rules.lead_days}) must be less than "
+                          f"AT_RISK_DAYS ({rules.at_risk_days})")
+    if rules.km_check_days >= rules.reminder_days:
+        raise ConfigError(f"KM_CHECK_DAYS ({rules.km_check_days}) must be less than "
                           f"REMINDER_DAYS ({rules.reminder_days})")
     return rules
 
