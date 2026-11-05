@@ -253,8 +253,12 @@ a.logout:hover {color: var(--pri-dark);}
 .rec-photo {height: 200px; border-radius: var(--r); overflow: hidden; background: #2B2F36;}
 .rec-photo img {width: 100%; height: 100%; object-fit: contain; display: block;}
 .rec-banner {display: flex; align-items: center; gap: 8px; border-radius: 12px; padding: 12px 14px; font-size: 15px; font-weight: 500;}
-.rec-banner.ok {background: #E7F5EC; color: #14532D;}
+.rec-banner.ok, .rec-banner.known {background: #E7F5EC; color: #14532D;}
 .rec-banner.warn {background: #FFF4E5; color: #7A3E00;}
+.rec-banner.new {background: #EAF0FA; color: #1F4E9D;}
+.rec-banner.phone, .rec-banner.error {background: #F3F4F6; color: #4B5563;}
+/* 9.16a: reserved for the unpaid notice (9.16b); hidden with its wrapper so it takes no gap */
+.st-key-rec_unpaid, [data-testid="stLayoutWrapper"]:has(> .st-key-rec_unpaid) {display: none !important;}
 .rec-banner svg {width: 20px; height: 20px; fill: currentColor; flex: none;}
 /* Streamlit 1.64 text input = react-aria: the visible box is stTextInputRootElement */
 [class*="st-key-plate_field"] [data-testid="stTextInputRootElement"] {height: 64px; background: #fff !important;

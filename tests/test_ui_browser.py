@@ -171,7 +171,7 @@ def test_max_font_weight_600(ui_url, phone_page, path) -> None:
 
 @pytest.mark.parametrize("x_frac", [0.08, 0.5, 0.95])
 @pytest.mark.parametrize(("card", "proof"), [
-    ("act_record", "Гараар бичих"), ("act_search", "Камераар хайх"), ("act_reminders", "Гараар илгээнэ"),
+    ("act_record", "Гараар бичих"), ("act_reminders", "Гараар илгээнэ"),  # 9.16a: no «Хайх» card
     ("act_dashboard", "Машинууд")])
 def test_home_card_tap_opens_screen(ui_url, phone_page, card, proof, x_frac) -> None:
     """T7 / 5.9b: the WHOLE card is the tap target (button stretched over the HTML card), for
@@ -224,7 +224,7 @@ def test_oil_segment_selected_is_white(ui_url, phone_page) -> None:
     phone_page.wait_for_selector("text=Гараар бичих", timeout=20000)
     phone_page.get_by_role("button", name="Гараар бичих").click()
     phone_page.get_by_label("Улсын дугаар").fill("0000 ТЕС")
-    phone_page.get_by_role("button", name="Үргэлжлүүлэх").click()
+    phone_page.locator(".st-key-btn_continue button").click()  # 9.16a: «Үйлчилгээ бүртгэх»
     chip = phone_page.locator('.st-key-f_oil_choice button[aria-checked="true"]', has_text="15W-40")
     chip.wait_for(timeout=10000)
     phone_page.wait_for_timeout(500)
@@ -257,7 +257,7 @@ def test_no_tap_zoom_on_new_vehicle_form(ui_url, phone_page) -> None:
     phone_page.wait_for_selector("text=Гараар бичих", timeout=20000)
     phone_page.get_by_role("button", name="Гараар бичих").click()
     phone_page.get_by_label("Улсын дугаар").fill("0000 ТЕС")
-    phone_page.get_by_role("button", name="Үргэлжлүүлэх").click()
+    phone_page.locator(".st-key-btn_continue button").click()  # 9.16a: «Үйлчилгээ бүртгэх»
     phone_page.wait_for_selector("text=Машины загвар", timeout=10000)
     phone_page.wait_for_timeout(800)
     m = phone_page.evaluate(NO_ZOOM_JS)
@@ -297,12 +297,31 @@ def test_gallery_photo_reaches_result(ui_url, pw, shot_dir, engine, kind) -> Non
         page.goto(ui_url + "/record")
         page.locator(".pc[data-mode=gallery] .pc-gal").wait_for(timeout=20000)
         page.locator(".pc[data-mode=gallery] .pc-gal input").set_input_files(str(photo))
-        page.get_by_role("button", name="Үргэлжлүүлэх").wait_for(timeout=60000)
+        page.locator(".st-key-btn_find button").wait_for(timeout=60000)  # 9.16a plate screen «Хайх»
+        page.wait_for_timeout(800)  # the status lookup after the read
         body = page.inner_text("body")
     finally:
         browser.close()
     assert "Зураг уншигдсангүй" not in body and errors == []
-    assert "Дугаарыг таньлаа" in body or "Дугаарыг уншиж чадсангүй" in body
+    assert any(t in body for t in ("Бүртгэлтэй машин", "Шинэ машин", "Дугаарыг уншиж чадсангүй"))
+
+
+@pytest.mark.parametrize(("typed", "status"), [("1234 УБА", "машин"), ("99112233", "Утасны дугаар")])
+def test_plate_screen_fits_phone(ui_url, phone_page, shot_dir, typed, status) -> None:
+    """9.16a: the plate screen (status line + «Үйлчилгээ бүртгэх» / «Хайх» / «Дахин зураг авах»)
+    fits 390 px; the status follows typing with no Enter (live field); the unpaid box is hidden."""
+    phone_page.goto(ui_url + "/record")
+    phone_page.get_by_role("button", name="Гараар бичих").click()
+    field = phone_page.get_by_label("Улсын дугаар")
+    field.wait_for(timeout=20000)
+    field.press_sequentially(typed, delay=30)                # no Enter, no blur: the 400 ms pause commits
+    phone_page.locator(".rec-banner", has_text=status).wait_for(timeout=10000)
+    # by key: a button's accessible name also holds its icon's ligature text ("search Хайх")
+    for key in ("btn_continue", "btn_find", "btn_retake"):
+        assert phone_page.locator(f".st-key-{key} button").is_visible()
+    assert phone_page.locator(".st-key-btn_continue button").is_disabled() == typed.isdigit()
+    assert not phone_page.locator(".st-key-rec_unpaid").is_visible()
+    _check_phone_width(phone_page, shot_dir, "screen_plate_" + ("phone" if typed.isdigit() else "plate"))
 
 
 def test_payments_fit_phone(ui_url, phone_page, shot_dir) -> None:

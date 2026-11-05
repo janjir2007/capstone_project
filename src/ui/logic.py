@@ -298,7 +298,30 @@ def recognize_error_message(status: int) -> str:
     return f"Таних үед алдаа гарлаа ({status}) — гараар оруулна уу."
 
 
-# --- Reminders dashboard (5.4) ---------------------------------------------------
+# 9.16a: the plate screen's line under the photo, from GET /vehicles/lookup
+PLATE_KNOWN = "Бүртгэлтэй машин"
+PLATE_NEW = "Шинэ машин"
+LOOKUP_FAILED = "Бүртгэл шалгаж чадсангүй"
+
+
+def plate_status(result: dict | None, identifier_type: str = "plate") -> tuple[str, str]:
+    """(kind, text) for the plate screen: kind is "known", "new", "phone" or "error".
+
+    result = the lookup answer, or None when the lookup failed. Only trucks of the same
+    identifier type count (a fleet number is not a plate, D-005), like the record lookup.
+    The API decides what a phone is (match_type "phone"); it is not re-detected here.
+    """
+    if result is None:
+        return "error", LOOKUP_FAILED
+    vehicles = result.get("vehicles") or []
+    if result.get("match_type") == "phone":
+        return "phone", f"Утасны дугаар · {len(vehicles)} машин" if vehicles else "Утасны дугаар · машин олдсонгүй"
+    if any(v.get("identifier_type") == identifier_type for v in vehicles):
+        return "known", PLATE_KNOWN
+    return "new", PLATE_NEW
+
+
+# --- Reminders dashboard (5.4)---------------------------------------------------
 
 SEGMENT_ORDER = ("new", "returning", "loyal", "at_risk")
 

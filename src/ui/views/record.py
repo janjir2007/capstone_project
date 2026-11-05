@@ -4,9 +4,13 @@ Steps (st.session_state["rec_step"]):
 - capture (8.4 mockup): square live view of the rear camera + round shutter (native_camera.camera;
   camera blocked/missing -> the phone's own camera button instead), then «Галерей» | «Гараар бичих»,
   then «Дугааргүй машин» (fleet-number mode, D-005). A photo -> POST /plates/recognize -> result.
-- result (8.4): photo + green «Дугаарыг таньлаа…» (read) or orange «…гараар оруулна уу» (not read,
-  recognizer down) + big editable plate field (empty when not read; also reached by «Гараар бичих»,
-  «Дугааргүй машин» and «Буруу»/«Засах»). «Үргэлжлүүлэх» -> lookup -> form; «Дахин зураг авах» -> capture.
+- result (8.4, 9.16a): photo + status line + big editable plate field (empty when not read; also
+  reached by «Гараар бичих», «Дугааргүй машин» and «Буруу»/«Засах»). Status (9.16a) = GET
+  /vehicles/lookup of what is in the field: «Бүртгэлтэй машин» / «Шинэ машин» / «Утасны дугаар · N
+  машин»; the field commits after a typing pause (live), and each value is looked up once. Empty
+  field after a failed read -> orange «…гараар оруулна уу». «Үйлчилгээ бүртгэх» -> lookup -> form
+  (disabled for a phone); «Хайх» -> the search screen with that value (one truck -> its card);
+  «Дахин зураг авах» -> capture. A hidden «rec_unpaid» box at the bottom is kept for 9.16b.
 - confirm: only for a fleet number that exists in one or more companies (D-005): «Аль компанийн
   машин бэ?» -> «Зөв, үргэлжлүүлэх». A plate goes straight to the form (T9: the form header
   shows the plate + «Бүртгэлтэй / Шинэ машин» + «Буруу»/«Засах» back to typing).
@@ -76,7 +80,8 @@ def _form_values() -> dict:
 def _reset() -> None:
     """Forget the current truck (and its photo); start again at the camera."""
     for key in ("rec_checked", "rec_choice", "rec_dup", "rec_odo", "rec_saved", "rec_manual", "rec_photo", "rec_photo_name",
-                "rec_box", "rec_recognized", "rec_read", "rec_read_plate", "rec_photo_size", "rec_photo_error"):
+                "rec_box", "rec_recognized", "rec_read", "rec_read_plate", "rec_photo_size", "rec_photo_error",
+                "rec_status"):
         st.session_state.pop(key, None)
     st.session_state["rec_type"] = "plate"
     _apply_form(logic.empty_form())
@@ -181,8 +186,28 @@ def on_manual_open(identifier_type: str = "plate") -> None:
     _goto("result")
 
 
+def _plate_status(identifier_type: str, typed: str) -> tuple[str, str] | None:
+    """9.16a: (kind, text) of what is in the plate field, or None for an empty field.
+
+    Looked up once per value (kept in rec_status), so a redraw for another reason (a button,
+    a photo-size line) does not call the API again; only a new value in the field does.
+    """
+    if not typed:
+        return None
+    cached = st.session_state.get("rec_status")
+    if cached and cached["q"] == (identifier_type, typed):
+        return cached["status"]
+    try:
+        result = api_client.lookup(typed)
+    except api_client.ApiError:
+        result = None  # status says «шалгаж чадсангүй»; «Үйлчилгээ бүртгэх» still shows the real error
+    status = logic.plate_status(result, identifier_type)
+    st.session_state["rec_status"] = {"q": (identifier_type, typed), "status": status}
+    return status
+
+
 def on_continue() -> None:
-    """«Үргэлжлүүлэх»: lookup -> form. «Машин танигдлаа» layout only if the read plate was kept as is."""
+    """«Үйлчилгээ бүртгэх»: lookup -> form. «Машин танигдлаа» layout only if the read plate was kept as is."""
     typed = (st.session_state.get("rec_manual") or "").strip()
     from_photo = st.session_state.get("rec_read") == "read" and typed == st.session_state.get("rec_read_plate")
     _lookup(st.session_state.get("rec_type", "plate"), typed, from_photo=from_photo)
@@ -446,17 +471,25 @@ if step == "capture":
         st.rerun()
 
 elif step == "result":
-    is_fleet = st.session_state.get("rec_type") == "fleet_no"
+    rec_type = st.session_state.get("rec_type", "plate")
+    is_fleet = rec_type == "fleet_no"
     read = st.session_state.get("rec_read")
     common.photo_view(st.session_state.get("rec_photo"), st.session_state.get("rec_box"),
                       st.session_state.get("rec_photo_name"))
-    if read == "read":
-        common.html_block(f'<div class="rec-banner ok">{common.icon("check")}'
-                          'Дугаарыг таньлаа — шалгаад зөв бол үргэлжлүүлнэ үү</div>')
-    elif read == "unread":
-        common.html_block('<div class="rec-banner warn">Дугаарыг уншиж чадсангүй — гараар оруулна уу</div>')
+    # The field is drawn below, but its value is already in session_state (set by _take_photo,
+    # on_manual_open, on_wrong, or the browser's last commit), so the status can come first.
+    plate_status = _plate_status(rec_type, (st.session_state.get("rec_manual") or "").strip())
+    if plate_status is None:
+        if read == "unread":
+            common.html_block('<div class="rec-banner warn">Дугаарыг уншиж чадсангүй — гараар оруулна уу</div>')
+    else:
+        kind, text = plate_status
+        mark = common.icon("check") if kind == "known" else ""
+        common.html_block(f'<div class="rec-banner {kind}">{mark}{html.escape(text)}</div>')
     with st.container(key="plate_field_read" if read == "read" else "plate_field"):
-        st.text_input("Парк дугаар" if is_fleet else "Улсын дугаар", key="rec_manual",
+        # live: commits after a 400 ms typing pause (Streamlit's own debounce), so the status
+        # follows the typing; 300–500 ms is Streamlit's advice when each commit calls an API.
+        st.text_input("Парк дугаар" if is_fleet else "Улсын дугаар", key="rec_manual", live="400ms",
                       placeholder="HT-12" if is_fleet else "1234 УБА")
         if not is_fleet and read != "read":
             common.html_block('<div class="sub-note" style="margin-top:0">4 тоо + 3 үсэг</div>')
@@ -465,8 +498,18 @@ elif step == "result":
             if st.session_state.get(key):
                 common.html_block(f'<div class="sub-note" style="margin-top:0">{label}: '
                                   f'{html.escape(st.session_state[key])}</div>')
-    st.button("Үргэлжлүүлэх", key="btn_continue", on_click=on_continue, type="primary", width="stretch")
+    is_phone = plate_status is not None and plate_status[0] == "phone"
+    st.button("Үйлчилгээ бүртгэх", key="btn_continue", on_click=on_continue, type="primary", width="stretch",
+              disabled=is_phone)  # a phone finds trucks; it cannot be the truck being serviced
+    if st.button("Хайх", key="btn_find", width="stretch", icon=":material/search:"):
+        typed = (st.session_state.get("rec_manual") or "").strip()
+        if typed:
+            st.session_state[common.SEARCH_PENDING] = typed  # search screen: one truck -> its card
+            st.switch_page(common.SEARCH_PAGE)
+        st.error("Дугаар эсвэл утсаа оруулна уу.")
     st.button("Дахин зураг авах", key="btn_retake", on_click=_reset, width="stretch", icon=":material/refresh:")
+    # 9.16b: unpaid notice goes here. Hidden by CSS until it has data (an empty box would add a gap).
+    st.container(key="rec_unpaid")
 
 elif step == "confirm" and checked:
     matches = checked["matches"]

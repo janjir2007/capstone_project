@@ -164,6 +164,24 @@ def test_recognize_error_messages_say_type_it() -> None:
         assert "гараар" in logic.recognize_error_message(status)
 
 
+# --- plate screen status (9.16a) -------------------------------------------------------
+
+@pytest.mark.parametrize(("result", "kind", "expected"), [
+    ({"match_type": "plate", "vehicles": [{"identifier_type": "plate"}]}, "plate", ("known", "Бүртгэлтэй машин")),
+    ({"match_type": "plate", "vehicles": []}, "plate", ("new", "Шинэ машин")),
+    # a fleet number with the same text is not this plate (D-005), and the other way round
+    ({"match_type": "fleet_no", "vehicles": [{"identifier_type": "fleet_no"}]}, "plate", ("new", "Шинэ машин")),
+    ({"match_type": "fleet_no", "vehicles": [{"identifier_type": "fleet_no"}] * 2}, "fleet_no",
+     ("known", "Бүртгэлтэй машин")),
+    ({"match_type": "phone", "vehicles": [{"identifier_type": "plate"}] * 2}, "plate",
+     ("phone", "Утасны дугаар · 2 машин")),
+    ({"match_type": "phone", "vehicles": []}, "plate", ("phone", "Утасны дугаар · машин олдсонгүй")),
+    (None, "plate", ("error", "Бүртгэл шалгаж чадсангүй")),
+])
+def test_plate_status(result, kind, expected) -> None:
+    assert logic.plate_status(result, kind) == expected
+
+
 # --- form pre-fill -------------------------------------------------------------------
 
 def test_prefill_from_card_keeps_fresh_fields_empty() -> None:

@@ -1,7 +1,7 @@
 """Home screen (DESIGN v5 / T9 mockup): «ГЭ Гео-Эксперт» + date, «Сайн байна уу» + today's
 reminder line, 3 numbers (to remind / overdue / all trucks), the blue «Үйлчилгээ бүртгэх» card,
-one card with «Хайх», «Сануулга» (red count badge) and «Хяналтын самбар» (8.1), and «Сүүлд үзсэн»
-(this session)."""
+one card with «Сануулга» (red count badge) and «Хяналтын самбар» (8.1), and «Сүүлд үзсэн»
+(this session). 9.16a: no «Хайх» here; it is on the plate screen after the photo."""
 
 from datetime import date
 
@@ -55,13 +55,10 @@ common.html_block(
 with common.action_card("act_record", "camera", "Үйлчилгээ бүртгэх", "Дугаарын зураг авч эхлэх"):
     if st.button("Үйлчилгээ бүртгэх", key="home_record", width="stretch"):
         common.go_record_start()
-with st.container(key="grp_nav"):
-    with common.action_card("act_search", "search", "Хайх", "Дугаар эсвэл утсаар"):
-        if st.button("Хайх", key="home_search", width="stretch"):
-            st.switch_page(common.SEARCH_PAGE)
+with st.container(key="grp_nav"):  # 9.16a: «Хайх» moved to the plate screen (after the photo)
     with common.action_card("act_reminders", "bell", "Сануулга", "Жолооч нарт мессеж илгээх", tone="amber",
                             badge=counts["to_send"] if counts else None):
-        # A real button, like «Хайх»: st.page_link's <a> is only one text line tall inside
+        # A real button: st.page_link's <a> is only one text line tall inside
         # the stretched wrapper, so most of the card did nothing when tapped (5.9b).
         if st.button("Сануулга", key="home_reminders", width="stretch"):
             st.switch_page(common.REMINDERS_PAGE)

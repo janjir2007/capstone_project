@@ -67,6 +67,7 @@ class FakeApi:
         self.previews: list[dict] = []              # bodies of POST .../readings/preview
         self.km_checks: list[dict] = []             # GET /km-checks/due items
         self.km_sent: dict[int, dict] = {}
+        self.lookups: list[str] = []                # q of every GET /vehicles/lookup (9.16a status)
 
     # -- data ---------------------------------------------------------------
     def add_vehicle(self, identifier: str, company: str, identifier_type: str = "plate", **service) -> dict:
@@ -280,6 +281,7 @@ class FakeApi:
         return httpx.Response(200, json={"query": q, "total": len(rows), "vehicles": rows[:limit], "options": options})
 
     def _lookup(self, q: str) -> httpx.Response:
+        self.lookups.append(q)
         digits = "".join(c for c in q if c.isdigit())
         if digits.startswith("976") and len(digits) == 11:
             digits = digits[3:]
@@ -387,11 +389,11 @@ def step(at: AppTest) -> str:
 
 
 def type_plate(at: AppTest, plate: str, kind: str = "plate") -> AppTest:
-    """Record start: «Гараар бичих» (or «Дугааргүй машин») -> type -> «Үргэлжлүүлэх» -> form
+    """Record start: «Гараар бичих» (or «Дугааргүй машин») -> type -> «Үйлчилгээ бүртгэх» -> form
     (a fleet number found in a company -> confirm)."""
     at = click(at, "Дугааргүй машин" if kind == "fleet_no" else "Гараар бичих")
     at.text_input(key="rec_manual").set_value(plate).run()
-    return click(at, "Үргэлжлүүлэх")
+    return click(at, "Үйлчилгээ бүртгэх")
 
 
 def to_form(at: AppTest, plate: str, kind: str = "plate") -> AppTest:
@@ -460,7 +462,9 @@ def test_no_password_env_opens_home(fake_api) -> None:
     at = run_app()
     assert not at.exception
     assert texts(at.title) == ["Сайн байна уу"]
-    assert {"Үйлчилгээ бүртгэх", "Хайх"} <= {b.label for b in at.button}
+    labels = {b.label for b in at.button}
+    assert {"Үйлчилгээ бүртгэх", "Сануулга"} <= labels
+    assert "Хайх" not in labels                     # 9.16a: «Хайх» is on the plate screen now
     assert "Гео-Эксперт" in html_blocks(at)
 
 
@@ -527,8 +531,6 @@ def test_logged_in_can_open_every_view(fake_api, view) -> None:
 def test_home_buttons_open_screens(fake_api) -> None:
     at = click(run_app(), "Үйлчилгээ бүртгэх")
     assert texts(at.title) == ["Үйлчилгээ бүртгэх"] and step(at) == "capture"
-    at = click(run_app(), "Хайх")
-    assert texts(at.title) == ["Хайх"]
 
 
 @pytest.mark.parametrize("view", [SEARCH, DASHBOARD])
@@ -643,7 +645,7 @@ def test_photo_preview_on_result_and_form(fake_api, phone) -> None:
     fake_api.recognize = (200, RECOGNIZED)
     at = phone(run_app(RECORD), tiny_jpeg())
     assert step(at) == "result" and '<div class="rec-photo"><img' in html_blocks(at)  # 8.4 result screen
-    at = click(at, "Үргэлжлүүлэх")
+    at = click(at, "Үйлчилгээ бүртгэх")
     assert step(at) == "form" and texts(at.title) == ["Машин танигдлаа"]
     assert 'src="data:image/jpeg;base64,' in html_blocks(at)        # plate strip from the photo (T9)
     assert "Автоматаар уншсан" in html_blocks(at)
@@ -757,12 +759,13 @@ def test_api_down_shows_message(fake_api) -> None:
     assert not at.exception
     assert any("холбогдож" in t for t in texts(at.error))
     assert step(at) == "result"
+    assert "Бүртгэл шалгаж чадсангүй" in html_blocks(at)          # 9.16a: status, no crash
 
 
 # --- photo -> recognize ------------------------------------------------------------------
 
 def test_photo_recognized_existing_truck(fake_api, phone) -> None:
-    """Photo -> 8.4 result (green, plate pre-filled) -> «Үргэлжлүүлэх» -> T9 «Машин танигдлаа»:
+    """Photo -> 8.4 result (9.16a: «Бүртгэлтэй машин», plate pre-filled) -> «Үйлчилгээ бүртгэх» -> T9 «Машин танигдлаа»:
     truck line, previous visit + target km (9.5a, instead of the arrival block), oil/driver rows."""
     seed_existing(fake_api)
     fake_api.prediction = PREDICTION
@@ -771,10 +774,10 @@ def test_photo_recognized_existing_truck(fake_api, phone) -> None:
     assert not at.exception
     assert b'name="file"' in fake_api.uploads[0]
     assert step(at) == "result" and texts(at.title) == ["Үйлчилгээ бүртгэх"]
-    assert "Дугаарыг таньлаа — шалгаад зөв бол үргэлжлүүлнэ үү" in html_blocks(at)
+    assert "Бүртгэлтэй машин" in html_blocks(at) and "таньлаа" not in html_blocks(at)  # 9.16a status
     assert at.text_input(key="rec_manual").value == "0002ТЕС"
-    assert len(fake_api.uploads) == 1 and "rec_checked" not in at.session_state  # no auto lookup (8.4)
-    at = click(at, "Үргэлжлүүлэх")
+    assert len(fake_api.uploads) == 1 and "rec_checked" not in at.session_state  # status only, form not opened
+    at = click(at, "Үйлчилгээ бүртгэх")
     assert step(at) == "form" and texts(at.title) == ["Машин танигдлаа"]
     page = html_blocks(at)
     assert "Шинэ · 1 удаа · Говь Тест ХХК" in page
@@ -793,7 +796,7 @@ def test_photo_recognized_existing_truck(fake_api, phone) -> None:
 def test_recognized_wrong_goes_back_to_edit(fake_api, phone) -> None:
     seed_existing(fake_api)
     fake_api.recognize = (200, RECOGNIZED)
-    at = click(click(phone(run_app(RECORD)), "Үргэлжлүүлэх"), "Буруу")
+    at = click(click(phone(run_app(RECORD)), "Үйлчилгээ бүртгэх"), "Буруу")
     assert step(at) == "result" and at.text_input(key="rec_manual").value == "0002ТЕС"
     assert "таньлаа" not in html_blocks(at)  # no green banner once he said it is wrong
 
@@ -807,7 +810,7 @@ def test_photo_needs_manual_shows_orange_and_empty_field(fake_api, phone) -> Non
     assert at.text_input(key="rec_manual").value == ""
     page = html_blocks(at)
     assert "Дугаарыг уншиж чадсангүй — гараар оруулна уу" in page and "4 тоо + 3 үсэг" in page
-    assert {"Үргэлжлүүлэх", "Дахин зураг авах"} <= {b.label for b in at.button}
+    assert {"Үйлчилгээ бүртгэх", "Дахин зураг авах"} <= {b.label for b in at.button}
 
 
 def test_edited_plate_opens_normal_form(fake_api, phone) -> None:
@@ -817,7 +820,7 @@ def test_edited_plate_opens_normal_form(fake_api, phone) -> None:
     fake_api.recognize = (200, RECOGNIZED)
     at = phone(run_app(RECORD))
     at.text_input(key="rec_manual").set_value("0003 ТЕС").run()
-    at = click(at, "Үргэлжлүүлэх")
+    at = click(at, "Үйлчилгээ бүртгэх")
     assert step(at) == "form" and texts(at.title) == ["Үйлчилгээ бүртгэх"]
     assert at.session_state["rec_checked"]["identifier"] == "0003 ТЕС"
 
@@ -873,7 +876,7 @@ def test_iphone_heic_upload_is_sent(fake_api, phone) -> None:
     body = fake_api.uploads[0]
     assert b'name="file"; filename="IMG_0001.HEIC"' in body
     assert b"Content-Type: image/heic" in body
-    at = click(at, "Үргэлжлүүлэх")
+    at = click(at, "Үйлчилгээ бүртгэх")
     assert step(at) == "form"
     assert "Автоматаар уншсан" in html_blocks(at)                   # strip without the undecodable photo
 
@@ -921,6 +924,98 @@ def test_recognizer_down_falls_back_to_manual(fake_api, phone) -> None:
     assert not at.exception
     assert step(at) == "result" and at.text_input(key="rec_manual").value == ""
     assert "Дугаарыг уншиж чадсангүй — гараар оруулна уу" in html_blocks(at)
+
+
+# --- plate screen status + «Үйлчилгээ бүртгэх» / «Хайх» (9.16a) ---------------------------
+
+def manual(at: AppTest, value: str) -> AppTest:
+    """«Гараар бичих» -> type value (no button pressed: the field commits by itself, live)."""
+    at = click(at, "Гараар бичих")
+    at.text_input(key="rec_manual").set_value(value)
+    return at.run()
+
+
+def test_plate_screen_known_new_and_edited(fake_api) -> None:
+    """Known plate -> «Бүртгэлтэй машин»; editing the field to an unknown plate -> «Шинэ машин»;
+    both buttons there, «Үргэлжлүүлэх» and the old green line gone; one lookup per new value."""
+    seed_existing(fake_api)
+    at = manual(run_app(RECORD), "0002 ТЕС")
+    page = html_blocks(at)
+    assert '<div class="rec-banner known">' in page and "Бүртгэлтэй машин" in page and "Шинэ машин" not in page
+    labels = [b.label for b in at.button]
+    assert {"Үйлчилгээ бүртгэх", "Хайх", "Дахин зураг авах"} <= set(labels) and "Үргэлжлүүлэх" not in labels
+    assert not at.button(key="btn_continue").disabled
+    at.text_input(key="rec_manual").set_value("0404 ТЕС").run()
+    assert "Шинэ машин" in html_blocks(at) and "Бүртгэлтэй машин" not in html_blocks(at)
+    assert fake_api.lookups == ["0002 ТЕС", "0404 ТЕС"]
+    at.run()                                                         # a redraw with the same value
+    assert fake_api.lookups == ["0002 ТЕС", "0404 ТЕС"]              # ... does not ask the API again
+    at = click(at, "Үйлчилгээ бүртгэх")
+    assert step(at) == "form" and at.session_state["rec_checked"]["identifier"] == "0404 ТЕС"
+
+
+def test_photo_unknown_plate_is_new(fake_api, phone) -> None:
+    fake_api.recognize = (200, RECOGNIZED)                           # read, but not in the database
+    at = phone(run_app(RECORD), tiny_jpeg())
+    assert step(at) == "result" and "Шинэ машин" in html_blocks(at)
+
+
+def test_find_known_plate_opens_card(fake_api, phone) -> None:
+    seed_existing(fake_api)
+    fake_api.recognize = (200, RECOGNIZED)
+    at = click(phone(run_app(RECORD), tiny_jpeg()), "Хайх")
+    assert texts(at.title) == ["Машины карт"] and "0002 ТЕС" in html_blocks(at)
+
+
+def test_find_with_empty_field_stays(fake_api) -> None:
+    at = click(click(run_app(RECORD), "Гараар бичих"), "Хайх")
+    assert step(at) == "result" and "Дугаар эсвэл утсаа оруулна уу." in texts(at.error)
+
+
+def test_phone_in_plate_field_finds_trucks_and_cannot_record(fake_api) -> None:
+    """An 8-digit phone: status names it, «Үйлчилгээ бүртгэх» is disabled, «Хайх» shows the
+    driver's trucks (one -> the card, several -> the list)."""
+    seed_existing(fake_api)                                          # driver phone 99110002
+    at = manual(run_app(RECORD), "9911 0002")
+    assert "Утасны дугаар · 1 машин" in html_blocks(at)
+    assert at.button(key="btn_continue").disabled
+    at = click(at, "Хайх")
+    assert texts(at.title) == ["Машины карт"]
+    other = fake_api.add_vehicle("0003 ТЕС", "Тест ХХК")
+    fake_api._add_service(other["id"], {"oil_grade": "15W-40", "liters": 30.0, "driver_phone": "99110002"})
+    at = manual(run_app(RECORD), "99110002")
+    assert "Утасны дугаар · 2 машин" in html_blocks(at)
+    at = click(at, "Хайх")
+    assert texts(at.title) == ["Хайх"]
+    labels = [b.label for b in at.button]
+    assert any(lb.startswith("0002 ТЕС") for lb in labels) and any(lb.startswith("0003 ТЕС") for lb in labels)
+
+
+def test_unknown_phone_status(fake_api) -> None:
+    at = manual(run_app(RECORD), "99119999")
+    assert "Утасны дугаар · машин олдсонгүй" in html_blocks(at) and at.button(key="btn_continue").disabled
+
+
+def test_failed_read_then_typed_plate(fake_api, phone) -> None:
+    """Failed read: orange line, empty field, no status yet; typing a plate -> its status."""
+    fake_api.recognize = (200, {**RECOGNIZED, "plate_normalized": None, "needs_manual": True,
+                                "reason": "invalid_format"})
+    at = phone(run_app(RECORD))
+    page = html_blocks(at)
+    assert "Дугаарыг уншиж чадсангүй" in page and "Шинэ машин" not in page and "Бүртгэлтэй" not in page
+    assert fake_api.lookups == []                                    # nothing to look up yet
+    at.text_input(key="rec_manual").set_value("0404 ТЕС").run()
+    page = html_blocks(at)
+    assert "Шинэ машин" in page and "уншиж чадсангүй" not in page
+
+
+def test_fleet_number_status(fake_api) -> None:
+    """«Дугааргүй машин»: a known fleet number is «Бүртгэлтэй» and still asks which company."""
+    fake_api.add_vehicle("HT-12", "Уурхай А ХХК", "fleet_no", oil_grade="15W-40", liters=40.0, engine_hours=1000.0)
+    at = click(run_app(RECORD), "Дугааргүй машин")
+    at.text_input(key="rec_manual").set_value("HT-12").run()
+    assert "Бүртгэлтэй машин" in html_blocks(at)
+    assert step(click(at, "Үйлчилгээ бүртгэх")) == "confirm"
 
 
 # --- search + card (5.3 / DESIGN v2) ----------------------------------------------------------
@@ -1048,7 +1143,7 @@ def reminder(service_id: int, plate: str, at_risk: bool = False, phone: str | No
 
 
 @pytest.mark.parametrize(("key", "title"), [
-    ("home_record", "Үйлчилгээ бүртгэх"), ("home_search", "Хайх"), ("home_reminders", "Сануулга"),
+    ("home_record", "Үйлчилгээ бүртгэх"), ("home_reminders", "Сануулга"),
     ("home_dashboard", "Хяналтын самбар")])
 def test_home_card_navigates(fake_api, key, title) -> None:
     """5.9b: every home card is a real button that opens its screen (the «Сануулга» card was a
