@@ -105,7 +105,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 # Synthetic "personal" values planted everywhere a real DB could hold them. None may reach the output.
 SECRETS = [
-    "Батболд", "Дорж",            # customer / counterparty names
+    "Батболд", "Дорж",            # customer / counterparty / branch names
+    "ЧП01234567", "Тос солих",    # invoice customer register number, product name
     "Бат-Эрдэнэ",                 # a person-named terminal
     "УБА", "1234",                # plate (1234 УБА) in a description
     "99112233", "88112233",       # phones (text and number column)
@@ -125,25 +126,53 @@ def _bill(i: int, **kw) -> dict:
 
 
 class DatedFake(FakeArtlab):
-    """/pos/bills honours from / to (inclusive, artlab_api_notes §4) and a chosen sort order."""
+    """/pos/bills and /invoices honour from / to (inclusive, artlab_api_notes §4), branch, type and
+    status; /info/branches and the bill enums are served. Rows come in a chosen sort order."""
 
-    def __init__(self, bills: list[dict], order: str = "newest_first") -> None:
+    def __init__(self, bills: list[dict], order: str = "newest_first", invoices: list[dict] | None = None,
+                 branches: list[dict] | None = None) -> None:
         key = {"newest_first": lambda b: b["billDate"], "oldest_first": lambda b: b["billDate"],
                "by_id": lambda b: b["id"]}[order]
         super().__init__(sorted(bills, key=key, reverse=order == "newest_first"))
+        self.invoices = sorted(invoices or [], key=lambda r: r["invoiceDate"], reverse=True)
+        self.branches = branches if branches is not None else [{"id": 1, "code": "B1", "name": "Дорж салбар"}]
+
+    @staticmethod
+    def _keep(row: dict, q: dict, key: str) -> bool:
+        branch = ((row.get("terminal") or {}).get("branch") or {}).get("code")
+        return (q.get("from", "0000") <= row[key][:10] <= q.get("to", "9999")
+                and q.get("branch", branch) == branch
+                and q.get("type", row.get("type")) == row.get("type")
+                and q.get("status", row.get("status")) == row.get("status"))
 
     def __call__(self, method, url, headers, body):
         parsed = urllib.parse.urlparse(url)
-        if parsed.path.removeprefix("/v2") != "/pos/bills":
-            return super().__call__(method, url, headers, body)
+        path = parsed.path.removeprefix("/v2")
         q = dict(urllib.parse.parse_qsl(parsed.query))
+        enums = {"/info/branches": self.branches,
+                 "/pos/bills/types": [{"code": t, "name": "Борлуулалт"} for t in ("SALE_VAT", "SALE", "PURCHASE")],
+                 "/pos/bills/statuses": [{"code": s} for s in ("OPEN", "COMPLETE", "CANCEL")]}
+        if method == "GET" and path in enums:
+            self.calls.append((method, url, headers))
+            return 200, {}, json.dumps({"value": enums[path], "success": True}).encode()
+        if path not in ("/pos/bills", "/invoices"):
+            return super().__call__(method, url, headers, body)
+        rows, key = (self.bills, "billDate") if path == "/pos/bills" else (self.invoices, "invoiceDate")
         everything = self.bills
-        self.bills = [b for b in everything
-                      if q.get("from", "0000") <= b["billDate"][:10] <= q.get("to", "9999")]
+        self.bills = [r for r in rows if self._keep(r, q, key)]  # FakeArtlab serves both paths from .bills
         try:
             return super().__call__(method, url, headers, body)
         finally:
             self.bills = everything
+
+
+def _invoice(i: int, day: str, **kw) -> dict:
+    inv = {"id": i, "invoiceNum": f"I{i}", "invoiceDate": day, "status": "open", "totalGross": 4444444,
+           "startDate": day, "endDate": day, "description": "Дорж 88112233",
+           "customer": {"code": "C1", "name": "Батболд", "regNum": "ЧП01234567", "phone": "88112233"},
+           "dtls": [{"product": {"code": "P1", "name": "Тос солих", "isService": True}, "gross": 654321}]}
+    inv.update(kw)
+    return inv
 
 
 class PrivateFake(DatedFake):
@@ -153,7 +182,8 @@ class PrivateFake(DatedFake):
         bills = [_bill(i) for i in range(6)]
         bills[0]["description"] = "Батболд 1234 УБА 99112233"
         bills[1]["payments"] = [{"type": "LOAN", "name": "Зээл", "amount": 777777}]  # the only LOAN
-        super().__init__(bills)
+        super().__init__(bills, invoices=[_invoice(1, "2026-11-02"),
+                                          _invoice(2, "2026-10-01", endDate="2026-10-31", status="closed")])
 
     def __call__(self, method, url, headers, body):
         path = urllib.parse.urlparse(url).path.removeprefix("/v2")
@@ -162,11 +192,6 @@ class PrivateFake(DatedFake):
             conns = [{"id": 1, "code": "GEO", "name": "Гео Эксперт", "company": {"name": "Гео Эксперт Трейд ХХК"}},
                      {"id": 3, "code": "TEST", "name": "Туршилт", "company": {"name": "Artlab demo"}}]
             return 200, {}, json.dumps({"value": conns, "success": True}).encode()
-        if path == "/invoices":
-            self.calls.append((method, url, headers))
-            inv = [{"id": 1, "invoiceDate": "2026-11-02", "status": "open", "totalGross": 4444444,
-                    "description": "Дорж 88112233", "customer": {"code": "C1", "name": "Батболд"}}]
-            return 200, {}, json.dumps({"value": inv, "success": True}).encode()
         if path == "/pos/paymethods":
             self.calls.append((method, url, headers))
             rows = [{"id": 1, "name": "Бэлэн", "type": "CASH"}, {"id": 4, "name": "Зээл", "type": "LOAN"}]
@@ -189,7 +214,7 @@ def _run_main(monkeypatch, tmp_path, fake, argv):
     return probe_mod.main(["--env", str(tmp_path / "none.env"), *argv])
 
 
-@pytest.mark.parametrize("section", ["all", "bills", "paymethods", "acc-txn", "months"])
+@pytest.mark.parametrize("section", ["all", "bills", "paymethods", "acc-txn", "months", "invoices"])
 def test_no_personal_value_in_any_probe_output(monkeypatch, tmp_path, capsys, section):
     fake = PrivateFake()
     code = _run_main(monkeypatch, tmp_path, fake,
@@ -213,7 +238,7 @@ def test_every_request_is_read_only(monkeypatch, tmp_path, capsys):
 def test_allow_list_unchanged():
     assert probe_mod.READ_PATHS == {
         "/auth/check", "/auth/connections", "/pos/bills", "/pos/bills/types", "/pos/bills/statuses",
-        "/invoices", "/pos/paymethods", "/pos/paymethods/types"}
+        "/invoices", "/pos/paymethods", "/pos/paymethods/types", "/info/branches"}
     assert probe_mod.ACC_TXN_PATH == "/report/acc-txn"
 
 
@@ -444,30 +469,113 @@ def test_month_windows_cross_year_and_leap_day():
     assert len(probe_mod.month_windows(date(2026, 11, 5))) == 24
 
 
-def test_months_section_counts_only(monkeypatch, tmp_path, capsys):
+# ---------------------------------------------------------------- task 9.6c-2d: branches x types x status, invoices
+
+from src.artlab.client import NotAllowedError  # noqa: E402
+
+BRANCHES = [{"id": 1, "code": "B1", "name": "Дорж салбар", "parentId": None},
+            {"id": 2, "code": "B2", "name": "Батболд салбар", "parentId": 1}]
+
+
+def _bb(i: int, day: str, branch: str, bill_type: str = "SALE", status: str = "COMPLETE") -> dict:
+    return _bill(i, billDate=day, type=bill_type, status=status,
+                 terminal={"code": "T1", "name": "Бат-Эрдэнэ касс", "branch": {"code": branch, "name": "Дорж"}})
+
+
+SPREAD = [_bb(1, "2026-11-01", "B1"), _bb(2, "2026-11-02", "B1", "SALE_VAT"),
+          _bb(3, "2026-11-03", "B1", "SALE", "CANCEL"), _bb(4, "2026-10-05", "B2"),
+          _bb(5, "2026-10-06", "B9", "PURCHASE"),          # a branch NOT in the branch list
+          _bb(6, "2024-01-01", "B1")]                       # outside the 24 months
+
+
+def test_allow_list_adds_only_branch_list_and_blocks_writes():
+    client = make_client(FakeArtlab())
+    client.get("/info/branches")
+    for path in ("/info/branches/1", "/pos/terminals", "/auth/session", "/info/entities", "/im/orders"):
+        with pytest.raises(NotAllowedError):
+            client.get(path)
+    assert not any(hasattr(client, m) for m in ("post", "put", "patch", "delete"))
+
+
+def test_months_splits_by_branch_type_status(monkeypatch, tmp_path, capsys):
+    fake = DatedFake(SPREAD, branches=BRANCHES)
+    client = make_client(fake)
+    m = probe_mod.run_months(client, date(2026, 11, 5), today=date(2026, 11, 5))
+    assert m["branches"]["codes"] == ["B1", "B2"] and m["branches"]["with_parent"] == 1
+    assert m["types"]["source"] == "endpoint" and m["statuses"]["codes"] == ["OPEN", "COMPLETE", "CANCEL"]
+    nov = m["by_branch"]["2026-11"]["B1"]
+    assert nov["total"] == 3
+    assert nov["types"]["SALE"] == {"total": 2, "status": {"COMPLETE": 1, "CANCEL": 1}, "status_sum_ok": True}
+    assert nov["types"]["SALE_VAT"]["status"] == {"COMPLETE": 1}
+    assert m["by_branch"]["2026-10"]["B1"] == {"total": 0}  # zero cells are not split further
+    assert m["months"]["2026-10"] == 2 and m["outside_branches"]["2026-10"] == 1  # the B9 bill
+    assert m["branch_totals"] == {"B1": 3, "B2": 1} and m["type_totals"] == {"SALE": 3, "SALE_VAT": 1}
+    assert m["status_totals"] == {"CANCEL": 1, "COMPLETE": 3}
+    assert m["sum_mismatches"] == [] and m["truncated"] is False
+    assert (m["total"], m["all_time"]) == (5, 6)
+    assert m["from_filter"] == {"future_only": 0, "to_only": 6, "works": True}
+    text = json.dumps(m, ensure_ascii=False)
+    for value in ("Дорж", "Батболд", "Бат-Эрдэнэ", "313131"):
+        assert value not in text, value
+    sent = [urllib.parse.parse_qs(urllib.parse.urlparse(u).query) for _, u, h in fake.calls if h.get("X-Summary")]
+    assert all(set(q) <= {"from", "to", "branch", "type", "status"} for q in sent)
+
+
+def test_months_flags_a_from_filter_that_is_ignored():
+    class NoFrom(DatedFake):
+        def __call__(self, method, url, headers, body):
+            parsed = urllib.parse.urlparse(url)
+            q = {k: v for k, v in urllib.parse.parse_qsl(parsed.query) if k != "from"}
+            return super().__call__(method, parsed._replace(query=urllib.parse.urlencode(q)).geturl(), headers, body)
+
+    m = probe_mod.run_months(make_client(NoFrom(SPREAD, branches=BRANCHES)), date(2026, 11, 5),
+                             n=2, today=date(2026, 11, 5))
+    assert m["from_filter"]["works"] is False
+
+
+def test_months_request_cap_marks_truncated():
+    m = probe_mod.run_months(make_client(DatedFake(SPREAD, branches=BRANCHES)), date(2026, 11, 5), cap=10)
+    assert m["truncated"] is True and m["count_requests"] == 10
+    assert None in m["months"].values()  # unread cells are null, never a fake 0
+
+
+def test_enum_codes_fall_back_to_docs():
+    codes, src = probe_mod.enum_codes(make_client(FakeArtlab()), "/pos/bills/statuses", ("OPEN", "CANCEL"))
+    assert (codes, src) == (["OPEN", "CANCEL"], "docs (endpoint gave none)")
+
+
+def test_branch_list_flattens_tree_codes_only():
+    tree = [{"id": 1, "code": "B1", "name": "Дорж", "children": [{"id": 2, "code": "B2", "parentId": 1,
+                                                                   "name": "Батболд"}]}]
+    info = probe_mod.branch_list(make_client(DatedFake([], branches=tree)))
+    assert info["codes"] == ["B1", "B2"] and info["rows"] == 2
+    assert "Дорж" not in json.dumps(info, ensure_ascii=False)
+
+
+def test_invoices_section_counts_only(monkeypatch, tmp_path, capsys):
     fake = PrivateFake()
-    fake.bills += _dated(["2025-03-27", "2025-03-01", "2024-11-30", "2020-01-01"])  # last two: outside
-    code = _run_main(monkeypatch, tmp_path, fake, ["--section", "months", "--to", "2026-11-05"])
+    fake.invoices += [_invoice(3, "2026-09-15", status="canceled", customer={"code": "C2", "name": "Дорж"},
+                               dtls=[{"product": {"code": "P2", "isService": False}}]),
+                      _invoice(4, "2023-01-01")]  # outside the 24 months
+    code = _run_main(monkeypatch, tmp_path, fake, ["--section", "invoices", "--to", "2026-11-05"])
     out, err = capsys.readouterr()
     assert code == 0
-    months = json.loads(out)["months"]
-    assert len(months["months"]) == 24 and list(months["months"])[0] == "2024-12"
-    assert months["months"]["2025-03"] == 2 and months["months"]["2026-11"] == 6
-    assert months["total"] == 8 and months["all_time"] == 10 and months["unknown_months"] == []
-    assert (months["first_month_with_bills"], months["last_month_with_bills"]) == ("2025-03", "2026-11")
-    assert set(months) == {"months", "total", "all_time", "unknown_months",
-                           "first_month_with_bills", "last_month_with_bills"}
-    assert all(isinstance(v, int) for v in months["months"].values())
+    inv = json.loads(out)["invoices"]
+    assert inv["months"]["2026-11"] == {"total": 1, "status": {"open": 1}, "status_sum_ok": True}
+    assert inv["months"]["2026-10"]["status"] == {"closed": 1}
+    assert inv["months"]["2026-09"]["status"] == {"canceled": 1}
+    assert (inv["total"], inv["all_time"]) == (3, 4)
+    assert inv["newest_invoice_date"] == "2026-11-02" and inv["from_filter"]["works"] is True
+    assert inv["window_counts"] == {
+        "rows": 3, "period": 1, "with_dtls": 3, "with_service_line": 2, "with_customer": 3,
+        "with_customer_phone": 2, "with_customer_regnum": 2, "with_description": 3,
+        "status": {"canceled": 1, "closed": 1, "open": 1}}
     for value in SECRETS:
         assert value not in out and value not in err, value
-    # only X-Summary count requests: no bill rows are fetched for this section
-    month_calls = [h for m, u, h in fake.calls if "from=20" in u and "-01&to=" in u]
-    assert len(month_calls) == 24 and all(h.get("X-Summary") == "1" for h in month_calls)
 
 
-def test_months_missing_count_header_is_null_not_zero(monkeypatch):
-    client = make_client(DatedFake(_dated(DAYS)))
-    monkeypatch.setattr(client, "count", lambda path, params: None)
-    result = probe_mod.run_months(client, date(2026, 11, 5), 2)
-    assert result["months"] == {"2026-10": None, "2026-11": None}
-    assert result["unknown_months"] == ["2026-10", "2026-11"] and result["total"] == 0
+def test_invoice_counts_tolerate_missing_fields():
+    assert probe_mod.invoice_counts([{"status": "open"}, {"customer": "x", "dtls": None}]) == {
+        "rows": 2, "period": 0, "with_dtls": 0, "with_service_line": 0, "with_customer": 0,
+        "with_customer_phone": 0, "with_customer_regnum": 0, "with_description": 0,
+        "status": {"None": 1, "open": 1}}

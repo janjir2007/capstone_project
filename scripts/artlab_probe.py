@@ -24,6 +24,10 @@ stdout, but never to a terminal: on the server deploy/artlab_probe.sh saves it u
 Task 9.6c-2b: the newest bill date no longer trusts the sort order (both ends of the list + a count of
 bills after it), and --section months counts bills per calendar month for the last 24 months.
 
+Task 9.6c-2d (where are the sales?): --section months counts bills per month x branch (GET /info/branches,
+added to the allow-list) x type x status; --section invoices counts invoices per month x status, the
+newest invoice date and how many are period / service / have a customer phone / register number.
+
 Credentials come from .env (ARTLAB_URL, ARTLAB_USER, ARTLAB_PASS); real environment variables win.
 
     .venv/bin/python -m scripts.artlab_probe --section bills --from 2026-10-01 --to 2026-10-31 > out.json
@@ -71,6 +75,12 @@ SYNC_BAR = 0.5
 OUT_DIR = "/root/artlab_probe"  # where deploy/artlab_probe.sh saves the JSON on the server
 EDGE_ROWS = 50  # 9.6c-2b: rows read from each end of /pos/bills to find the newest date
 MONTHS = 24  # 9.6c-2b: the months section counts bills for this many calendar months
+MAX_COUNTS = 3000  # 9.6c-2d: cap on count requests in the months section (~0.3 s each)
+# Documented enums (collection + artlab_api_notes §5), used only if the enum endpoint gives nothing.
+BILL_TYPES_DOC = ("SALE_VAT", "SALE", "OUTCOME", "PURCHASE", "INCOME", "SALE_VAT_RETURN", "SALE_RETURN",
+                  "PURCHASE_RETURN", "MOVE", "RESERVE", "RESERVE_RETURN", "RESERVE_SALE_VAT", "RESERVE_SALE")
+BILL_STATUSES_DOC = ("OPEN", "COMPLETE", "CANCEL")
+INVOICE_STATUSES = ("open", "closed", "canceled")  # documented for GET /invoices
 
 # ---------------------------------------------------------------- summaries (no personal values)
 
@@ -433,38 +443,47 @@ def sort_order(first: tuple[str | None, str | None], last: tuple[str | None, str
     return "mixed"
 
 
-def newest_bill(client: ArtlabClient, today: date) -> dict[str, Any]:
-    """9.6c-2b: the newest billDate WITHOUT trusting the sort order, and a self-check.
+def newest_date(client: ArtlabClient, path: str, key: str, today: date) -> dict[str, Any]:
+    """9.6c-2b: the newest `key` date of a list WITHOUT trusting its sort order, plus a self-check.
 
     The 9.6c-2 version read ONE row of an unfiltered page and assumed "newest first" -- seen only on
-    the test DB (artlab_api_notes §3). If the real DB sorts otherwise (oldest first, by id...), that
-    row is not the newest. Now: max billDate over the first AND the last EDGE_ROWS rows, then COUNT
-    bills dated after it up to today (from/to are inclusive, §4). bills_after_newest > 0 means the
-    date is wrong. Dates and counts only. No terminal / branch filter is sent; the API user may still
-    see only some terminals (an Artlab permission we cannot read).
+    the test DB (artlab_api_notes §3). Now: max date over the first AND the last EDGE_ROWS rows, then
+    COUNT rows dated after it up to today (from/to are inclusive, §4). after_newest > 0 means the date
+    is wrong. Dates and counts only; no branch / type / status filter is sent.
     """
-    total = client.count("/pos/bills", {})
-    first, _ = client.page("/pos/bills", {}, 0, EDGE_ROWS)
-    last, _ = client.page("/pos/bills", {}, max((total or 0) - EDGE_ROWS, 0), EDGE_ROWS)
-    first_dates, last_dates = date_range(first, "billDate"), date_range(last, "billDate")
+    total = client.count(path, {})
+    first, _ = client.page(path, {}, 0, EDGE_ROWS)
+    last, _ = client.page(path, {}, max((total or 0) - EDGE_ROWS, 0), EDGE_ROWS)
+    first_dates, last_dates = date_range(first, key), date_range(last, key)
     found = [d for d in (first_dates[1], last_dates[1]) if d]
     newest = max(found) if found else None
     after = None
     if newest and _ISO_DATE.match(newest) and newest < str(today):
         nxt = str(date.fromisoformat(newest) + timedelta(days=1))
-        after = client.count("/pos/bills", {"from": nxt, "to": str(today)})
+        after = client.count(path, {"from": nxt, "to": str(today)})
     elif newest:
         after = 0
-    created = [d for d in (date_range(first, "createdAt")[1], date_range(last, "createdAt")[1]) if d]
     return {
-        "newest_bill_date": newest,
-        "bills_after_newest": after,
+        "newest": newest,
+        "after_newest": after,
         "sort_order": ("one_page" if total is not None and total <= EDGE_ROWS
                        else sort_order(first_dates, last_dates)),
         "first_page_dates": first_dates,
         "last_page_dates": last_dates,
-        "newest_created_at": max(created) if created else None,
         "total_records": total,
+        "edge_rows": first + last,
+    }
+
+
+def newest_bill(client: ArtlabClient, today: date) -> dict[str, Any]:
+    """newest_date for /pos/bills (billDate), plus the newest createdAt and a 30-day count."""
+    info = newest_date(client, "/pos/bills", "billDate", today)
+    rows = info.pop("edge_rows")
+    return {
+        "newest_bill_date": info.pop("newest"),
+        "bills_after_newest": info.pop("after_newest"),
+        **info,
+        "newest_created_at": date_range(rows, "createdAt")[1],
         "bills_last_30_days": client.count(
             "/pos/bills", {"from": str(today - timedelta(days=30)), "to": str(today)}),
         "today": str(today),
@@ -517,23 +536,193 @@ def month_windows(end: date, n: int = MONTHS) -> list[tuple[str, str, str]]:
     return out[::-1]
 
 
-def run_months(client: ArtlabClient, end: date, n: int = MONTHS) -> dict[str, Any]:
-    """9.6c-2b: bill COUNT per calendar month (X-Summary counts only: no rows, money or customers).
+class CountBudget:
+    """client.count() with a request cap: past the cap it returns None and sets truncated."""
 
-    Shows whether the DB really stops at newest_bill_date or the probe misses newer bills.
-    A month whose count header is missing is null and listed in unknown_months.
+    def __init__(self, client: ArtlabClient, cap: int) -> None:
+        self.client, self.cap, self.used, self.truncated = client, cap, 0, False
+
+    def __call__(self, path: str, params: dict[str, str]) -> int | None:
+        if self.used >= self.cap:
+            self.truncated = True
+            return None
+        self.used += 1
+        return self.client.count(path, params)
+
+
+def enum_codes(client: ArtlabClient, path: str, fallback: tuple[str, ...]) -> tuple[list[str], str]:
+    """Enum codes from an Artlab enum endpoint (strings or {code|value|id}) -> (codes, source).
+
+    Falls back to the documented list when the endpoint gives nothing usable."""
+    _, _, data = client.get(path)
+    codes = []
+    for item in as_list(data):
+        value = item if isinstance(item, (str, int)) else next(
+            (item.get(k) for k in ("code", "value", "id") if isinstance(item, dict) and item.get(k)), None)
+        if value not in (None, "") and str(value) not in codes:
+            codes.append(str(value))
+    return (codes, "endpoint") if codes else (list(fallback), "docs (endpoint gave none)")
+
+
+def _all_dicts(obj: Any) -> list[dict]:
+    """Every dict anywhere in a JSON value (flattens a branch tree from ?expand=1 or children lists)."""
+    if isinstance(obj, dict):
+        return [obj] + [d for v in obj.values() for d in _all_dicts(v)]
+    if isinstance(obj, list):
+        return [d for v in obj for d in _all_dicts(v)]
+    return []
+
+
+def branch_list(client: ArtlabClient) -> dict[str, Any]:
+    """9.6c-2d: GET /info/branches (folder «10 · Тохиргоо / Салбар»). Branch CODES only, no names."""
+    status, _, data = client.get("/info/branches")
+    rows = [r for r in _all_dicts(as_list(data)) if "code" in r or "parentId" in r]
+    codes = sorted({str(r["code"]) for r in rows if r.get("code") not in (None, "")})
+    return {"status": status, "rows": len(rows), "codes": codes,
+            "rows_without_code": sum(r.get("code") in (None, "") for r in rows),
+            "with_parent": sum(r.get("parentId") not in (None, "", 0) for r in rows)}
+
+
+def from_filter_check(count: Any, path: str, today: date) -> dict[str, Any]:
+    """Is the (for /pos/bills undocumented) `from` filter applied? Rows dated after today must be 0
+    when it works; if `from` were ignored, the count would equal the to-only count."""
+    future = count(path, {"from": str(today + timedelta(days=1)), "to": "2999-12-31"})
+    everything = count(path, {"to": "2999-12-31"})
+    works = None if not everything or future is None else future == 0
+    return {"future_only": future, "to_only": everything, "works": works}
+
+
+def _status_split(count: Any, path: str, params: dict[str, str], statuses: list[str], n: int | None) -> dict:
+    """{status: count} (zeros dropped) and whether the parts add up to n."""
+    split = {s: count(path, {**params, "status": s}) for s in statuses}
+    split = {k: v for k, v in split.items() if v}
+    return {"total": n, "status": split, "status_sum_ok": sum(split.values()) == n}
+
+
+def run_months(client: ArtlabClient, end: date, n: int = MONTHS, today: date | None = None,
+               cap: int = MAX_COUNTS) -> dict[str, Any]:
+    """9.6c-2d: /pos/bills COUNTS per month x branch x type x status (X-Summary only: no rows,
+    money or customers). Pruned: a cell is split further only when its count is > 0, and at most
+    `cap` count requests are sent (truncated=true past that).
+
+    months[m] = unfiltered count; outside_branches[m] = that minus the sum over listed branches
+    (bills on a branch not in the list, or a branch filter that does not work).
     """
-    months = {label: client.count("/pos/bills", {"from": lo, "to": hi})
-              for label, lo, hi in month_windows(end, n)}
+    count = CountBudget(client, cap)
+    branches = branch_list(client)
+    types, types_src = enum_codes(client, "/pos/bills/types", BILL_TYPES_DOC)
+    statuses, statuses_src = enum_codes(client, "/pos/bills/statuses", BILL_STATUSES_DOC)
+    windows = month_windows(end, n)
+    months: dict[str, int | None] = {}
+    by_branch: dict[str, dict[str, Any]] = {}
+    outside: dict[str, int | None] = {}
+    mismatches: list[str] = []
+    for label, lo, hi in windows:
+        base = {"from": lo, "to": hi}
+        months[label] = count("/pos/bills", base)
+        cells: dict[str, Any] = {}
+        for code in branches["codes"]:
+            total = count("/pos/bills", {**base, "branch": code})
+            cell: dict[str, Any] = {"total": total}
+            if total:
+                split = {}
+                for bill_type in types:
+                    nt = count("/pos/bills", {**base, "branch": code, "type": bill_type})
+                    if nt:
+                        split[bill_type] = _status_split(
+                            count, "/pos/bills", {**base, "branch": code, "type": bill_type}, statuses, nt)
+                        if not split[bill_type]["status_sum_ok"]:
+                            mismatches.append(f"{label} {code} {bill_type}: statuses")
+                cell["types"] = split
+                if sum(v["total"] for v in split.values()) != total:
+                    mismatches.append(f"{label} {code}: types")
+            cells[code] = cell
+        by_branch[label] = cells
+        sums = [c["total"] for c in cells.values()]
+        outside[label] = (months[label] - sum(sums)
+                          if months[label] is not None and None not in sums else None)
     known = {k: v for k, v in months.items() if v is not None}
     nonzero = [k for k, v in known.items() if v]
+    branch_totals: Counter[str] = Counter()
+    type_totals: Counter[str] = Counter()
+    status_totals: Counter[str] = Counter()
+    for cells in by_branch.values():
+        for code, cell in cells.items():
+            branch_totals[code] += cell["total"] or 0
+            for bill_type, split in cell.get("types", {}).items():
+                type_totals[bill_type] += split["total"] or 0
+                status_totals.update(split["status"])
     return {
+        "branches": branches,
+        "types": {"source": types_src, "codes": types},
+        "statuses": {"source": statuses_src, "codes": statuses},
+        "from_filter": from_filter_check(count, "/pos/bills", today or date.today()),
         "months": months,
         "total": sum(known.values()),
-        "all_time": client.count("/pos/bills", {}),
+        "all_time": count("/pos/bills", {}),
         "unknown_months": [k for k, v in months.items() if v is None],
         "first_month_with_bills": nonzero[0] if nonzero else None,
         "last_month_with_bills": nonzero[-1] if nonzero else None,
+        "outside_branches": outside,
+        "branch_totals": dict(sorted(branch_totals.items())),
+        "type_totals": dict(sorted(type_totals.items())),
+        "status_totals": dict(sorted(status_totals.items())),
+        "sum_mismatches": mismatches,
+        "by_branch": by_branch,
+        "count_requests": count.used,
+        "truncated": count.truncated,
+    }
+
+
+def invoice_counts(rows: list[dict]) -> dict[str, Any]:
+    """9.6c-2d: what invoices hold, as COUNTS only (no names, phones, register numbers, amounts)."""
+    def customer(r: dict) -> dict:
+        return r["customer"] if isinstance(r.get("customer"), dict) else {}
+
+    def filled(v: Any) -> bool:
+        return v not in (None, "", [], {})
+
+    dtls = [r.get("dtls") if isinstance(r.get("dtls"), list) else [] for r in rows]
+    return {
+        "rows": len(rows),
+        "period": sum(filled(r.get("startDate")) and filled(r.get("endDate"))
+                      and str(r["startDate"])[:10] != str(r["endDate"])[:10] for r in rows),
+        "with_dtls": sum(bool(d) for d in dtls),
+        "with_service_line": sum(any(isinstance(x, dict) and isinstance(x.get("product"), dict)
+                                     and x["product"].get("isService") is True for x in d) for d in dtls),
+        "with_customer": sum(bool(customer(r)) for r in rows),
+        "with_customer_phone": sum(filled(customer(r).get("phone")) for r in rows),
+        "with_customer_regnum": sum(filled(customer(r).get("regNum")) for r in rows),
+        "with_description": sum(filled(str(r.get("description") or "").strip()) for r in rows),
+        "status": dict(sorted(Counter(str(r.get("status")) for r in rows).items())),
+    }
+
+
+def run_invoices(client: ArtlabClient, end: date, n: int = MONTHS, today: date | None = None) -> dict[str, Any]:
+    """9.6c-2d: /invoices COUNTS per month x status, the newest invoiceDate (order-independent, as
+    for bills), and invoice_counts over every invoice of the window. Counts and dates only."""
+    today = today or date.today()
+    windows = month_windows(end, n)
+    months: dict[str, Any] = {}
+    for label, lo, hi in windows:
+        base = {"from": lo, "to": hi}
+        months[label] = _status_split(client.count, "/invoices", base, list(INVOICE_STATUSES),
+                                      client.count("/invoices", base))
+    newest = newest_date(client, "/invoices", "invoiceDate", today)
+    newest.pop("edge_rows")
+    # withDtl is documented for bills, not invoices: sent anyway (a read), with_dtls shows if it works.
+    rows, truncated = client.fetch_all("/invoices", {"from": windows[0][1], "to": windows[-1][2], "withDtl": "1"})
+    return {
+        "months": months,
+        "total": sum(m["total"] or 0 for m in months.values()),
+        "all_time": client.count("/invoices", {}),
+        "from_filter": from_filter_check(client.count, "/invoices", today),
+        "newest_invoice_date": newest.pop("newest"),
+        "invoices_after_newest": newest.pop("after_newest"),
+        **newest,
+        "window": [windows[0][1], windows[-1][2]],
+        "window_rows_truncated": truncated,
+        "window_counts": invoice_counts(rows),
     }
 
 
@@ -587,7 +776,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--from", dest="start", type=_iso_date, default=str(today - timedelta(days=30)))
     parser.add_argument("--to", dest="end", type=_iso_date, default=str(today))
     parser.add_argument("--env", type=Path, default=Path(".env"))
-    parser.add_argument("--section", choices=("all", "bills", "paymethods", "acc-txn", "months"),
+    parser.add_argument("--section", choices=("all", "bills", "paymethods", "acc-txn", "months", "invoices"),
                         default="all")
     parser.add_argument("--account", action="append", default=[], type=_account,
                         help="account code for acc-txn (repeatable); acc-txn is skipped without one")
@@ -632,6 +821,8 @@ def probe(args: argparse.Namespace) -> dict[str, Any]:
                              if args.account else "skipped: no --account")
     if args.section in ("all", "months"):
         report["months"] = run_months(client, date.fromisoformat(args.end))
+    if args.section in ("all", "invoices"):
+        report["invoices"] = run_invoices(client, date.fromisoformat(args.end))
     return report
 
 if __name__ == "__main__":

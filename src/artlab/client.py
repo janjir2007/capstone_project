@@ -36,6 +36,7 @@ READ_PATHS = frozenset(
         "/invoices",
         "/pos/paymethods",
         "/pos/paymethods/types",
+        "/info/branches",  # 9.6c-2d: branch list for the probe (PM-approved, read-only)
     }
 )
 ACC_TXN_PATH = "/report/acc-txn"  # POST, but read-only (Artlab confirmed, PM 9.6b review)

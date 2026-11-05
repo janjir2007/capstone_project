@@ -266,6 +266,20 @@ Plan: `docs/plans/9.6c_plan.md`. On the server the probe runs only through `depl
 - **`--section months`**: `X-Summary` bill counts per calendar month for the 24 months ending at `--to` (default today),
   plus `total`, `all_time`, `unknown_months`, first/last month with bills. No rows, money or customer data.
 
+### 8f-3. Task 9.6c-2d: where are the sales? (branches vs invoices)
+
+- **Allow-list +1:** `GET /info/branches` (collection folder «10 · Тохиргоо / Салбар»; filters `parentId`, `search`,
+  `expand=1` for a tree; fields `id name code parentId ordr`). PM-approved, probe only. Writes stay impossible (no
+  generic POST/PUT/PATCH/DELETE in the client). `/invoices` was already on the list.
+- **`--section months`** now counts `/pos/bills` per month × branch code × `type` × `status` (`X-Summary` only). A cell
+  is split further only when its count is > 0; at most 3000 count requests (`truncated`). `outside_branches[m]` =
+  unfiltered count − sum over listed branches. `from_filter.works` checks the undocumented `from` (rows after today
+  must be 0). `sum_mismatches` lists cells whose type/status parts do not add up (a filter that is ignored).
+- **`--section invoices`**: counts per month × status (`open/closed/canceled`), newest `invoiceDate` (order-independent),
+  and over the 24-month window: `period` (startDate ≠ endDate), `with_service_line` (`dtls[].product.isService`),
+  `with_customer_phone`, `with_customer_regnum`. `withDtl=1` is sent although only documented for bills; `with_dtls`
+  shows whether it works. Counts only.
+
 ## 9. Open questions for Artlab
 
 1. ~~Which type marks a credit sale?~~ `LOAN` (§8c). Still open: a **test-DB account code with transactions**

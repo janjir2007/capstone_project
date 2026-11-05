@@ -5,7 +5,8 @@
 # (test or real DB?) is printed on the screen first. Then a privacy check runs on the new file.
 #
 #   deploy/artlab_probe.sh paymethods
-#   deploy/artlab_probe.sh months                      # bill count per month, last 24 months
+#   deploy/artlab_probe.sh months      # bill counts per month x branch x type x status, last 24 months
+#   deploy/artlab_probe.sh invoices    # invoice counts per month x status + what invoices hold
 #   deploy/artlab_probe.sh bills --from 2026-10-28 --to 2026-11-04
 #   deploy/artlab_probe.sh acc-txn --account <code> --from 2026-10-05 --to 2026-11-04
 #   deploy/artlab_probe.sh check /root/artlab_probe/<file>.json   # privacy check only (9.6c-2b)
@@ -41,8 +42,8 @@ case "$section" in
     [ $# -eq 2 ] || { echo "usage: $0 check FILE.json" >&2; exit 2; }
     rc=0; privacy_check "$2" || rc=$?
     exit "$rc" ;;
-  paymethods|bills|acc-txn|months) shift ;;
-  *) echo "usage: $0 paymethods|bills|acc-txn|months [--from YYYY-MM-DD --to YYYY-MM-DD] [--account CODE]" >&2
+  paymethods|bills|acc-txn|months|invoices) shift ;;
+  *) echo "usage: $0 paymethods|bills|acc-txn|months|invoices [--from YYYY-MM-DD --to YYYY-MM-DD] [--account CODE]" >&2
      echo "       $0 check FILE.json" >&2
      exit 2 ;;
 esac
