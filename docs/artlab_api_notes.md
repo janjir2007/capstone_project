@@ -242,7 +242,7 @@ systemctl list-timers 'ocp-artlab-*'
 ## 8f. Real-DB probe (task 9.6c-2): safety rules + server command
 
 Plan: `docs/plans/9.6c_plan.md`. On the server the probe runs only through `deploy/artlab_probe.sh <section>`
-(paymethods | bills | acc-txn). The JSON is saved only under `/root/artlab_probe/` (umask 077), and a plate check runs on the new file.
+(paymethods | bills | acc-txn | months). The JSON is saved only under `/root/artlab_probe/` (umask 077), and a plate check runs on the new file.
 
 - Every run first prints the **active connection** (code, name, company, newest bill date) on the screen. Check for real DB vs test DB.
 - Money sums are shown only for groups of **5+ rows** (`"hidden (<5)"` otherwise). acc-txn number columns show the sum (5+),
@@ -252,6 +252,19 @@ Plan: `docs/plans/9.6c_plan.md`. On the server the probe runs only through `depl
 - Errors print our own message or the exception **class** only. The probe refuses to print to a terminal.
 - Allow-list unchanged. `tests/test_artlab_probe.py` plants names, plates, phones, accounts and single amounts in a fake
   DB and asserts that none of them reach stdout/stderr for any section.
+
+### 8f-2. Task 9.6c-2b fixes
+
+- **Plate check**: the grep version failed on the server (`grep: Invalid collation character`) and still printed
+  "none found". It is now `scripts/probe_privacy_check.py` (stdlib, host `python3 -I`, Cyrillic as `\u` escapes, file read
+  as UTF-8, counts only). Exit 0 clean, 3 plate-like text, 4 could not run (missing python3, empty / non-UTF-8 / non-JSON
+  file, crash). Re-check an old file: `deploy/artlab_probe.sh check /root/artlab_probe/<file>.json`.
+- **Newest bill date**: 9.6c-2 read one row of the unfiltered list and trusted "newest first" (seen on the test DB only).
+  Now it takes the max `billDate` over the first and last 50 rows, reports `sort_order`, and counts `bills_after_newest`
+  with `from=<newest+1>&to=<today>`. A non-zero count prints `WARNING: newest date is wrong`. No terminal/branch filter is
+  sent; whether the API user sees every terminal is an Artlab permission (needs verification with Artlab).
+- **`--section months`**: `X-Summary` bill counts per calendar month for the 24 months ending at `--to` (default today),
+  plus `total`, `all_time`, `unknown_months`, first/last month with bills. No rows, money or customer data.
 
 ## 9. Open questions for Artlab
 

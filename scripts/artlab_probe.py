@@ -21,6 +21,9 @@ every run starts with the active Artlab CONNECTION (test or real DB?) on stderr,
 terminal, and the plate/phone extraction rate is measured on completed sales only. The JSON goes to
 stdout, but never to a terminal: on the server deploy/artlab_probe.sh saves it under /root/artlab_probe/.
 
+Task 9.6c-2b: the newest bill date no longer trusts the sort order (both ends of the list + a count of
+bills after it), and --section months counts bills per calendar month for the last 24 months.
+
 Credentials come from .env (ARTLAB_URL, ARTLAB_USER, ARTLAB_PASS); real environment variables win.
 
     .venv/bin/python -m scripts.artlab_probe --section bills --from 2026-10-01 --to 2026-10-31 > out.json
@@ -66,6 +69,8 @@ MIN_GROUP = 5
 # PM 9.6c: sync may start when at least this share of completed sales has a plate or a phone.
 SYNC_BAR = 0.5
 OUT_DIR = "/root/artlab_probe"  # where deploy/artlab_probe.sh saves the JSON on the server
+EDGE_ROWS = 50  # 9.6c-2b: rows read from each end of /pos/bills to find the newest date
+MONTHS = 24  # 9.6c-2b: the months section counts bills for this many calendar months
 
 # ---------------------------------------------------------------- summaries (no personal values)
 
@@ -417,24 +422,73 @@ def run_acc_txn(client: ArtlabClient, accounts: list[str], start: str, end: str)
     }
 
 
-def connection_summary(client: ArtlabClient, login_body: Any) -> dict[str, Any]:
+def sort_order(first: tuple[str | None, str | None], last: tuple[str | None, str | None]) -> str:
+    """Which way /pos/bills is sorted, from the (min, max) billDate of its first and last page."""
+    if None in first or None in last:
+        return "unknown"
+    if first[0] >= last[1]:
+        return "newest_first"
+    if first[1] <= last[0]:
+        return "oldest_first"
+    return "mixed"
+
+
+def newest_bill(client: ArtlabClient, today: date) -> dict[str, Any]:
+    """9.6c-2b: the newest billDate WITHOUT trusting the sort order, and a self-check.
+
+    The 9.6c-2 version read ONE row of an unfiltered page and assumed "newest first" -- seen only on
+    the test DB (artlab_api_notes §3). If the real DB sorts otherwise (oldest first, by id...), that
+    row is not the newest. Now: max billDate over the first AND the last EDGE_ROWS rows, then COUNT
+    bills dated after it up to today (from/to are inclusive, §4). bills_after_newest > 0 means the
+    date is wrong. Dates and counts only. No terminal / branch filter is sent; the API user may still
+    see only some terminals (an Artlab permission we cannot read).
+    """
+    total = client.count("/pos/bills", {})
+    first, _ = client.page("/pos/bills", {}, 0, EDGE_ROWS)
+    last, _ = client.page("/pos/bills", {}, max((total or 0) - EDGE_ROWS, 0), EDGE_ROWS)
+    first_dates, last_dates = date_range(first, "billDate"), date_range(last, "billDate")
+    found = [d for d in (first_dates[1], last_dates[1]) if d]
+    newest = max(found) if found else None
+    after = None
+    if newest and _ISO_DATE.match(newest) and newest < str(today):
+        nxt = str(date.fromisoformat(newest) + timedelta(days=1))
+        after = client.count("/pos/bills", {"from": nxt, "to": str(today)})
+    elif newest:
+        after = 0
+    created = [d for d in (date_range(first, "createdAt")[1], date_range(last, "createdAt")[1]) if d]
+    return {
+        "newest_bill_date": newest,
+        "bills_after_newest": after,
+        "sort_order": ("one_page" if total is not None and total <= EDGE_ROWS
+                       else sort_order(first_dates, last_dates)),
+        "first_page_dates": first_dates,
+        "last_page_dates": last_dates,
+        "newest_created_at": max(created) if created else None,
+        "total_records": total,
+        "bills_last_30_days": client.count(
+            "/pos/bills", {"from": str(today - timedelta(days=30)), "to": str(today)}),
+        "today": str(today),
+    }
+
+
+def connection_summary(client: ArtlabClient, login_body: Any, today: date | None = None) -> dict[str, Any]:
     """9.6c-2 (G3): WHICH Artlab database this token reads -- test or real?
 
     Per connection: id, code, name, company name (company / database names, not people) and
-    whether it is the login's connId. Plus the newest bill date: the test DB ends 2026-08-10,
+    whether it is the login's connId. Plus the newest bill (newest_bill): the test DB ends 2026-08-10,
     the real one should reach today. Switching connection is NOT allowed (not on the allow-list).
     """
     current = str(login_body.get("connId")) if isinstance(login_body, dict) else None
     _, _, conns = client.get("/auth/connections")
     rows = [c for c in as_list(conns) if isinstance(c, dict)]
     company = lambda c: c["company"].get("name") if isinstance(c.get("company"), dict) else None  # noqa: E731
-    newest, _ = client.page("/pos/bills", {}, 0, 1)  # newest first (artlab_api_notes §3)
+    newest = newest_bill(client, today or date.today())
     return {
         "login_conn_id": current,
         "connections": [{"id": c.get("id"), "code": c.get("code"), "name": c.get("name"),
                          "company": company(c), "current": str(c.get("id")) == current}
                         for c in rows],
-        "newest_bill_date": date_range(newest, "billDate")[1],
+        **newest,
     }
 
 
@@ -443,7 +497,44 @@ def connection_line(info: dict[str, Any]) -> str:
     current = [c for c in info["connections"] if c["current"]]
     who = (f"{current[0]['code']} {current[0]['name']} / {current[0]['company']}" if current
            else f"NOT FOUND (connId {info['login_conn_id']}, {len(info['connections'])} connections)")
-    return f"Artlab connection: {who}; newest bill {info['newest_bill_date']}"
+    after = info.get("bills_after_newest")
+    line = (f"Artlab connection: {who}; newest bill {info['newest_bill_date']} "
+            f"(sort {info.get('sort_order')}, bills after it: {after})")
+    if after:
+        line += " WARNING: newest date is wrong"
+    return line
+
+
+def month_windows(end: date, n: int = MONTHS) -> list[tuple[str, str, str]]:
+    """The n calendar months ending with end's month, oldest first: (YYYY-MM, first day, last day)."""
+    out = []
+    year, month = end.year, end.month
+    for _ in range(n):
+        first = date(year, month, 1)
+        nxt = date(year + month // 12, month % 12 + 1, 1)
+        out.append((first.strftime("%Y-%m"), str(first), str(nxt - timedelta(days=1))))
+        year, month = (year, month - 1) if month > 1 else (year - 1, 12)
+    return out[::-1]
+
+
+def run_months(client: ArtlabClient, end: date, n: int = MONTHS) -> dict[str, Any]:
+    """9.6c-2b: bill COUNT per calendar month (X-Summary counts only: no rows, money or customers).
+
+    Shows whether the DB really stops at newest_bill_date or the probe misses newer bills.
+    A month whose count header is missing is null and listed in unknown_months.
+    """
+    months = {label: client.count("/pos/bills", {"from": lo, "to": hi})
+              for label, lo, hi in month_windows(end, n)}
+    known = {k: v for k, v in months.items() if v is not None}
+    nonzero = [k for k, v in known.items() if v]
+    return {
+        "months": months,
+        "total": sum(known.values()),
+        "all_time": client.count("/pos/bills", {}),
+        "unknown_months": [k for k, v in months.items() if v is None],
+        "first_month_with_bills": nonzero[0] if nonzero else None,
+        "last_month_with_bills": nonzero[-1] if nonzero else None,
+    }
 
 
 def run(client: ArtlabClient, start: str, end: str) -> dict[str, Any]:
@@ -496,7 +587,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--from", dest="start", type=_iso_date, default=str(today - timedelta(days=30)))
     parser.add_argument("--to", dest="end", type=_iso_date, default=str(today))
     parser.add_argument("--env", type=Path, default=Path(".env"))
-    parser.add_argument("--section", choices=("all", "bills", "paymethods", "acc-txn"), default="all")
+    parser.add_argument("--section", choices=("all", "bills", "paymethods", "acc-txn", "months"),
+                        default="all")
     parser.add_argument("--account", action="append", default=[], type=_account,
                         help="account code for acc-txn (repeatable); acc-txn is skipped without one")
     args = parser.parse_args(argv)
@@ -538,6 +630,8 @@ def probe(args: argparse.Namespace) -> dict[str, Any]:
     if args.section in ("all", "acc-txn"):
         report["acc_txn"] = (run_acc_txn(client, args.account, args.start, args.end)
                              if args.account else "skipped: no --account")
+    if args.section in ("all", "months"):
+        report["months"] = run_months(client, date.fromisoformat(args.end))
     return report
 
 if __name__ == "__main__":

@@ -124,7 +124,29 @@ def _bill(i: int, **kw) -> dict:
     return bill
 
 
-class PrivateFake(FakeArtlab):
+class DatedFake(FakeArtlab):
+    """/pos/bills honours from / to (inclusive, artlab_api_notes §4) and a chosen sort order."""
+
+    def __init__(self, bills: list[dict], order: str = "newest_first") -> None:
+        key = {"newest_first": lambda b: b["billDate"], "oldest_first": lambda b: b["billDate"],
+               "by_id": lambda b: b["id"]}[order]
+        super().__init__(sorted(bills, key=key, reverse=order == "newest_first"))
+
+    def __call__(self, method, url, headers, body):
+        parsed = urllib.parse.urlparse(url)
+        if parsed.path.removeprefix("/v2") != "/pos/bills":
+            return super().__call__(method, url, headers, body)
+        q = dict(urllib.parse.parse_qsl(parsed.query))
+        everything = self.bills
+        self.bills = [b for b in everything
+                      if q.get("from", "0000") <= b["billDate"][:10] <= q.get("to", "9999")]
+        try:
+            return super().__call__(method, url, headers, body)
+        finally:
+            self.bills = everything
+
+
+class PrivateFake(DatedFake):
     """A fake REAL database full of personal data, serving every endpoint the probe uses."""
 
     def __init__(self) -> None:
@@ -167,7 +189,7 @@ def _run_main(monkeypatch, tmp_path, fake, argv):
     return probe_mod.main(["--env", str(tmp_path / "none.env"), *argv])
 
 
-@pytest.mark.parametrize("section", ["all", "bills", "paymethods", "acc-txn"])
+@pytest.mark.parametrize("section", ["all", "bills", "paymethods", "acc-txn", "months"])
 def test_no_personal_value_in_any_probe_output(monkeypatch, tmp_path, capsys, section):
     fake = PrivateFake()
     code = _run_main(monkeypatch, tmp_path, fake,
@@ -199,7 +221,7 @@ def test_active_connection_is_shown_first_on_every_run(monkeypatch, tmp_path, ca
     _run_main(monkeypatch, tmp_path, PrivateFake(), ["--section", "paymethods"])
     out, err = capsys.readouterr()
     assert err.splitlines()[0] == ("Artlab connection: GEO Гео Эксперт / Гео Эксперт Трейд ХХК; "
-                                   "newest bill 2026-11-01")
+                                   "newest bill 2026-11-04 (sort one_page, bills after it: 0)")
     conn = json.loads(out)["connection"]
     assert [c["current"] for c in conn["connections"]] == [True, False]
 
@@ -280,3 +302,172 @@ def test_server_script_rejects_unknown_section():
     result = subprocess.run(["bash", str(ROOT / "deploy" / "artlab_probe.sh"), "all"],
                             capture_output=True, text=True)
     assert result.returncode == 2 and "usage" in result.stderr
+
+
+# ---------------------------------------------------------------- task 9.6c-2b: plate check, newest date, months
+
+import os  # noqa: E402
+from datetime import date  # noqa: E402
+
+from scripts import probe_privacy_check as ppc  # noqa: E402
+
+SCRIPT = ROOT / "deploy" / "artlab_probe.sh"
+
+
+def _write(tmp_path, obj, name="out.json", ascii_only=False) -> Path:
+    path = tmp_path / name
+    path.write_text(json.dumps(obj, ensure_ascii=ascii_only), encoding="utf-8")
+    return path
+
+
+def test_plate_check_masked_shapes_pass(tmp_path):
+    path = _write(tmp_path, {"shapes": {"9999 ААА 99999999": 3, "9999-ААА": 1}, "sum": 88001234, "id": 12345678})
+    code, lines = ppc.check(path)
+    assert code == ppc.OK and lines[0] == "plate check: none found"
+    assert "8-digit numbers: 1" in lines[1] and lines[2] == "  at $.sum"
+
+
+@pytest.mark.parametrize("ascii_only", [False, True])  # \u-escaped Cyrillic is caught too
+def test_plate_check_finds_real_plate_and_prints_count_only(tmp_path, ascii_only):
+    path = _write(tmp_path, {"x": "Батболд 1234 УБА", "y": "5678ӨҮЁ"}, ascii_only=ascii_only)
+    code, lines = ppc.check(path)
+    assert code == ppc.FOUND and lines == ["STOP: 2 plate-like text(s) found; do NOT share this file"]
+
+
+@pytest.mark.parametrize("content", [None, b"", b"\xff\xfe broken", b"{not json"])
+def test_plate_check_fails_loudly_when_it_cannot_run(tmp_path, capsys, content):
+    path = tmp_path / "out.json"
+    if content is not None:
+        path.write_bytes(content)
+    assert ppc.main([str(path)]) == ppc.CANNOT_RUN
+    out, err = capsys.readouterr()
+    assert "none found" not in out + err and "could NOT run" in err
+
+
+def test_plate_check_crash_is_not_none_found(tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr(ppc, "load", lambda p: 1 / 0)
+    assert ppc.main([str(_write(tmp_path, {}))]) == ppc.CANNOT_RUN
+    out, err = capsys.readouterr()
+    assert out == "" and "ZeroDivisionError" in err
+
+
+def test_plate_check_source_has_no_raw_cyrillic():
+    text = (ROOT / "scripts" / "probe_privacy_check.py").read_text(encoding="utf-8")
+    assert text.isascii()  # \u escapes only: nothing for a locale to mis-read
+
+
+def _sh(args, tmp_path, path_dirs):
+    env = {"PATH": os.pathsep.join(str(d) for d in path_dirs), "LC_ALL": "C"}
+    return subprocess.run(["/bin/bash", str(SCRIPT), *args], capture_output=True, text=True, env=env,
+                          cwd=tmp_path)
+
+
+def _real_python_dir(tmp_path) -> Path:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    (bin_dir / "python3").symlink_to(sys.executable)
+    return bin_dir
+
+
+def test_server_check_clean_file_under_c_locale(tmp_path):
+    result = _sh(["check", str(_write(tmp_path, {"shape": "9999 ААА"}))], tmp_path, [_real_python_dir(tmp_path)])
+    assert result.returncode == 0 and "plate check: none found" in result.stdout
+
+
+def test_server_check_plate_found_exits_3(tmp_path):
+    _write(tmp_path, {"d": "1234 УБА"})
+    result = _sh(["check", "out.json"], tmp_path, [_real_python_dir(tmp_path)])  # relative path
+    assert result.returncode == 3 and "STOP: 1" in result.stderr and "УБА" not in result.stderr
+
+
+def test_server_check_without_python_fails_loudly(tmp_path):
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    result = _sh(["check", str(_write(tmp_path, {}))], tmp_path, [empty])
+    assert result.returncode == 4 and "python3 not found" in result.stderr
+    assert "none found" not in result.stdout + result.stderr
+
+
+def test_server_check_python_crash_fails_loudly(tmp_path):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "python3").write_text("#!/bin/sh\nexit 1\n")
+    (bin_dir / "python3").chmod(0o755)
+    result = _sh(["check", str(_write(tmp_path, {}))], tmp_path, [bin_dir])
+    assert result.returncode == 4 and "could NOT run (exit 1)" in result.stderr
+    assert "none found" not in result.stdout + result.stderr
+
+
+def test_server_script_has_no_grep_plate_check():
+    text = SCRIPT.read_text()
+    code = [line for line in text.splitlines() if not line.lstrip().startswith("#")]
+    assert not any("none found" in line for line in code)  # only the Python check may say it
+    assert not any("grep -nE" in line for line in code)
+
+
+def _dated(days: list[str]) -> list[dict]:
+    return [_bill(i, billDate=d) for i, d in enumerate(days)]
+
+
+DAYS = ["2025-03-27", "2026-10-30", "2024-06-01", "2026-11-03", "2025-12-31", "2026-01-15"]
+
+
+@pytest.mark.parametrize("order", ["newest_first", "oldest_first", "by_id"])
+def test_newest_bill_does_not_trust_the_sort_order(order):
+    client = make_client(DatedFake(_dated(DAYS), order=order))
+    info = probe_mod.newest_bill(client, date(2026, 11, 5))
+    assert info["newest_bill_date"] == "2026-11-03" and info["bills_after_newest"] == 0
+    assert info["total_records"] == 6 and info["bills_last_30_days"] == 2
+
+
+def test_newest_bill_flags_bills_it_missed(monkeypatch):
+    """Ordered by id + a short edge window: neither end holds the newest date -> loud warning."""
+    monkeypatch.setattr(probe_mod, "EDGE_ROWS", 1)
+    client = make_client(DatedFake(_dated(DAYS), order="by_id"))
+    info = probe_mod.newest_bill(client, date(2026, 11, 5))
+    assert info["newest_bill_date"] == "2026-01-15" and info["bills_after_newest"] == 2
+    line = probe_mod.connection_line({"login_conn_id": "1", "connections": [], **info})
+    assert line.endswith("bills after it: 2) WARNING: newest date is wrong")
+
+
+def test_sort_order_detection():
+    assert probe_mod.sort_order(("2026-01-01", "2026-02-01"), ("2024-01-01", "2024-02-01")) == "newest_first"
+    assert probe_mod.sort_order(("2024-01-01", "2024-02-01"), ("2026-01-01", "2026-02-01")) == "oldest_first"
+    assert probe_mod.sort_order(("2024-01-01", "2026-02-01"), ("2025-01-01", "2025-02-01")) == "mixed"
+    assert probe_mod.sort_order((None, None), ("2025-01-01", "2025-02-01")) == "unknown"
+
+
+def test_month_windows_cross_year_and_leap_day():
+    wins = probe_mod.month_windows(date(2024, 3, 10), 3)
+    assert wins == [("2024-01", "2024-01-01", "2024-01-31"), ("2024-02", "2024-02-01", "2024-02-29"),
+                    ("2024-03", "2024-03-01", "2024-03-31")]
+    assert len(probe_mod.month_windows(date(2026, 11, 5))) == 24
+
+
+def test_months_section_counts_only(monkeypatch, tmp_path, capsys):
+    fake = PrivateFake()
+    fake.bills += _dated(["2025-03-27", "2025-03-01", "2024-11-30", "2020-01-01"])  # last two: outside
+    code = _run_main(monkeypatch, tmp_path, fake, ["--section", "months", "--to", "2026-11-05"])
+    out, err = capsys.readouterr()
+    assert code == 0
+    months = json.loads(out)["months"]
+    assert len(months["months"]) == 24 and list(months["months"])[0] == "2024-12"
+    assert months["months"]["2025-03"] == 2 and months["months"]["2026-11"] == 6
+    assert months["total"] == 8 and months["all_time"] == 10 and months["unknown_months"] == []
+    assert (months["first_month_with_bills"], months["last_month_with_bills"]) == ("2025-03", "2026-11")
+    assert set(months) == {"months", "total", "all_time", "unknown_months",
+                           "first_month_with_bills", "last_month_with_bills"}
+    assert all(isinstance(v, int) for v in months["months"].values())
+    for value in SECRETS:
+        assert value not in out and value not in err, value
+    # only X-Summary count requests: no bill rows are fetched for this section
+    month_calls = [h for m, u, h in fake.calls if "from=20" in u and "-01&to=" in u]
+    assert len(month_calls) == 24 and all(h.get("X-Summary") == "1" for h in month_calls)
+
+
+def test_months_missing_count_header_is_null_not_zero(monkeypatch):
+    client = make_client(DatedFake(_dated(DAYS)))
+    monkeypatch.setattr(client, "count", lambda path, params: None)
+    result = probe_mod.run_months(client, date(2026, 11, 5), 2)
+    assert result["months"] == {"2026-10": None, "2026-11": None}
+    assert result["unknown_months"] == ["2026-10", "2026-11"] and result["total"] == 0
