@@ -78,6 +78,7 @@ services:
       META_PAGE_TOKEN: ${META_PAGE_TOKEN:-}
       META_PAGE_ID: ${META_PAGE_ID:-}
       META_GRAPH_VERSION: ${META_GRAPH_VERSION:-}
+      MESSENGER_PAGE_USERNAME: ${MESSENGER_PAGE_USERNAME:-}  # 9.15a-3: m.me link in the km-check SMS (not a secret)
     volumes:
       - ./models:/app/models:ro
     ports:

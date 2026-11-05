@@ -226,6 +226,7 @@ class MessengerSettings:
     page_token: str = field(default="", repr=False)
     page_id: str = ""
     graph_version: str = ""
+    page_username: str = ""  # 9.15a-3: the Page's m.me name (not a secret); empty = no link in the SMS
 
 
 def _switch(env: Mapping[str, str], name: str) -> bool:
@@ -241,15 +242,17 @@ def messenger_settings(env: Mapping[str, str] | None = None) -> MessengerSetting
     """MESSENGER_ENABLED / MESSENGER_OTN_ENABLED (default false) + the META_* values.
 
     ConfigError (the API does not start) when MESSENGER_ENABLED=true and a META_* value is empty,
-    MESSENGER_OTN_ENABLED=true without MESSENGER_ENABLED, or META_GRAPH_VERSION / META_PAGE_ID look
-    wrong. Errors name the setting only, never its value.
+    MESSENGER_OTN_ENABLED=true without MESSENGER_ENABLED, or META_GRAPH_VERSION / META_PAGE_ID /
+    MESSENGER_PAGE_USERNAME look wrong. MESSENGER_PAGE_USERNAME (9.15a-3) is optional: empty -> the
+    km-check SMS has no m.me link. Errors name the setting only, never its value.
     """
     env = os.environ if env is None else env
     settings = MessengerSettings(
         enabled=_switch(env, "MESSENGER_ENABLED"), otn_enabled=_switch(env, "MESSENGER_OTN_ENABLED"),
         app_secret=env.get("META_APP_SECRET", "").strip(), verify_token=env.get("META_VERIFY_TOKEN", "").strip(),
         page_token=env.get("META_PAGE_TOKEN", "").strip(), page_id=env.get("META_PAGE_ID", "").strip(),
-        graph_version=env.get("META_GRAPH_VERSION", "").strip())
+        graph_version=env.get("META_GRAPH_VERSION", "").strip(),
+        page_username=env.get("MESSENGER_PAGE_USERNAME", "").strip())
     if settings.otn_enabled and not settings.enabled:
         raise ConfigError("MESSENGER_OTN_ENABLED=true needs MESSENGER_ENABLED=true")
     if settings.enabled:
@@ -260,4 +263,7 @@ def messenger_settings(env: Mapping[str, str] | None = None) -> MessengerSetting
         raise ConfigError("META_GRAPH_VERSION must look like v26.0")
     if settings.page_id and not settings.page_id.isdigit():
         raise ConfigError("META_PAGE_ID must be the Page's number")
+    if settings.page_username and not re.fullmatch(r"[A-Za-z0-9.]{5,50}", settings.page_username):
+        raise ConfigError("MESSENGER_PAGE_USERNAME must be the Page username only (letters, digits, dots), "
+                          "e.g. WolfCenterMongolia, not a link")
     return settings

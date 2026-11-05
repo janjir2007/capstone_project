@@ -68,6 +68,7 @@ class FakeApi:
         self.km_checks: list[dict] = []             # GET /km-checks/due items
         self.km_sent: dict[int, dict] = {}
         self.lookups: list[str] = []                # q of every GET /vehicles/lookup (9.16a status)
+        self.flagged: list[dict] | None = []        # GET /readings/flagged (9.15a-3); None -> 404 (older API)
 
     # -- data ---------------------------------------------------------------
     def add_vehicle(self, identifier: str, company: str, identifier_type: str = "plate", **service) -> dict:
@@ -184,6 +185,17 @@ class FakeApi:
             self.readings.remove(row)
             self.paces.pop(row["vehicle_id"], None)
             return httpx.Response(204)
+        if path == "/readings/flagged":  # 9.15a-3
+            if self.flagged is None:
+                return httpx.Response(404, json={"detail": "Not Found"})
+            return httpx.Response(200, json={"readings": [r for r in self.flagged if not r.get("reviewed")]})
+        if path.startswith("/readings/") and path.endswith("/reviewed"):
+            rid = int(path.split("/")[2])
+            row = next((r for r in self.flagged or [] if r["reading_id"] == rid), None)
+            if row is None:
+                return httpx.Response(404, json={"detail": f"reading {rid} not found"})
+            row["reviewed"] = True
+            return httpx.Response(200, json={"reading_id": rid, "reviewed_at": f"{TODAY}T12:00:00+08:00"})
         if path == "/km-checks/due":
             checks = [c for c in self.km_checks if c["service_id"] not in self.km_sent and c.get("phone") not in self.stops]
             return httpx.Response(200, json={"as_of": TODAY, "contact_is_placeholder": False, "checks": checks})
@@ -1925,7 +1937,7 @@ def test_reminders_switch_counts_and_km_rows(fake_api) -> None:
     fake_api.km_checks = [km_check(5, "0005 ТЕС"), km_check(6, "0006 ТЕС", phone=None)]
     at = run_app(REMINDERS)
     switch = at.segmented_control(key="rem_tab")
-    assert [o.content for o in switch.proto.options] == ["Сануулга (1)", "Км шалгах (2)"]
+    assert [o.content for o in switch.proto.options] == ["Сануулга (1)", "Км шалгах (2)", "Шалгах (0)"]
     assert texts(at.subheader)[0] == "Өнөөдрийн дараалал (1)"         # reminders by default
     at = switch.set_value("km").run()
     assert texts(at.subheader)[0] == "Км асуух (2)"
@@ -1935,6 +1947,39 @@ def test_reminders_switch_counts_and_km_rows(fake_api) -> None:
     sms = [b for b in at.get("link_button") if b.proto.label == "SMS илгээх"]
     assert len(sms) == 1 and sms[0].proto.url.startswith("sms:99110003?&body=") and "%D0%9E%D0%B4" in sms[0].proto.url
     assert "Viber-ээр илгээх" not in [b.proto.label for b in at.get("link_button")]
+
+
+def flagged_reading(rid: int, plate: str, phone: str | None = "99110005") -> dict:
+    """A GET /readings/flagged item (contract v0.21)."""
+    return {"reading_id": rid, "vehicle_id": rid, "identifier_type": "plate", "identifier": plate,
+            "company": "Туршилт ХХК", "unit": "km", "value": 112000.0, "reading_date": "2026-10-11",
+            "flag_reason": "plate_mismatch", "phone": phone, "driver_name": "Мсж Д.",
+            "created_at": f"{TODAY}T10:00:00+08:00"}
+
+
+def test_flagged_tab_rows_call_and_checked(fake_api) -> None:
+    """9.15a-3: «Шалгах (N)» lists flagged Messenger readings; «Шалгасан» hides one."""
+    fake_api.flagged = [flagged_reading(41, "9988 НАА"), flagged_reading(42, "1235 УБА", phone=None)]
+    at = run_app(REMINDERS)
+    switch = at.segmented_control(key="rem_tab")
+    assert [o.content for o in switch.proto.options][2] == "Шалгах (2)"
+    at = switch.set_value("chk").run()
+    assert texts(at.subheader)[0] == "Шалгах км (2)"
+    page = html_blocks(at)
+    assert '<span class="plate">9988 НАА</span>' in page and "Дугаар таарахгүй</span>" in page
+    assert "112\u00a0000\u00a0км\u00a0·\u00a02026-10-11 · 9911\u00a00005" in page and "утасгүй" in page
+    calls = [b.proto.url for b in at.get("link_button") if b.proto.label == "Залгах"]
+    assert calls == ["tel:99110005"]                                     # no phone -> no «Залгах»
+    at = at.button(key="chk_done_41").click().run()
+    assert any("Шалгасан гэж тэмдэглэлээ" in t for t in texts(at.success))
+    assert texts(at.subheader)[0] == "Шалгах км (1)" and "9988 НАА" not in html_blocks(at)
+
+
+def test_flagged_tab_older_api_shows_zero(fake_api) -> None:
+    fake_api.flagged = None                                              # API before 9.15a-3: 404
+    at = run_app(REMINDERS)
+    assert [o.content for o in at.segmented_control(key="rem_tab").proto.options][2] == "Шалгах (0)"
+    assert not at.error
 
 
 def test_km_check_sent_and_stop_list(fake_api) -> None:

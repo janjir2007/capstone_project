@@ -11,7 +11,8 @@ A truck AT_RISK_DAYS (default 150) past its latest service without coming back i
 The day counts are settings (src/api/config.py reminder_rules), not fixed here.
 
 No SMS / Viber is sent by the API: the manager sends the text and marks it sent.
-Wording = approved by PM + Ari (9.5c; the km-check text 9.14a); change it only here.
+Wording = approved by PM + Ari (9.5c; the km-check text 9.14a; TXT-1 B + m.me link 9.15a-3);
+change it only here.
 """
 
 from __future__ import annotations
@@ -24,16 +25,21 @@ from src.api.config import Contact, ReminderRules
 STAGE = "single"                 # the 9.5c reminder's value in reminders_sent.stage
 OLD_STAGES = ("1m", "2m", "3m")  # 9.5b rows: kept as history, count as "sent" for their service
 
-# 9.14a: Cyrillic -> UCS-2: this text is 3 SMS parts with a usual plate / oil grade (sms_parts;
-# test_reminders.py pins it). Shorter wordings are proposed to Ari, not changed here.
-MESSAGE = ("Сайн байна уу! {plate} машины тосыг {date}-нд солиулсан ({oil}). Дахин солих хугацаа болж "
-           "байна. Wolf Oil - Гео-Эксперт: {contact}")
+# 9.15a-3: TXT-1 B (PM pick): keeps plate, date, oil and contact, drops «Гео-Эксперт». Cyrillic ->
+# UCS-2: 2 SMS parts with a usual plate / oil grade (was 3; test_reminders.py pins it).
+MESSAGE = ("Сайн байна уу! {plate}: {date}-нд {oil} тос солиулсан. Дахин солих хугацаа боллоо. "
+           "Wolf Oil: {contact}")
 
 
-# Task 9.14a: «Км шалгах» — asks the driver for his km when the truck's pace is not known
-# (2 SMS parts with a usual plate and phone; test_reminders.py checks the worst case).
+# Task 9.14a: «Км шалгах» — asks the driver for his km when the truck's pace is not known.
+# 9.15a-3: ends «Wolf Oil: {contact}» (no «Гео-Эксперт»). Used while Messenger is off / no Page username.
 KM_CHECK_MESSAGE = ("Сайн байна уу! {plate} машины тосыг {date}-нд солиулсан. Одоогийн км-ээ хариу бичнэ үү. "
-                    "Wolf Oil - Гео-Эксперт: {contact}")
+                    "Wolf Oil: {contact}")
+# 9.15a-3 (plan §7, P4): with the m.me link. No date, so it stays 2 SMS parts with an 8-character plate,
+# an 8-digit phone and an 18-character Page username (130 of 134). «хариу бичнэ үү эсвэл»: an SMS reply
+# still works (drivers cannot use the bot before App Review, RISK-32).
+KM_CHECK_LINK_MESSAGE = ("Сайн байна уу! {plate} машины одоогийн км-ээ хариу бичнэ үү эсвэл {link} "
+                         "Wolf Oil: {contact}")
 
 # GSM 03.38: the basic set (1 unit each) and the extension set (2 units: escape + char). Anything else
 # (Cyrillic, emoji) sends the whole SMS as UCS-2.
@@ -86,6 +92,15 @@ def message_mn(plate: str, last_service: date, oil_grade: str, contact: Contact)
     return MESSAGE.format(plate=plate, date=format_day(last_service), oil=oil_grade, contact=contact.phone)
 
 
-def km_check_message(plate: str, last_service: date, contact: Contact) -> str:
-    """The «Км шалгах» text. {contact} = the oil changer's phone (CONTACT_PHONE)."""
+def messenger_link(page_username: str, ref: str) -> str:
+    """The m.me link of one service: https://m.me/WolfCenterMongolia?ref=K7Q2M9XA (ref = A-Z 2-9 only,
+    so it needs no URL encoding)."""
+    return f"https://m.me/{page_username}?ref={ref}"
+
+
+def km_check_message(plate: str, last_service: date, contact: Contact, link: str | None = None) -> str:
+    """The «Км шалгах» text. {contact} = the oil changer's phone (CONTACT_PHONE). With ``link`` (9.15a-3:
+    the service's m.me link) the short text without the date."""
+    if link:
+        return KM_CHECK_LINK_MESSAGE.format(plate=plate, link=link, contact=contact.phone)
     return KM_CHECK_MESSAGE.format(plate=plate, date=format_day(last_service), contact=contact.phone)

@@ -142,6 +142,8 @@ class OdometerReading(Base):
     flag_reason: Mapped[str | None] = mapped_column(Text)  # 'not_higher' / 'too_slow' / 'too_fast' / 'plate_mismatch' (011)
     rate_per_day: Mapped[Decimal | None] = mapped_column(Numeric(9, 1))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # 012 (9.15a-3): «Шалгасан» tapped in «Сануулга» → «Шалгах»; NULL = still in that list
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class KmCheck(Base):

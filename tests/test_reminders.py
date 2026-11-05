@@ -28,7 +28,8 @@ from src.api.clock import get_today
 from src.api.config import PLACEHOLDER_PHONE, ConfigError, Contact, ReminderRules, reminder_contact, reminder_rules
 from src.api.db import get_session
 from src.api.main import create_app
-from src.api.reminders import is_due, km_check_message, message_mn, reminder_day, segment_of, sms_parts
+from src.api.reminders import (is_due, km_check_message, message_mn, messenger_link, reminder_day, segment_of,
+                               sms_parts)
 from src.api.routers.reminders import get_contact
 from src.cv import plate_reader as R
 from tests.test_api_data import pg  # noqa: F401  (Postgres: schema + 001 + 003 + sample data)
@@ -54,12 +55,15 @@ def default_rules(monkeypatch: pytest.MonkeyPatch) -> None:
 # ==========================================================================
 
 def test_message_exact_text_and_sms_parts() -> None:
-    """9.14a: Cyrillic = UCS-2 (70 per SMS, 67 per part): the live text is 3 parts (135 characters),
-    not "<= 160" as tested before. Shorter wordings are proposed to Ari; the text stays until he picks."""
+    """9.15a-3: TXT-1 B. Cyrillic = UCS-2 (70 per SMS, 67 per part): 2 parts with a usual plate / oil grade
+    (the 9.14a text was 3 parts, 135 characters)."""
     text = message_mn("1234 УБА", date(2026, 8, 10), "15W-40", CONTACT)
-    assert text == ("Сайн байна уу! 1234 УБА машины тосыг 2026.08.10-нд солиулсан (15W-40). "
-                    "Дахин солих хугацаа болж байна. Wolf Oil - Гео-Эксперт: 99000001")
-    assert (len(text), sms_parts(text)) == (135, 3)
+    assert text == ("Сайн байна уу! 1234 УБА: 2026.08.10-нд 15W-40 тос солиулсан. Дахин солих хугацаа боллоо. "
+                    "Wolf Oil: 99000001")
+    assert (len(text), sms_parts(text)) == (107, 2)
+    assert "Гео-Эксперт" not in text
+    long_oil = message_mn("1234 УБА", date(2026, 8, 10), WORST_OIL, Contact("Geo-Expert", WORST_PHONE, False))
+    assert sms_parts(long_oil) == 2, len(long_oil)          # the longest oil name seen + "+976" phone
 
 
 @pytest.mark.parametrize(("text", "parts"), [
@@ -79,13 +83,32 @@ WORST_ID, WORST_PHONE, WORST_OIL = "HT-1234-AB", "+97699112233", "Shell Rimula R
 
 
 def test_km_check_text_exact_and_at_most_2_sms() -> None:
+    """Without a link (Messenger off): the 9.14a text, ending «Wolf Oil: {contact}» (9.15a-3)."""
     text = km_check_message("1234 УБА", date(2026, 8, 10), CONTACT)
     assert text == ("Сайн байна уу! 1234 УБА машины тосыг 2026.08.10-нд солиулсан. Одоогийн км-ээ хариу "
-                    "бичнэ үү. Wolf Oil - Гео-Эксперт: 99000001")
-    assert (len(text), sms_parts(text)) == (125, 2)
+                    "бичнэ үү. Wolf Oil: 99000001")
+    assert (len(text), sms_parts(text)) == (111, 2)
     worst = km_check_message(WORST_ID, date(2026, 12, 31), Contact("Geo-Expert", WORST_PHONE, False))
     assert sms_parts(worst) == 2, len(worst)
-    assert len(message_mn("1234 УБА", date(2026, 8, 10), "Shell Rimula R4 X 15W-40", CONTACT)) <= 160
+
+
+PAGE = "WolfCenterMongolia"  # the real Page username (18 characters, PM brief 9.15a-3)
+REF = "K7Q2M9XA"            # made up, same form as messenger_refs.ref
+
+
+def test_km_check_text_with_messenger_link_is_2_sms() -> None:
+    """9.15a-3 (P4): the m.me link, no date, 2 parts with a real plate (8 characters) and an 8-digit phone."""
+    link = messenger_link(PAGE, REF)
+    assert link == "https://m.me/WolfCenterMongolia?ref=K7Q2M9XA"
+    text = km_check_message("1234 УБА", date(2026, 8, 10), CONTACT, link)
+    assert text == ("Сайн байна уу! 1234 УБА машины одоогийн км-ээ хариу бичнэ үү эсвэл "
+                    "https://m.me/WolfCenterMongolia?ref=K7Q2M9XA Wolf Oil: 99000001")
+    assert (len(text), sms_parts(text)) == (130, 2)
+    assert "2026.08.10" not in text and "Гео-Эксперт" not in text
+    # 4 characters left: a 10-character fleet number AND a "+976" phone together would be 3 parts
+    assert sms_parts(km_check_message(WORST_ID, date(2026, 8, 10), CONTACT, link)) == 2
+    assert sms_parts(km_check_message("1234 УБА", date(2026, 8, 10), Contact("G", WORST_PHONE, False), link)) == 2
+    assert sms_parts(km_check_message(WORST_ID, date(2026, 8, 10), Contact("G", WORST_PHONE, False), link)) == 3
 
 
 def test_contact_phone_wins_then_old_setting_then_placeholder() -> None:

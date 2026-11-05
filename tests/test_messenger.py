@@ -55,6 +55,9 @@ def at(day: int, hour: int, minute: int = 0) -> datetime:
 
 MESSAGE_TIME = at(11, 10)                      # the km message (today in the tests = 10-12)
 NOW = at(12, 12)
+# 9.15a-3: the unknown-truck reply with the test client's CONTACT_PHONE (tests/test_reminders.py CONTACT)
+UNKNOWN_TRUCK = ("Энэ дугаар манай бүртгэлд олдсонгүй. Дугаараа шалгаад дахин бичнэ үү, эсвэл 99000001 "
+                 "руу залгана уу.")
 
 
 # ==========================================================================
@@ -510,7 +513,7 @@ def test_not_a_km_message_gets_no_reply(bot: tuple[TestClient, FakeSender], pg: 
 def test_unknown_plate_without_ref_stores_nothing(bot: tuple[TestClient, FakeSender], pg: Connection) -> None:  # noqa: F811
     client, sender = bot
     send_events(client, message("0000ААА 112000"))
-    assert sender.texts() == [texts.STAFF_WILL_CHECK]
+    assert sender.texts() == [UNKNOWN_TRUCK]                               # 9.15a-3: check the plate or call
     assert count(pg, "SELECT count(*) FROM messenger_pending") == 0
 
 
@@ -560,7 +563,7 @@ def test_ref_of_an_older_service_does_not_count(bot: tuple[TestClient, FakeSende
     send_events(client, referral(ref_of(pg, a["service"]["id"])))
     new_service(client, "9988 НАА", "2026-09-01", km=110_000)             # a new cycle: the old link is stale
     send_events(client, message("0000ААА 120000"))
-    assert sender.texts()[-1] == texts.STAFF_WILL_CHECK
+    assert sender.texts()[-1] == UNKNOWN_TRUCK
 
 
 def test_messenger_reading_can_be_undone(bot: tuple[TestClient, FakeSender], pg: Connection) -> None:  # noqa: F811

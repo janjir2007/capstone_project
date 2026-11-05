@@ -49,7 +49,7 @@ SQL_FILES = ["schema.sql", "migrations/001_destinations.up.sql", "migrations/002
              "migrations/008_artlab.up.sql", "migrations/009_sync_runs_account.up.sql",
              "migrations/010_km_readings.up.sql",
              # 9.15a: one ref per sample service (POST /services adds one for new ones)
-             "migrations/011_messenger.up.sql"]
+             "migrations/011_messenger.up.sql", "migrations/012_reading_reviewed.up.sql"]
 TODAY = date(2026, 10, 12)
 CONTACT = Contact(name="Geo-Expert", phone="99000001", is_placeholder=False)
 

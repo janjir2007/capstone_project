@@ -1,6 +1,6 @@
 # API contract — data, model and reminder endpoints (tasks 4.2, 4.2b, 4.3, 4.4)
 
-- **Version:** 0.20 (task 9.15a-2, 2026-11-04) · **Owner:** Backend Engineer
+- **Version:** 0.21 (task 9.15a-3, 2026-11-05) · **Owner:** Backend Engineer
 - Extends PROJECT_STATE §8 "API contract" with exact fields. The live, always
   current version is the OpenAPI page of the running API: `http://localhost:8000/docs`.
 - Field names follow [`data_dictionary.md`](data_dictionary.md). Code:
@@ -286,7 +286,7 @@ latest service has no `odometer_km` (mine trucks, engine hours only) and phones 
 | `basis` | `pace` \| `fixed` | v0.18 |
 | `segment` | `new` \| `returning` \| `loyal` \| `at_risk` | segment on `as_of` (the rule above); the UI shows «Эрсдэлтэй» by it |
 | `messenger_ready` | bool | v0.20 (task 9.15a): an unused, unexpired One-Time Notification token exists for this truck → `POST /reminders/{service_id}/messenger` can send it. Always **false** while `MESSENGER_OTN_ENABLED=false` |
-| `message_mn` | string | the Mongolian text (`src/api/reminders.py`): plate, last change date, oil, "Wolf Oil - Гео-Эксперт: " + `CONTACT_PHONE` (approved by PM + Ari). Cyrillic = UCS-2 SMS: **3 parts** with a usual plate / oil grade (v0.18 measured with `sms_parts`; was described as "≤ 160 characters") |
+| `message_mn` | string | the Mongolian text (`src/api/reminders.py`). v0.21 (TXT-1 B): «Сайн байна уу! {plate}: {date}-нд {oil} тос солиулсан. Дахин солих хугацаа боллоо. Wolf Oil: {CONTACT_PHONE}» — **2 SMS parts** (UCS-2) with a usual plate, also with the longest oil name seen (v0.18–0.20: 3 parts, with «Гео-Эксперт») |
 
 Removed in v0.15: `stage`. Removed in v0.13: `method`, `buffer_days`, `predicted_date`, `days_left`, `status`.
 
@@ -319,6 +319,18 @@ would store and the Pace after it. The UI's «Км бүртгэх» confirm step
 `DELETE /readings/{id}` removes a driver reading (a typo; v0.20: also `source = messenger`, «Буцаах», RISK-34):
 **204** · **404** unknown · **422** `source = service` (a service's own reading is part of the service).
 
+### `GET /readings/flagged` · `POST /readings/{id}/reviewed` (v0.21, task 9.15a-3)
+«Сануулга» → «Шалгах (N)»: Messenger readings the API stored **flagged** (any `flag_reason`, e.g.
+`plate_mismatch`) that nobody marked checked yet. Needs migration 012 (`odometer_readings.reviewed_at`).
+
+- `GET /readings/flagged` → **200** `{readings: FlaggedReading[]}`, newest first. FlaggedReading =
+  `{reading_id, vehicle_id, identifier_type, identifier, company, unit, value, reading_date, flag_reason,
+  phone, driver_name, created_at}`; `phone` / `driver_name` = of the service the reading counts from.
+  Manual readings are not listed (the oil changer saw the warning when typing them).
+- `POST /readings/{id}/reviewed` («Шалгасан») → **200** `{reading_id, reviewed_at}`; idempotent (a second call
+  keeps the first `reviewed_at`). The reading **stays flagged** (never used for the pace); it only leaves the
+  list. **404** unknown · **422** not a flagged Messenger reading.
+
 ### `GET /km-checks/due?as_of=` · `POST /km-checks/{service_id}/sent` (v0.18, task 9.14a)
 «Км шалгах»: asks the driver for his current km. **Not a reminder** (own table `km_checks`, not in
 `reminders_sent`, not in `reminders_sent` of `GET /stats/period`). A truck is listed on `as_of` when its
@@ -329,9 +341,13 @@ the truck a pace: it leaves this list and its reminder day moves.
 
 - **200** `{as_of, contact_is_placeholder, checks: KmCheck[]}`; KmCheck = `{service_id, vehicle_id,
   identifier_type, identifier, plate_normalized, company, phone, driver_name, last_change_date, odometer_km,
-  days_since, check_on, reminder_on, segment, message_mn}`. `message_mn` = «Сайн байна уу! {plate} машины
-  тосыг {date}-нд солиулсан. Одоогийн км-ээ хариу бичнэ үү. Wolf Oil - Гео-Эксперт: {CONTACT_PHONE}»
-  (2 SMS parts, also with a 10-character plate and a 12-character phone)
+  days_since, check_on, reminder_on, segment, message_mn}`. `message_mn` (v0.21):
+  - `MESSENGER_ENABLED=true` + `MESSENGER_PAGE_USERNAME` set → «Сайн байна уу! {plate} машины одоогийн км-ээ
+    хариу бичнэ үү эсвэл https://m.me/{MESSENGER_PAGE_USERNAME}?ref={ref} Wolf Oil: {CONTACT_PHONE}» (no date;
+    `ref` = the service's `messenger_refs` code). 2 SMS parts with an 8-character plate, 8-digit phone and an
+    18-character username (130 of 134); a 10-character fleet number **and** a "+976" phone together → 3 parts.
+  - otherwise → «Сайн байна уу! {plate} машины тосыг {date}-нд солиулсан. Одоогийн км-ээ хариу бичнэ үү.
+    Wolf Oil: {CONTACT_PHONE}» (2 SMS parts; v0.18–0.20 ended «Wolf Oil - Гео-Эксперт: …»)
 
 `POST /km-checks/{service_id}/sent`: **201** `{id, service_id, vehicle_id, phone, message_text, channel:
 "manual", check_on, sent_at, already_sent: false}` · **200** already marked (that row, `already_sent: true`)
@@ -366,8 +382,13 @@ What an event does:
 
 Which truck: the typed plate's truck if it is in our DB; else the truck of the PSID's newest ref link whose
 service is still that truck's latest. A typed plate ≠ that ref truck (or unknown with a ref truck) →
-saved **flagged `plate_mismatch`**. No truck at all, or the checks refuse the day → «Баярлалаа, манай
-ажилтан шалгаад холбогдоно.», nothing stored.
+saved **flagged `plate_mismatch`**. No truck at all (v0.21) → «Энэ дугаар манай бүртгэлд олдсонгүй. Дугаараа
+шалгаад дахин бичнэ үү, эсвэл {CONTACT_PHONE} руу залгана уу.», nothing stored. The checks refuse the day →
+«Баярлалаа, манай ажилтан шалгаад холбогдоно.», nothing stored.
+
+Get Started button (v0.21): every postback is handled as above, whatever its payload.
+`scripts/messenger_get_started.py` prints the Page's current payload + greeting and sets `GET_STARTED`
+(+ a short greeting if none) only when the Page has no Get Started button.
 
 `POST /reminders/{service_id}/messenger` — internal (behind the login). Sends the reminder text
 (`message_mn`) with the truck's One-Time Notification token, only when the oil changer taps the button (P2).
@@ -454,3 +475,4 @@ The only API routes besides `/health` that Caddy makes public. Not used by the U
 | 0.18 | 2026-11-04 | Task 9.14a-2: per-truck km/day engine. ServiceOut `target_km` now **stored** (+ `interval_km`; `OIL_INTERVAL_KM` default 12000, was 15000; older services 15000 by migration 010). VehicleCard `pace` + `readings` (additive). `GET /reminders/due`: `send_on` = the km/day reminder day when the pace is known (meaning change; else 75 days as before) + `next_due_date`, `rate_per_day`, `pace_source`, `basis` (additive); `target_km` nullable. New: `POST /vehicles/{id}/readings`, `DELETE /readings/{id}`, `GET /km-checks/due`, `POST /km-checks/{service_id}/sent`. `GET /stats/period` + `km_checks_sent` (additive). Settings `REMINDER_LEAD_DAYS` (5), `KM_CHECK_DAYS` (34) |
 | 0.19 | 2026-11-04 | Task 9.14a-3: `POST /vehicles/{id}/readings/preview` (additive): what a reading would give, nothing stored — for the UI's confirm step |
 | 0.20 | 2026-11-04 | Task 9.15a-2: Messenger km bot, **additive, off by default**. New `GET/POST /messenger/webhook` (public via Caddy, signed only) and `POST /reminders/{service_id}/messenger` (OTN, behind `MESSENGER_OTN_ENABLED`). `messenger_ready` in `GET /reminders/due` items. Reading `source` `messenger` now written; `flag_reason` + `plate_mismatch`; reminder `channel` + `messenger`. `DELETE /readings/{id}` also removes `messenger` readings. Settings `MESSENGER_ENABLED`, `MESSENGER_OTN_ENABLED`, `META_*`. Needs migration 011 (run `scripts.migrate` before the new API starts). KmCheck `message_mn` **unchanged** (the m.me text is 9.15a-3) |
+| 0.21 | 2026-11-05 | Task 9.15a-3: new `GET /readings/flagged`, `POST /readings/{id}/reviewed` (needs migration 012, `reviewed_at`). Reminder `message_mn` = TXT-1 B (2 SMS, no «Гео-Эксперт»). KmCheck `message_mn` with the m.me link when `MESSENGER_ENABLED=true` + `MESSENGER_PAGE_USERNAME` (new optional setting), else the dated text ending «Wolf Oil: {contact}». Bot reply for an unknown plate: «Энэ дугаар манай бүртгэлд олдсонгүй. … {contact} руу залгана уу.» |

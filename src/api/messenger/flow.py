@@ -27,7 +27,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from src.api.clock import ULAANBAATAR
-from src.api.config import MessengerSettings, ReminderRules
+from src.api.config import Contact, MessengerSettings, ReminderRules
 from src.api.history import service_records
 from src.api.messenger import texts
 from src.api.messenger.parse import KmMessage, is_no, is_yes, parse_km_message
@@ -117,11 +117,12 @@ def link_ref(session: Session, psid: str, code: str | None, when: datetime) -> b
 # ---------------------------------------------------------------- steps
 
 
-def on_km_message(session: Session, psid: str, km: KmMessage, when: datetime, today: date) -> Result:
+def on_km_message(session: Session, psid: str, km: KmMessage, when: datetime, today: date,
+                  contact: Contact) -> Result:
     """Check the reading WITHOUT saving, keep plate + km, ask «Зөв үү?»."""
     truck = which_truck(session, psid, km.plate)
-    if truck is None:
-        return "unknown_truck", [text_to(psid, texts.STAFF_WILL_CHECK)]
+    if truck is None:  # 9.15a-3: ask to check the plate, or call the oil changer
+        return "unknown_truck", [text_to(psid, texts.unknown_truck(contact.phone))]
     day = when.astimezone(ULAANBAATAR).date()
     try:
         new_reading(session, truck[0], ReadingIn(value=km.km, reading_date=day), today, "messenger")
@@ -143,7 +144,7 @@ def has_open_token(session: Session, psid: str, vehicle_id: int, now: datetime) 
 
 
 def on_answer(session: Session, psid: str, yes: bool, when: datetime, today: date, rules: ReminderRules,
-              settings: MessengerSettings) -> Result:
+              settings: MessengerSettings, contact: Contact) -> Result:
     """«Тийм» / «Үгүй» to the open question."""
     pending = session.get(MessengerPending, psid)
     if pending is None:
@@ -156,7 +157,7 @@ def on_answer(session: Session, psid: str, yes: bool, when: datetime, today: dat
         return "expired", [text_to(psid, texts.WRITE_AGAIN)]
     truck = which_truck(session, psid, plate)
     if truck is None:
-        return "unknown_truck", [text_to(psid, texts.STAFF_WILL_CHECK)]
+        return "unknown_truck", [text_to(psid, texts.unknown_truck(contact.phone))]
     vehicle_id, mismatch = truck
     try:
         saved = store_reading(session, vehicle_id, ReadingIn(value=value, reading_date=day), today, rules,
@@ -191,8 +192,8 @@ def on_optin(session: Session, psid: str, optin: dict[str, Any], when: datetime)
 
 
 def handle_event(session: Session, event: dict[str, Any], settings: MessengerSettings, rules: ReminderRules,
-                 today: date) -> Result:
-    """Route one ``entry[].messaging[]`` event."""
+                 today: date, contact: Contact) -> Result:
+    """Route one ``entry[].messaging[]`` event. ``contact`` = the oil changer's phone (unknown-truck reply)."""
     psid = (event.get("sender") or {}).get("id")
     if not isinstance(psid, str) or not psid.isdigit():
         return "no_sender", []
@@ -206,14 +207,14 @@ def handle_event(session: Session, event: dict[str, Any], settings: MessengerSet
         payload = (message.get("quick_reply") or {}).get("payload")
         text = message.get("text") if isinstance(message.get("text"), str) else None
         if payload == texts.YES_PAYLOAD or (payload is None and is_yes(text)):
-            return on_answer(session, psid, True, when, today, rules, settings)
+            return on_answer(session, psid, True, when, today, rules, settings, contact)
         if payload == texts.NO_PAYLOAD or (payload is None and is_no(text)):
-            return on_answer(session, psid, False, when, today, rules, settings)
+            return on_answer(session, psid, False, when, today, rules, settings, contact)
         km = parse_km_message(text)
         if km is None:
             return "not_km", []  # a person answers it in the Page inbox
-        return on_km_message(session, psid, km, when, today)
-    if "postback" in event:  # Get Started (a new thread); the ref comes inside it
+        return on_km_message(session, psid, km, when, today, contact)
+    if "postback" in event:  # Get Started (texts.GET_STARTED_PAYLOAD, a new thread); the ref comes inside it
         referral = (event.get("postback") or {}).get("referral") or {}
         linked = link_ref(session, psid, referral.get("ref"), when)
         return ("linked" if linked else "greeted"), [text_to(psid, texts.GREETING)]

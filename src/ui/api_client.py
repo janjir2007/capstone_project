@@ -219,6 +219,16 @@ def delete_reading(reading_id: int) -> None:
     _request("DELETE", f"/readings/{reading_id}")
 
 
+def flagged_readings() -> list[dict]:
+    """GET /readings/flagged -> flagged Messenger readings not checked yet, newest first (task 9.15a-3)."""
+    return (_request("GET", "/readings/flagged") or {}).get("readings") or []
+
+
+def mark_reading_reviewed(reading_id: int) -> dict:
+    """POST /readings/{id}/reviewed -> {reading_id, reviewed_at}: «Шалгасан» (idempotent)."""
+    return _request("POST", f"/readings/{reading_id}/reviewed")
+
+
 def km_checks_due(as_of: str | None = None) -> dict:
     """GET /km-checks/due -> {as_of, contact_is_placeholder, checks: [KmCheck]} (contract v0.18)."""
     return _request("GET", "/km-checks/due", params={"as_of": as_of} if as_of else None)

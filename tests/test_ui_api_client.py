@@ -196,3 +196,14 @@ def test_mark_reminder_not_latest(requests_seen) -> None:
                                                    "latest_service_id": 9}}))
     with pytest.raises(api_client.NotLatestService):
         api_client.mark_reminder_sent(7)
+
+
+def test_flagged_readings_and_mark_reviewed(requests_seen) -> None:
+    """9.15a-3: GET /readings/flagged -> the list; POST /readings/{id}/reviewed."""
+    seen, set_reply = requests_seen
+    set_reply(httpx.Response(200, json={"readings": [{"reading_id": 7}]}))
+    assert api_client.flagged_readings() == [{"reading_id": 7}]
+    assert (seen[0].method, seen[0].url.path) == ("GET", "/readings/flagged")
+    set_reply(httpx.Response(200, json={"reading_id": 7, "reviewed_at": "2026-11-05T10:00:00+08:00"}))
+    assert api_client.mark_reading_reviewed(7)["reading_id"] == 7
+    assert (seen[1].method, seen[1].url.path) == ("POST", "/readings/7/reviewed")

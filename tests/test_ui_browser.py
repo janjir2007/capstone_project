@@ -524,7 +524,7 @@ def test_card_km_section_and_form_fit_phone(ui_url, phone_page, shot_dir) -> Non
 
 
 def test_reminder_and_km_check_lists_fit_phone(ui_url, phone_page, shot_dir) -> None:
-    """«Сануулга»: the switch is full width with 44 px segments; both lists fit 390 px."""
+    """«Сануулга»: the switch is full width with 44 px segments; all three lists fit 390 px (9.15a-3)."""
     phone_page.goto(ui_url + "/reminders")
     phone_page.wait_for_selector("text=Гараар илгээнэ", timeout=20000)
     phone_page.wait_for_timeout(800)
@@ -539,3 +539,13 @@ def test_reminder_and_km_check_lists_fit_phone(ui_url, phone_page, shot_dir) -> 
     phone_page.locator(".st-key-rem_tab button", has_text="Км шалгах").click()
     phone_page.wait_for_selector("text=Км асуух (", timeout=10000)
     _check_phone_width(phone_page, shot_dir, "screen_km_checks")
+    # 9.15a-3: third segment «Шалгах (N)»; every label shows in full (not cut with «…») at 390 px
+    labels = phone_page.locator(".st-key-rem_tab button p")
+    for i in range(labels.count()):
+        assert labels.nth(i).evaluate("e => e.scrollWidth <= e.clientWidth"), labels.nth(i).inner_text()
+    buttons = phone_page.locator(".st-key-rem_tab button")
+    if buttons.count() < 3:
+        pytest.skip("UI before 9.15a-3 (no «Шалгах» list)")
+    buttons.nth(2).click()  # by position: has_text="Шалгах" would also match «Км шалгах»
+    phone_page.wait_for_selector("text=Шалгах км (", timeout=10000)
+    _check_phone_width(phone_page, shot_dir, "screen_flagged_readings")

@@ -980,16 +980,30 @@ def next_due_text(card: dict | None) -> str | None:
     return f"~{due}" if due else None
 
 
+def flag_reason_text(reason: str | None, unit: str = "km") -> str:
+    """Why a reading is not used, short: «Өмнөхөөс бага буюу тэнцүү»; '' when usable.
+    9.15a-3: plate_mismatch (Messenger plate <> the truck of the driver's link) = «Дугаар таарахгүй»."""
+    if reason is None:
+        return ""
+    return {
+        "not_higher": "Өмнөхөөс бага буюу тэнцүү",
+        "too_slow": "Өдөрт 20 км-ээс бага" if unit == "km" else "Хэт бага",
+        "too_fast": "Өдөрт 1 200 км-ээс их" if unit == "km" else "Өдөрт 24 цагаас их",
+        "plate_mismatch": "Дугаар таарахгүй",
+    }.get(reason, reason)
+
+
 def flag_text(reason: str | None, unit: str = "km") -> str:
     """Why a reading is not used, e.g. «Өмнөхөөс бага буюу тэнцүү — тооцоонд ашиглахгүй»; '' when usable."""
     if reason is None:
         return ""
-    why = {
-        "not_higher": "Өмнөхөөс бага буюу тэнцүү",
-        "too_slow": "Өдөрт 20 км-ээс бага" if unit == "km" else "Хэт бага",
-        "too_fast": "Өдөрт 1 200 км-ээс их" if unit == "km" else "Өдөрт 24 цагаас их",
-    }.get(reason, reason)
-    return f"{why} — {NOT_USED_TEXT}"
+    return f"{flag_reason_text(reason, unit)} — {NOT_USED_TEXT}"
+
+
+def flagged_meta_text(reading: dict) -> str:
+    """9.15a-3 «Шалгах» row: '871 234 км · 2026-11-04' (mine trucks: 'мц')."""
+    unit = "км" if reading.get("unit", "km") == "km" else "мц"
+    return f"{format_number(reading.get('value'), unit)} · {reading.get('reading_date') or NOT_GIVEN}"
 
 
 def reading_text(reading: dict) -> str:

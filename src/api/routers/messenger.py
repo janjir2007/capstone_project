@@ -29,7 +29,7 @@ from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
 from src.api.clock import get_today
-from src.api.config import MessengerSettings, ReminderRules
+from src.api.config import Contact, MessengerSettings, ReminderRules
 from src.api.db import get_session
 from src.api.history import driver_readings, schedule_of, service_records
 from src.api.messenger.flow import handle_event
@@ -92,7 +92,7 @@ def deliver(sender: Sender | None, out: Outgoing) -> None:
 
 
 def process(session: Session, payload: dict[str, Any], messenger: MessengerSettings, rules: ReminderRules,
-            today: date) -> list[Outgoing]:
+            today: date, contact: Contact) -> list[Outgoing]:
     """Every event of a (signed) delivery, each in its own transaction. Returns the replies."""
     replies: list[Outgoing] = []
     for entry in payload.get("entry") or []:
@@ -101,7 +101,7 @@ def process(session: Session, payload: dict[str, Any], messenger: MessengerSetti
             continue
         for event in entry.get("messaging") or []:
             try:
-                result, out = handle_event(session, event, messenger, rules, today)
+                result, out = handle_event(session, event, messenger, rules, today, contact)
                 session.commit()
             except Exception as exc:  # noqa: BLE001 — class only: a database error could hold a PSID
                 session.rollback()
@@ -114,7 +114,7 @@ def process(session: Session, payload: dict[str, Any], messenger: MessengerSetti
 
 @router.post("/messenger/webhook", response_class=PlainTextResponse)
 async def receive_webhook(request: Request, background: BackgroundTasks, session: SessionDep,
-                          messenger: MessengerDep, rules: RulesDep, today: TodayDep,
+                          messenger: MessengerDep, rules: RulesDep, today: TodayDep, contact: ContactDep,
                           sender: SenderDep) -> PlainTextResponse:
     """Meta's events. 413 body > 64 KB · 403 bad signature · 200 otherwise (also when disabled)."""
     length = request.headers.get("content-length")
@@ -134,7 +134,7 @@ async def receive_webhook(request: Request, background: BackgroundTasks, session
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "not JSON") from None
     if not isinstance(payload, dict) or payload.get("object") != "page":
         return PlainTextResponse("EVENT_RECEIVED")
-    replies = await run_in_threadpool(process, session, payload, messenger, rules, today)
+    replies = await run_in_threadpool(process, session, payload, messenger, rules, today, contact)
     for out in replies:
         background.add_task(deliver, sender, out)
     return PlainTextResponse("EVENT_RECEIVED")

@@ -10,6 +10,8 @@ odometer (not a mine truck) and its phone did not ask to stop. It leaves the lis
 with POST /vehicles/{id}/readings, which moves the reminder (src/api/routers/readings.py).
 A km check is NOT a reminder: its own table (km_checks), not in reminders_sent nor in the
 «Сануулга илгээсэн» count. No SMS is sent by the API: the manager sends the text and marks it sent.
+Task 9.15a-3: with MESSENGER_ENABLED=true and MESSENGER_PAGE_USERNAME set, the text carries the
+service's m.me link (messenger_refs) and no date (2 SMS parts); otherwise the text with the date.
 """
 
 from datetime import date, timedelta
@@ -23,9 +25,10 @@ from sqlalchemy.orm import Session, selectinload
 from src.api.clock import get_today
 from src.api.db import get_session
 from src.api.history import driver_readings, records_as_of, schedule_of, service_records
-from src.api.models import KmCheck, ServiceRecord, Vehicle
-from src.api.reminders import days_since, km_check_message, segment_of
-from src.api.routers.reminders import ContactDep, RulesDep, stopped_phones
+from src.api.config import MessengerSettings
+from src.api.models import KmCheck, MessengerRef, ServiceRecord, Vehicle
+from src.api.reminders import days_since, km_check_message, messenger_link, segment_of
+from src.api.routers.reminders import ContactDep, MessengerDep, RulesDep, stopped_phones
 from src.api.schemas import KmCheckDue, KmCheckOut, KmChecksDue
 
 router = APIRouter(prefix="/km-checks", tags=["km checks"])
@@ -34,12 +37,23 @@ SessionDep = Annotated[Session, Depends(get_session)]
 TodayDep = Annotated[date, Depends(get_today)]
 
 
+def service_links(session: Session, messenger: MessengerSettings, service_ids: list[int]) -> dict[int, str]:
+    """{service_id: its m.me link}; empty while Messenger is off or the Page username is not set.
+    A service without a ref row (none for mine trucks) gets the text without a link."""
+    if not (messenger.enabled and messenger.page_username and service_ids):
+        return {}
+    refs = session.execute(select(MessengerRef.service_id, MessengerRef.ref)
+                           .where(MessengerRef.service_id.in_(service_ids))).all()
+    return {sid: messenger_link(messenger.page_username, ref) for sid, ref in refs}
+
+
 @router.get("/due", response_model=KmChecksDue)
 def due_km_checks(
     session: SessionDep,
     today: TodayDep,
     contact: ContactDep,
     rules: RulesDep,
+    messenger: MessengerDep,
     as_of: Annotated[date | None, Query(description="Default: today (Ulaanbaatar). Uses only services and "
                                                     "readings up to this day")] = None,
 ) -> KmChecksDue:
@@ -59,6 +73,7 @@ def due_km_checks(
              and not (service.driver_phone and service.driver_phone in stops)]
     vehicles = {v.id: v for v in session.scalars(
         select(Vehicle).options(selectinload(Vehicle.company)).where(Vehicle.id.in_(asked))).all()}
+    links = service_links(session, messenger, [latest[vid].id for vid in asked])
     checks = []
     for vid in asked:
         vehicle, service, plan = vehicles[vid], latest[vid], plans[vid]
@@ -69,7 +84,7 @@ def due_km_checks(
             odometer_km=service.odometer_km, days_since=days_since(service.service_date, as_of),
             check_on=plan.km_check_on, reminder_on=plan.reminder_on,
             segment=segment_of(len(records[vid]), service.service_date, as_of, rules),
-            message_mn=km_check_message(vehicle.identifier, service.service_date, contact),
+            message_mn=km_check_message(vehicle.identifier, service.service_date, contact, links.get(service.id)),
         ))
     checks.sort(key=lambda c: (c.check_on, c.vehicle_id))
     return KmChecksDue(as_of=as_of, contact_is_placeholder=contact.is_placeholder, checks=checks)
@@ -83,7 +98,7 @@ def _already(response: Response, row: KmCheck) -> KmCheckOut:
 @router.post("/{service_id}/sent", response_model=KmCheckOut, status_code=status.HTTP_201_CREATED,
              responses={200: {"description": "Already marked before: that row, unchanged"}})
 def mark_km_check_sent(service_id: int, response: Response, session: SessionDep, today: TodayDep,
-                       contact: ContactDep, rules: RulesDep) -> KmCheckOut:
+                       contact: ContactDep, rules: RulesDep, messenger: MessengerDep) -> KmCheckOut:
     """Store "km check sent" for this service. Idempotent: a second call returns the stored row (200).
 
     404 unknown service · 409 a newer service exists (the list is out of date) · 422 the check day has
@@ -110,8 +125,10 @@ def mark_km_check_sent(service_id: int, response: Response, session: SessionDep,
     if service.driver_phone and service.driver_phone in stopped_phones(session):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "this phone asked for no more messages")
     vehicle = session.get(Vehicle, service.vehicle_id)
+    link = service_links(session, messenger, [service_id]).get(service_id)
     row = KmCheck(vehicle_id=service.vehicle_id, service_id=service_id, phone=service.driver_phone,
-                  message_text=km_check_message(vehicle.identifier, service.service_date, contact), check_on=check_on)
+                  message_text=km_check_message(vehicle.identifier, service.service_date, contact, link),
+                  check_on=check_on)
     session.add(row)
     try:
         session.commit()

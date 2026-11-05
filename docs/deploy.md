@@ -422,11 +422,11 @@ dc build
 dc run --rm api python -m scripts.migrate        # applies 011 — BEFORE `up`
 dc up -d                                         # api + caddy pick up the new code / Caddyfile
 dc restart caddy                                 # re-reads the Caddyfile (mounted read-only)
-curl -s -o /dev/null -w "%{http_code}\n" "https://<DOMAIN>/messenger/webhook?hub.mode=subscribe&hub.verify_token=x&hub.challenge=1"
+curl -s -o /dev/null -w "%{http_code}\n" "https://app.geoexpert.mn/messenger/webhook?hub.mode=subscribe&hub.verify_token=x&hub.challenge=1"
 #   403 = public path reached the API, wrong token refused
-curl -s -o /dev/null -w "%{http_code}\n" -X POST https://<DOMAIN>/messenger/webhook -d '{}'
+curl -s -o /dev/null -w "%{http_code}\n" -X POST https://app.geoexpert.mn/messenger/webhook -d '{}'
 #   403 = unsigned POST refused
-curl -s -o /dev/null -w "%{http_code}\n" https://<DOMAIN>/vehicles/1   # 302: data routes still private
+curl -s -o /dev/null -w "%{http_code}\n" https://app.geoexpert.mn/vehicles/1   # 302: data routes still private
 ```
 
 Daily cleanup (event ids > 7 days, expired «Зөв үү?» questions), once:
@@ -450,8 +450,8 @@ dc exec -T db psql -U oil -d oil_change -c "DELETE FROM schema_migrations WHERE 
 
 ### Meta set-up (after the deploy above; plan §8)
 
-1. Confirm you are admin of the Geo-Expert Facebook Page. Note the Page **username** (≤ 16 characters, for
-   the SMS link in 9.15a-3) and the **Page ID**.
+1. Confirm you are admin of the Geo-Expert Facebook Page. Note the **Page ID**. Page username =
+   `WolfCenterMongolia` (`MESSENGER_PAGE_USERNAME`, 9.15a-3).
 2. business.facebook.com → Settings → Security Center: is the business verified? (needed for App Review later)
 3. developers.facebook.com → Create app (Business) → add the **Messenger** product.
 4. Messenger settings → connect the Page → generate the **Page access token**.
@@ -460,15 +460,48 @@ dc exec -T db psql -U oil -d oil_change -c "DELETE FROM schema_migrations WHERE 
    `META_APP_SECRET`, `META_PAGE_TOKEN`, `META_PAGE_ID`, `META_GRAPH_VERSION`, `META_VERIFY_TOKEN`
    (`openssl rand -hex 32`), then `MESSENGER_ENABLED=true` → `dc up -d --force-recreate api`
    → `dc logs --tail 20 api` ("Application startup complete").
-7. Webhook: callback `https://<DOMAIN>/messenger/webhook`, Verify Token = the same value → Verify and save.
+7. Webhook: callback `https://app.geoexpert.mn/messenger/webhook` (= `DOMAIN` in the server `.env`; never the
+   old sslip.io address — Meta would get a redirect), Verify Token = the same value → Verify and save.
    Subscribe the Page to `messages`, `messaging_postbacks`, `messaging_referrals`.
 8. **Rotate the verify token** (P5): new `openssl rand -hex 32` in `.env` **and** in the dashboard field
    (verify again), `dc up -d --force-recreate api`.
-9. Set the **Get Started** button (a new thread delivers the ref only through it).
+9. Check the **Get Started** button (a new thread delivers the ref only through it):
+   `dc exec api python -m scripts.messenger_get_started` sets it only if missing (task 9.15a-3 section below).
 10. App roles → add testers; each accepts on developers.facebook.com. Until App Review only role users can
     use the bot (dev mode).
 11. OTN: check in the Page / app settings whether One-Time Notification can still be requested; tell the PM.
     Only then `MESSENGER_OTN_ENABLED=true` (its format is UNVERIFIED, test with a tester first).
+
+### Task 9.15a-3 deploy: m.me link in the km-check SMS, «Шалгах» list, Get Started
+
+- **Migration 012** (`odometer_readings.reviewed_at`, nullable; no data changed). Run it before `up`.
+- **New `.env` value** `MESSENGER_PAGE_USERNAME=WolfCenterMongolia` (the Page username, not a secret).
+  Empty = the km-check SMS has no link. The link is added only while `MESSENGER_ENABLED=true`.
+- Texts change: reminder = TXT-1 B (2 SMS), km check ends «Wolf Oil: {phone}», bot's unknown-plate reply.
+
+```bash
+cd ~/oil-change-predictor
+git pull
+grep -q '^MESSENGER_PAGE_USERNAME=' .env || echo 'MESSENGER_PAGE_USERNAME=WolfCenterMongolia' >> .env
+dc build
+dc run --rm api python -m scripts.migrate        # applies 012 — BEFORE `up`
+dc up -d
+dc logs --tail 20 api                            # "Application startup complete"
+```
+
+Get Started check (needs `META_PAGE_TOKEN` and `META_GRAPH_VERSION` in `.env`; Meta allows 10 calls per
+10 minutes). It reads the Page's current button + greeting and prints them (never the token). The bot
+answers every postback, so a button that is already there (e.g. set earlier by n8n) is **left as it is**;
+only a missing one is set (payload `GET_STARTED`, plus our greeting if the Page has none):
+
+```bash
+dc exec api python -m scripts.messenger_get_started
+#   current: get_started payload = '…'
+#   current: greeting = '…'
+#   OK: Get Started is set and the bot answers it (every postback) — nothing changed
+```
+
+`FAILED: HTTP 400, code 190 (OAuthException) …` = the Page token is wrong or expired (step 4 again).
 
 ### After every deploy or outage
 

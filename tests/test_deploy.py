@@ -224,7 +224,8 @@ def test_missing_report_fails(tmp_path: Path) -> None:
 # ==========================================================================
 
 MESSENGER_VARS = ("MESSENGER_ENABLED", "MESSENGER_OTN_ENABLED", "META_APP_SECRET", "META_VERIFY_TOKEN",
-                  "META_PAGE_TOKEN", "META_PAGE_ID", "META_GRAPH_VERSION")
+                  "META_PAGE_TOKEN", "META_PAGE_ID", "META_GRAPH_VERSION",
+                  "MESSENGER_PAGE_USERNAME")  # 9.15a-3: + the Page username
 
 
 def test_messenger_settings_reach_only_the_api_and_are_off_by_default() -> None:

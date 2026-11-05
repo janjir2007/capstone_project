@@ -5,6 +5,9 @@ POST   /vehicles/{vehicle_id}/readings/preview   same body: what it WOULD give, 
                                                  the UI's confirm step; the UI has no copy of the rules)
 DELETE /readings/{reading_id}                                            remove a manual / Messenger one
                                                                          (a typo, «Буцаах»)
+GET    /readings/flagged                                                 9.15a-3: flagged Messenger readings
+                                                                         not checked yet («Шалгах» list)
+POST   /readings/{reading_id}/reviewed                                   9.15a-3: «Шалгасан» (hides it there)
 
 A reading counts from the truck's LATEST service and must be after it (not on the same day) and not
 in the future. It is stored even when it cannot be used (status 'flagged' + flag_reason, PM 9.14a:
@@ -15,25 +18,28 @@ mismatch is stored flagged 'plate_mismatch' even when the number itself is plaus
 Mine trucks (engine hours only): the value is engine hours (hours per day is shown, no reminder).
 """
 
-from datetime import date
+from datetime import date, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from src.api.clock import get_today
+from src.api.clock import get_now, get_today
 from src.api.config import ReminderRules
 from src.api.db import get_session
 from src.api.history import driver_readings, meter, pace_out, schedule_of, service_records
-from src.api.models import OdometerReading, ServiceRecord, Vehicle
+from src.api.models import Company, OdometerReading, ServiceRecord, Vehicle
 from src.api.pace import Flag, Reading, new_reading_flag, rate
 from src.api.routers.reminders import RulesDep
-from src.api.schemas import ReadingIn, ReadingOut, ReadingPreview, ReadingSaved
+from src.api.schemas import (FlaggedReading, FlaggedReadings, ReadingIn, ReadingOut, ReadingPreview, ReadingReviewed,
+                             ReadingSaved)
 
 router = APIRouter(tags=["readings"])
 
 SessionDep = Annotated[Session, Depends(get_session)]
 TodayDep = Annotated[date, Depends(get_today)]
+NowDep = Annotated[datetime, Depends(get_now)]
 
 DRIVER_SOURCE_TYPES = ("manual", "messenger")  # the sources DELETE may remove (never 'service')
 
@@ -116,3 +122,47 @@ def remove_reading(reading_id: int, session: SessionDep) -> Response:
     session.delete(row)
     session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ---------------------------------------------------------------- 9.15a-3: «Шалгах» list
+
+
+def is_to_check(row: OdometerReading) -> bool:
+    """A reading the «Шалгах» list is about: from Messenger and flagged (any reason)."""
+    return row.source == "messenger" and row.status == "flagged"
+
+
+@router.get("/readings/flagged", response_model=FlaggedReadings)
+def flagged_readings(session: SessionDep) -> FlaggedReadings:
+    """Flagged Messenger readings nobody marked «Шалгасан» yet, newest first: the truck, the number,
+    why it was not used, and the driver phone of its service (to call him)."""
+    rows = session.execute(
+        select(OdometerReading, Vehicle, Company.name, ServiceRecord.driver_phone, ServiceRecord.driver_name)
+        .join(Vehicle, Vehicle.id == OdometerReading.vehicle_id)
+        .join(Company, Company.id == Vehicle.company_id)
+        .join(ServiceRecord, ServiceRecord.id == OdometerReading.service_id)
+        .where(OdometerReading.source == "messenger", OdometerReading.status == "flagged",
+               OdometerReading.reviewed_at.is_(None))
+        .order_by(OdometerReading.created_at.desc(), OdometerReading.id.desc())).all()
+    return FlaggedReadings(readings=[
+        FlaggedReading(reading_id=r.id, vehicle_id=v.id, identifier_type=v.identifier_type, identifier=v.identifier,
+                       company=company, unit=r.unit, value=float(r.value), reading_date=r.reading_date,
+                       flag_reason=r.flag_reason, phone=phone, driver_name=driver, created_at=r.created_at)
+        for r, v, company, phone, driver in rows])
+
+
+@router.post("/readings/{reading_id}/reviewed", response_model=ReadingReviewed)
+def mark_reviewed(reading_id: int, session: SessionDep, now: NowDep) -> ReadingReviewed:
+    """«Шалгасан»: hide the reading from GET /readings/flagged. It stays flagged (never used for the
+    pace). Idempotent: a second call keeps the first time. 404 unknown · 422 not a flagged Messenger
+    reading."""
+    row = session.get(OdometerReading, reading_id)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"reading {reading_id} not found")
+    if not is_to_check(row):
+        raise unprocessable("only flagged Messenger readings are checked here")
+    if row.reviewed_at is None:
+        row.reviewed_at = now
+        session.commit()
+        session.refresh(row)
+    return ReadingReviewed(reading_id=row.id, reviewed_at=row.reviewed_at)

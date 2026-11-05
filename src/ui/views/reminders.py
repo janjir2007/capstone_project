@@ -21,6 +21,9 @@
   reminder: plate, driver, days since · phone, «SMS илгээх» (sms: link with the km-check text) ->
   «Илгээсэн» (POST /km-checks/{id}/sent), «Залгах», «Дахиж илгээхгүй» (the same stop list), and
   «Хариу бүртгэх» = the truck's card with the km form open (the reply moves the reminder).
+- 9.15a-3: third tab «Шалгах (N)» (GET /readings/flagged): Messenger km readings the API flagged (never
+  used for the pace): plate, km · date, why (e.g. «Дугаар таарахгүй») and driver; «Залгах» (tel:) and
+  «Шалгасан» (POST /readings/{id}/reviewed) which hides the row. Nothing is deleted.
 """
 
 import html
@@ -162,6 +165,35 @@ def on_km_sent(service_id: int) -> None:
             st.session_state["rem_msg"] = ("success", f"Км асуусан гэж тэмдэглэлээ · {row.get('phone') or ''}")
 
 
+def on_reviewed(reading_id: int) -> None:
+    """«Шалгасан»: the flagged reading leaves the «Шалгах» list (it stays flagged in the database)."""
+    try:
+        api_client.mark_reading_reviewed(reading_id)
+    except api_client.ApiError as exc:
+        st.session_state["rem_msg"] = ("error", " ".join(logic.error_messages(exc.status, exc.detail)))
+    else:
+        st.session_state["rem_msg"] = ("success", "Шалгасан гэж тэмдэглэлээ.")
+
+
+def flagged_row(r: dict, first: bool) -> None:
+    """One flagged Messenger reading: plate, km · date, driver; the reason pill; «Залгах», «Шалгасан»."""
+    rid = r["reading_id"]
+    meta = " · ".join(t.replace(" ", "\u00a0") for t in  # number + unit / phone never split
+                      (logic.flagged_meta_text(r), logic.phone_text(r.get("phone")) or "утасгүй"))
+    common.html_block(
+        f'<div class="rem{"" if first else " sep"}"><span class="plate">{html.escape(r["identifier"])}</span>'
+        f'<div class="who"><div class="n">{html.escape(r.get("driver_name") or r.get("company") or "—")}</div>'
+        f'<div class="m">{html.escape(meta)}</div></div>'
+        f'<span class="pill-st" style="color:#A05A00;background:#FFF4E5">'
+        f'{html.escape(logic.flag_reason_text(r.get("flag_reason"), r.get("unit", "km")))}</span></div>'
+    )
+    with st.container(horizontal=True, key=f"chk_act_{rid}"):
+        if r.get("phone"):
+            st.link_button("Залгах", f"tel:{r['phone']}", width="stretch", icon=":material/call:")
+        st.button("Шалгасан", key=f"chk_done_{rid}", on_click=on_reviewed, args=(rid,),
+                  width="stretch", icon=":material/check:")
+
+
 def km_check_row(c: dict, first: bool) -> None:
     """One truck to ask for its km: like a reminder row, «Км асуух» pill, no Viber (9.14a-3)."""
     label, fg, bg = logic.KM_CHECK_PILL
@@ -211,10 +243,11 @@ if msg:
 common.html_block("""<style>
 .st-key-rem_tab, .st-key-rem_tab [data-testid="stButtonGroup"], .st-key-rem_tab div:has(> button) {width: 100% !important; max-width: none !important;}
 .st-key-rem_tab div:has(> button) {display: flex; background: #E9ECF1; border-radius: 12px; padding: 4px; gap: 4px !important;}
-.st-key-rem_tab button {flex: 1 1 0; min-width: 0; min-height: 44px; padding: 4px 8px !important; border-radius: 8px !important;
+.st-key-rem_tab button {flex: 1 1 0; min-width: 0; min-height: 44px; padding: 4px 2px !important; border-radius: 8px !important;
   background: transparent !important; color: var(--muted) !important; border: none !important; touch-action: manipulation;}
 .st-key-rem_tab button[aria-checked="true"] {background: #fff !important; color: var(--ink) !important; box-shadow: 0 1px 2px rgba(16,24,40,.08);}
-.st-key-rem_tab button p {font-size: 15px !important; font-weight: 500; white-space: nowrap;}
+/* 9.15a-3: 3 segments in 390 px: 14 px text, cut with «…» rather than push the page sideways */
+.st-key-rem_tab button p {font-size: 14px !important; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;}
 /* the pill goes under the driver line (as on the dashboard, 9.12): beside it the 390 px row broke
    «97 хоногийн өмнө» mid-word */
 .rem {display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 12px; row-gap: 6px;}
@@ -232,9 +265,17 @@ except api_client.ApiError as exc:
     km = None
     common.show_api_error(exc)
 
+try:
+    flagged: list[dict] | None = api_client.flagged_readings()
+except api_client.ApiError as exc:
+    flagged = None
+    if exc.status != 404:  # 404 = an API before 9.15a-3: the tab just shows 0
+        common.show_api_error(exc)
+
 reminders = (due or {}).get("reminders") or []
 checks = (km or {}).get("checks") or []
-tabs = {"rem": f"Сануулга ({len(reminders)})", "km": f"Км шалгах ({len(checks)})"}
+tabs = {"rem": f"Сануулга ({len(reminders)})", "km": f"Км шалгах ({len(checks)})",
+        "chk": f"Шалгах ({len(flagged or [])})"}
 tab = st.segmented_control("Жагсаалт", list(tabs), format_func=tabs.get, default="rem", required=True,
                            key="rem_tab", label_visibility="collapsed") or "rem"
 
@@ -306,7 +347,27 @@ def show_km_checks(km: dict) -> None:
             km_check_row(c, first=i == 0)
 
 
-if tab == "km":
+def show_flagged(rows: list[dict]) -> None:
+    """«Шалгах»: Messenger km readings the API did not use (9.15a-3), newest first (API order)."""
+    with st.container(key="card_chk_how"):
+        common.html_block(
+            f'<div class="act"><span class="act-ic green">{common.icon("send")}</span><div>'
+            '<div class="act-t">Messenger-ээс ирсэн км шалгана</div>'
+            '<div class="act-s">Эдгээр км тооцоонд орсонгүй. Жолоочтой холбогдож шалгаад «Шалгасан» дарна.'
+            '</div></div></div>'
+        )
+    st.subheader(f"Шалгах км ({len(rows)})")
+    with st.container(key="card_chk"):
+        if not rows:
+            common.html_block('<span class="muted">Шалгах км алга.</span>')
+        for i, r in enumerate(rows):
+            flagged_row(r, first=i == 0)
+
+
+if tab == "chk":
+    if flagged is not None:
+        show_flagged(flagged)
+elif tab == "km":
     if km is not None:
         show_km_checks(km)
 elif due is not None:

@@ -328,6 +328,36 @@ class ReadingSaved(BaseModel):
     pace: PaceOut
 
 
+class FlaggedReading(BaseModel):
+    """One flagged Messenger reading to check (9.15a-3, «Сануулга» → «Шалгах»)."""
+
+    reading_id: int
+    vehicle_id: int
+    identifier_type: Literal["plate", "fleet_no"]
+    identifier: str = Field(description="Plate / fleet number of the truck it is stored on")
+    company: str
+    unit: MeterUnit
+    value: float
+    reading_date: date
+    flag_reason: ReadingFlag
+    phone: str | None = Field(description="Driver phone of the service the reading counts from («Залгах»)")
+    driver_name: str | None
+    created_at: datetime
+
+
+class FlaggedReadings(BaseModel):
+    """GET /readings/flagged: newest first."""
+
+    readings: list[FlaggedReading]
+
+
+class ReadingReviewed(BaseModel):
+    """POST /readings/{id}/reviewed."""
+
+    reading_id: int
+    reviewed_at: datetime
+
+
 class VehicleCard(BaseModel):
     """GET /vehicles/{id}: everything the lookup screen shows about one truck."""
 

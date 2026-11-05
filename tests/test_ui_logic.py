@@ -822,9 +822,18 @@ def test_next_due_text() -> None:
     ("too_slow", "km", "Өдөрт 20 км-ээс бага — тооцоонд ашиглахгүй"),
     ("too_fast", "km", "Өдөрт 1 200 км-ээс их — тооцоонд ашиглахгүй"),
     ("too_fast", "hours", "Өдөрт 24 цагаас их — тооцоонд ашиглахгүй"),
+    ("plate_mismatch", "km", "Дугаар таарахгүй — тооцоонд ашиглахгүй"),     # 9.15a-3
 ])
 def test_flag_text(reason: str | None, unit: str, text: str) -> None:
     assert logic.flag_text(reason, unit) == text
+
+
+def test_flag_reason_and_flagged_meta_text() -> None:
+    """9.15a-3 «Шалгах» row: the short reason and 'km · date'."""
+    assert logic.flag_reason_text("plate_mismatch") == "Дугаар таарахгүй"
+    assert logic.flag_reason_text(None) == ""
+    assert logic.flagged_meta_text({"unit": "km", "value": 871234.0, "reading_date": "2026-11-04"}) == \
+        "871 234 км · 2026-11-04"
 
 
 def test_reading_text_and_preview_rows() -> None:
