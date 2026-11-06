@@ -1,54 +1,52 @@
 # PROJECT_STATE — "Oil Change Predictor" (Geo-Expert LLC)
 
-- **Version:** 2.21
-- **Last updated:** 2026-11-04
-- **Phase:** POST-CAPSTONE — real daily tool for Geo-Expert. Phase 9: km/day reminders (done), Messenger bot, automatic SMS (CallPro), photos, Artlab payments.
-- **Live:** https://168.144.143.203.sslip.io (demo data only until demo wipe 9.8; domain app.geoexpert.mn parked)
-- **Health:** 🟢 9.12 + 9.12-3 + 9.14a (2, 3, 3b) deployed 11-04 (Ari confirmed; PM did not see deploy output). Migrations on server up to 010. OIL_INTERVAL_KM=12000. Real use starts after demo wipe (9.8).
+- **Version:** 2.22
+- **Last updated:** 2026-11-05
+- **Phase:** POST-CAPSTONE — real daily tool for Geo-Expert. Demo data wiped 11-05 → every record from now on is real.
+- **Live:** https://app.geoexpert.mn (the old sslip.io address is no longer served)
+- **Health:** 🟢 9.15a-2, 9.15a-3, 9.16a deployed 11-05. Migrations on server up to **012**. API contract **v0.21**. Messenger bot ON in Meta dev mode (only app-role users). Artlab payments ⏸ blocked on Artlab (no sales endpoint).
 
-> Structure: §0–§9 = CURRENT truth. The ARCHIVE at the end is v2.18 unchanged (capstone). Where they disagree, §0–§9 win. v2.21 adds D-127–D-133. D-127 replaces the Unitel plan in D-122. D-129/D-130 replace the fixed 75-day timing of D-119 when a truck's km/day is known (75/150 stay as fallback).
+> Structure: §0–§9 = CURRENT truth. The ARCHIVE at the end is v2.18 unchanged (capstone). Where they disagree, §0–§9 win. v2.22 adds D-134–D-143. D-117…D-126 live only in v2.20 (never committed) → Ari to upload v2.20 so PM can copy them in.
 
 ---
 
 ## 0. Where we are (short)
 
-1. **Live:** shared-password login (8.5r), simple form, dashboard redesign 9.12 + fixes 9.12-3, «SMS илгээх» button, Artlab payments code (UI hidden until first sync), **km/day engine 9.14a**: target km stored per service, reminder at the truck's own pace, «Км шалгах» list at day 34, simplified truck card.
-2. **Decided 11-04:** CallPro for automatic SMS (D-127), 12,000 km interval (D-128), pace rules (D-129), day-34 km check (D-130), Messenger bot plan (D-131), photos plan (D-132).
-3. **Deadlines:** first real truck → its day-34 km check ~4–5 weeks later (replies by SMS to oil changer's phone → «Км шалгах» → «Хариу бүртгэх»). Messenger bot (9.15a) as soon as Meta allows. CallPro auto SMS (9.11) live before **2027-01-16**; sign ~Dec 1–10.
-4. **Waiting outside:** CallPro answers; Meta (Page admin + business verification); Artlab real DB + accountant.
-5. **Next for Ari:** pick demo-wipe day (= first real truck), reminder text A/B/unchanged, CallPro questions, Facebook Page/Meta check. Next Claude Code task: 9.2 STEP 1 (photos) or 9.15a STEP 1 (Messenger) — PM to choose with Ari.
+1. **Live and real:** demo wiped (9.8). One-page plate screen (9.16a). Km/day engine (9.14a). Messenger km bot works end to end (Ari tested 11-05: flagged reading + good reading → km/day + next date). Domain app.geoexpert.mn with HTTPS.
+2. **Messenger:** works only for people with a role on the Meta app until App Review. Next on Meta side: business portfolio "Geo Expert Trade" → business verification → greeting → App Review (pages_messaging advanced access).
+3. **Artlab:** blocked. Daily sales are inventory sales in Artlab's financial system and have no API endpoint (Ider, 11-05). API user has full read+write rights and cannot be restricted. Payment status = manual in our app until then (9.16b).
+4. **Deadlines:** first real truck → day-34 km check ~5 weeks later. **Before the first real km check:** App Review done, or remove MESSENGER_PAGE_USERNAME (link off). CallPro auto SMS (9.11) live before **2027-01-16**.
+5. **Next for Ari:** record the first real truck; answer A/B/C for payments (§7.1); check DigitalOcean backups (§7.2); Viber questions to Ider; Meta portfolio + verification; switch off old n8n workflow; show `git status` of the Mac repo (shows ✗).
+6. **Next Claude Code task:** 9.16b (unpaid check) after A/B/C answer, or 8.2c off-server backup after the DO check.
 
 ### How we work
 - PM chat plans, writes short briefs (goal, deliverable, done-when, do-not), reviews handoffs critically. Ari pastes briefs into Claude Code and handoffs back.
-- **ONE Claude Code session at a time** (D-100). **Done = CI green on pushed commit + run link** (D-099). Big tasks: STEP 1 plan → PM review → build (split into -2 backend / -3 UI).
-- Ari's preferences: short prompts, explain code and commands in simple English, few questions (PM decides small things), state file named with version, PM creates/edits files only on explicit "do it".
-- Claude Code never edits PROJECT_STATE (PM owns it).
-- Update state: `cp ~/Downloads/PROJECT_STATE_v2.21.md docs/PROJECT_STATE.md && git add docs/PROJECT_STATE.md && git commit -m "docs: PROJECT_STATE v2.21" && git push` (Mac repo ~/Downloads/Capstone/oil-change-predictor; GitHub janjir2007/capstone_project).
+- **ONE Claude Code session at a time** (D-100). **Done = CI green on pushed commit + run link** (D-099). Big tasks: STEP 1 plan → PM review → build (-2 backend / -3 UI). **Plans are saved in the repo as docs/plans/<task>_plan.md** (D-143).
+- Ari's preferences: short prompts, step-by-step instructions, explain code and commands in simple English, few questions (PM decides small things), state file named with version, PM creates/edits files only on explicit "do it".
+- Claude Code never edits PROJECT_STATE (PM owns it); exception = copying an approved file unchanged (DOC-1).
+- **Commit the state file the same day** (RISK-18 hit twice on 11-04).
+- Update state: `cp ~/Downloads/PROJECT_STATE_v2.22.md docs/PROJECT_STATE.md && git add docs/PROJECT_STATE.md && git commit -m "docs: PROJECT_STATE v2.22" && git push` (Mac repo ~/Downloads/Capstone/oil-change-predictor; GitHub janjir2007/capstone_project).
 
 ---
 
-## 1. Current scope (v2.21)
+## 1. Current scope (v2.22)
 
 Internal website for Geo-Expert (phone + computer), HTTPS, one shared password (D-117).
 
-**Record:** photo → plate read → confirm → form (plate, odometer/engine hours, oil, liters, driver, phone). No destination (D-111). **target_km and interval_km stored on the service at save** (D-128); interval = OIL_INTERVAL_KM = 12,000.
+**Record (9.16a, D-140):** home has one entry («Үйлчилгээ бүртгэх»; «Хайх» removed from home). Photo or typed plate/phone → plate screen shows status «Бүртгэлтэй машин» / «Шинэ машин» / «Утасны дугаар · N машин» (live, updates without Enter) → buttons «Үйлчилгээ бүртгэх» (form, pre-filled for known trucks; disabled for a phone) and «Хайх» (truck card / list) + «Дахин зураг авах». Field stays editable. Hidden unpaid box reserved for 9.16b. Form: plate, odometer, oil, liters, driver, phone. target_km + interval_km stored per service (D-128, 12,000 km).
 
-**Pace + reminders (D-129, D-130):**
-- km/day (s) = newest OK driver reading after the last service (manual now, Messenger later) ÷ days; else previous → latest service odometers.
-- Due = service date + floor(12,000 ÷ s). Reminder = due − 5 (REMINDER_LEAD_DAYS), never before the reading date, capped at service + AT_RISK_DAYS − 5 (= 145).
-- No s → km check at day 34 (KM_CHECK_DAYS) + reminder at day 75 (REMINDER_DAYS). A reply moves the first reminder.
-- One reminder per service; reminders scheduled only from a service. Km check is NOT a reminder (own table km_checks; not in «Сануулга илгээсэн» KPI).
-- Safety: reading ≤ last, s < 20 or > 1200 → flagged, stored, never used. Manual readings can be undone («Буцаах»).
-- Mine trucks (engine hours): hours/day shown, **no reminder** until an hours interval is decided.
+**Pace + reminders (D-129, D-130):** km/day from newest OK driver reading after the last service (Messenger or manual), else previous → latest service odometers. Due = service + floor(12,000 ÷ s); reminder = due − 5, not before reading date, cap service + 145. No s → km check day 34 + reminder day 75. Flagged readings (≤ last, < 20 or > 1,200 km/day, plate mismatch) are stored, never used. **Mine trucks: no reminder, not planned** (D-134).
 
-**Screens:** «Сануулга» page with switch «Сануулга (N) | Км шалгах (M)». Km-check row: «SMS илгээх» (km-check text, 2 SMS) → «Илгээсэн», «Залгах», «Дахиж илгээхгүй», «Хариу бүртгэх» (opens km form → confirm → save). Truck card: target km big + due date small; «Км бүртгэл · N км/өдөр» with 5 newest readings; no route; no «Км бүртгэх» button (form only via «Хариу бүртгэх»).
+**Messenger bot (9.15a, D-136–D-138):** driver writes «9988НАА 871234» (any order, spaces/commas, Latin look-alikes) → «… Зөв үү?» Тийм/Үгүй → saved as reading (source messenger) through the same checks + pace engine → reply «Баярлалаа! {plate} өдөрт ~N км явж байна. Дараагийн тос солих: ~date (km).» Flagged → «Баярлалаа, хүлээж авлаа. Манай ажилтан шалгаад холбогдоно.» Unknown plate → «Энэ дугаар манай бүртгэлд олдсонгүй. Дугаараа шалгаад дахин бичнэ үү, эсвэл {contact} руу залгана уу.» Non-km messages → no reply (Page inbox). Pending confirmation 24 h; reading date = driver's original message. Stores only PSID ↔ vehicle + parsed plate/km; no profile data, no raw text.
 
-Reminder text (live, unchanged, 3 SMS): `Сайн байна уу! {plate} машины тосыг {date}-нд солиулсан ({oil}). Дахин солих хугацаа болж байна. Wolf Oil - Гео-Эксперт: {CONTACT_PHONE}`
-Km-check text (2 SMS): `Сайн байна уу! {plate} машины тосыг {date}-нд солиулсан. Одоогийн км-ээ хариу бичнэ үү. Wolf Oil - Гео-Эксперт: {CONTACT_PHONE}`
+**Screens:** «Сануулга» page with 3 tabs: «Сануулга (N) | Км шалгах (M) | Шалгах (K)». «Шалгах» = flagged Messenger readings (plate, km · date, reason, driver) with «Залгах» and «Шалгасан» (hides row; reading stays flagged). Truck card: target km big + due date small, «Км бүртгэл · N км/өдөр» (5 newest readings, source shown, red reason under flagged ones).
 
-**Dashboard (9.12, D-125):** period KPIs, 4 clickable segment cards (⭐ Байнгын), «Төлбөр» (hidden until Artlab sync), search + filter + table (click anywhere in a row) + truck panel + Excel. View only.
+**SMS texts (D-135):**
+- Reminder (TXT-1 B, 2 SMS): `Сайн байна уу! {plate}: {date}-нд {oil} тос солиулсан. Дахин солих хугацаа боллоо. Wolf Oil: {contact}`
+- Km check with link (when MESSENGER_ENABLED=true and MESSENGER_PAGE_USERNAME set; 130/134 chars = 2 SMS): `Сайн байна уу! {plate} машины одоогийн км-ээ хариу бичнэ үү эсвэл https://m.me/WolfCenterMongolia?ref={code} Wolf Oil: {contact}`
+- Km check without link (2 SMS): dated text, ends «Wolf Oil: {contact}» (no «Гео-Эксперт»). Exact wording = code (src/api).
 
-**Payments (D-121):** «Төлөөгүй» list shows only bills from the last 90 days, with or without plate (D-133).
+**Dashboard (9.12, D-125):** period KPIs, 4 segment cards, «Төлбөр» hidden (Artlab), search + filter + table + truck panel + Excel.
 
 **Segments:** Шинэ (1), Давтан (2, filter only), Байнгын (3+), Эргэж ирээгүй (150+ days).
 
@@ -58,79 +56,100 @@ Km-check text (2 SMS): `Сайн байна уу! {plate} машины тосы�
 
 | ID | Task | Status |
 |---|---|---|
+| DOC-1 | Commit PROJECT_STATE v2.21 | ✅ 221a9e6, CI 41813471212 |
 | 8.0b | Reset Label Studio token | ⏳ Ari |
-| 8.3 | Domain app.geoexpert.mn | code ✅; ⏸ DNS A record missing |
-| 9.2 | Keep photos 12 months (scope D-132) | brief in §9; migration number now **011**; not started |
-| 9.2b | OneDrive copy of photos via rclone | Later; open: personal or company account, keep forever or 12 months |
-| 9.6b-1…5 | Artlab payments (read-only sync, tables 008/009, API, UI hidden) | ✅ CI green (run list 11-04), deployed |
-| 9.6b-T | Transfers → «Төлсөн (дараа)» | ⏳ needs acc-txn sample / real DB |
-| 9.6c | Real Artlab connection | ⏳ after accountant OK + real access |
+| 8.2c | Off-server backup copy | ⏳ **now important (real data)**; Ari checks DO Droplet Backups / Spaces first → then brief |
+| 8.3 | Domain app.geoexpert.mn | ✅ 11-05 (A record at Datacom, DOMAIN switched, webhook moved) — D-141 |
+| 9.2 | Photos 12 months (D-132) | not started; **migration 013** (§9 brief updated) |
+| 9.2b | OneDrive copy of photos | Later |
+| 9.6b-1…5 | Artlab payments code (read-only, tables 008/009, UI hidden) | ✅ deployed, unused |
+| 9.6c-1 | Artlab probe plan | ✅ 3b5860e, CI 41828815323 (docs/plans/9.6c_plan.md) |
+| 9.6c-2 | Probe safety gaps G1–G6 | ✅ 40bcfc6, CI 41835242793 |
+| 9.6c-2b | Plate check in Python (fails loud), sort-safe newest date, months probe | ✅ committed, CI green (hash not recorded) |
+| 9.6c-2c | Sales endpoint report (docs only) | ✅ report: only /pos/bills + /im/orders |
+| 9.6c-2d | Probe branches × type × status + invoices; allow-list + GET /info/branches | ✅ e3b3e65, CI 41951428841 |
+| 9.6 | Artlab payment matching | ⏸ **BLOCKED on Artlab** (no sales endpoint, D-139). Timers stay off |
+| 9.6b-T | Transfers → «Төлсөн (дараа)» | ⏸ with 9.6 |
 | 9.7 / 9.7b | gitleaks in CI | ✅ |
-| 9.8 | Demo wipe | ⏳ morning of first real truck (Ari to pick day) |
+| 9.8 | Demo wipe | ✅ 11-05 (scripts/wipe_demo.sh, own backup first) |
 | 9.10 | Smartcar.mn email | send or drop (Ari) |
-| 9.11 | CallPro automatic SMS (D-127) | ⏳ answers → sign ~Dec 1–10 → STEP 1 with API docs; live before 2027-01-16 |
-| 9.12 / 9.12-2 | Dashboard redesign | ✅ 7426a24, CI 41414931947, deployed ~11-02 |
-| 9.12-3 | Row click, ⭐, placeholder, unpaid 90-day lookback, CI ubuntu-24.04 | ✅ 24e9189 + 2d7c660, CI 41795776926, deployed |
-| 9.14a-1 | Pace engine plan | ✅ approved 11-04 |
-| 9.14a-2 | Migration 010, pace.py, API v0.18 | ✅ 14fccce, CI 41800678920, deployed |
-| 9.14a-3 | UI: card pace, «Км шалгах», km form + preview endpoint (v0.19) | ✅ 939a55c, CI 41804116240, deployed |
-| 9.14a-3b | Card: km big, km/day in title, no route, no «Км бүртгэх» | ✅ e238ab6, CI 41806343476, deployed |
-| 9.15a | Messenger bot: m.me link with ref, parse «871234 9988НАА», confirm, save reading (source messenger), warm scripted reply, One-Time Notification opt-in | ⏳ STEP 1 when Meta access is clear |
-| 9.15b | AI replies in Messenger (approved facts only, handover to person) | Later |
-| TXT-1 | Reminder text: A, B or unchanged (see §7) | ⏳ Ari + boss |
+| 9.11 | CallPro automatic SMS (D-127) | ⏳ written answers → sign ~Dec 1–10 → STEP 1; live before 2027-01-16 |
+| 9.12 / 9.12-2 / 9.12-3 | Dashboard | ✅ deployed |
+| 9.14a-1…3b | Km/day engine | ✅ deployed |
+| 9.15a-1 | Messenger plan | ✅ a4e0f02, CI 41816841219 (docs/plans/9.15a_plan.md) |
+| 9.15a-2 | Messenger backend, migration 011 | ✅ CI 41821455912, deployed 11-05 (webhook 403 unsigned, cleanup timer) |
+| 9.15a-3 | SMS link, «Шалгах» tab, texts, Get Started check, migration 012 | ✅ CI 41984303805, deployed 11-05 |
+| 9.15a-4 | Meta: portfolio "Geo Expert Trade" → add Page + app → business verification → greeting → App Review (pages_messaging) | ⏳ Ari (slow, RISK-32) |
+| 9.15b | AI replies in Messenger | Later |
+| 9.16a | One-page plate screen | ✅ deployed 11-05, phone-tested (commit/CI link not recorded) |
+| 9.16a-x | Opt-in browser test test_reminder_and_km_check_lists_fit_phone fails (also before 9.16a) | ⏳ small check |
+| 9.16b | Unpaid check (manual payment status, warning on plate screen + «Төлсөн») | ⏳ needs Ari's A/B/C (§7.1); migration 013 → photos 014 if built first |
+| OPS-1 | Server reboot (Ubuntu says restart required) | ⏳ quiet time, after backup |
+| OPS-2 | Switch off old n8n Messenger workflow | ⏳ Ari |
 
 ---
 
-## 3. New decisions (D-127 →) — D-117…D-126 in v2.20 still valid
+## 3. New decisions (D-134 →) — D-127…D-133 in v2.21 still valid; D-117…D-126 in v2.20
 
 | ID | Date | Decision | Status |
 |---|---|---|---|
-| D-127 | 11-04 | Automatic SMS via **CallPro Text, Багц 02** (needs API; Багц 01 has none). Offer: one-time 103,300₮ (likely 3,300 IP72 number + 100,000 deposit), monthly 224,400₮ (likely 220,000 package + 4,400 LIME BASIC number) + 22₮/SMS, VAT incl. Before paying, confirm in writing: all operators? 22₮ per SMS part? API docs + test account? Sign ~Dec 1–10 (not earlier: no reminders before mid-Dec). Unitel not signed | APPROVED by Ari (boss) |
-| D-128 | 11-04 | Oil interval **12,000 km** (boss). target_km + interval_km stored per service at save; old services backfilled 15,000 | APPROVED |
-| D-129 | 11-04 | Pace rules as in §1. km/day from driver reading (Messenger/manual) else last→next service; reminder = due − 5, not before reading date, cap service + 145; no s → 75; one reminder per service; flagged readings never used; mine trucks no reminder | APPROVED by Ari |
-| D-130 | 11-04 | Km check at day 34 (boss estimate 500 km/day × 5 days/week → 12,000 km ≈ 34 days) for any truck without usable s. Reply moves the first reminder. Excel history (median return ~104 days) disagrees with the boss estimate → real readings will decide | APPROVED by Ari |
-| D-131 | 11-04 | Messenger: driver must write first (SMS has m.me link with ref code). Free replies within 24 h of his message. Next reminder in Messenger only with One-Time Notification permission (1 permission = 1 message), else SMS. Old tags CONFIRMED_EVENT_UPDATE/ACCOUNT_UPDATE/POST_PURCHASE_UPDATE fail since 2026-04-27. Needs pages_messaging advanced access (App Review) + verification. ref may fail on some Android → driver also types plate. Store only reading + PSID, no profile data. **No QR at service** (oil changer will not do it). AI chat = 9.15b with rules | APPROVED (plan) |
-| D-132 | 11-04 | Photos (9.2): photo saved per service (1600 px, q80, EXIF rotate then strip), newest on top of truck card, history row with date + photo + payment; tap = full size; «Зураггүй»; deleted after 12 months (row kept). Do after real use starts; OneDrive copy (rclone) = 9.2b | APPROVED |
-| D-133 | 11-04 | 9.12-3: unpaid lookback 90 days for every bill (day 90 listed, 91 not). ARTLAB_* never in API env (RISK-22) → API uses default 90; to change later rename to a non-Artlab setting | APPROVED (PM) |
+| D-134 | 11-04 | Mine trucks are not served: no reminder, no engine-hours interval planned | APPROVED by Ari |
+| D-135 | 11-05 | SMS brand = «Wolf Oil» (drivers know "Wolf"); «Гео-Эксперт» removed from reminder and km-check texts. TXT-1 = B (2 SMS, keeps plate/date/oil/contact) | APPROVED by Ari |
+| D-136 | 11-05 | Messenger backend (9.15a-2): migration 011 (messenger_refs, _links, _pending, _seen, _otn; flag_reason plate_mismatch; reminders_sent.channel messenger). Public path ONLY /messenger/webhook (D-118 exception): GET verify token, POST X-Hub-Signature-256 checked first; MESSENGER_ENABLED kill switch (off → 200, nothing done). Plate mismatch: flagged, attached to typed plate's truck if it exists else ref truck. Pending 24 h, reading date = original message. Cleanup timer 03:30 UB (seen > 7 d, expired pending). OTN behind MESSENGER_OTN_ENABLED=false (UNVERIFIED: Meta OTN page 404). Graph version in one setting (v27.0). Secrets only in server .env, never logged | APPROVED (PM) |
+| D-137 | 11-05 | Meta: reuse existing app "Wolf Center Messenger Bot" (App ID 2042887379689749, Live mode, Messenger use case, not in a business portfolio). pages_messaging = "Ready for testing" (standard) → only app-role users until App Review. Page username WolfCenterMongolia (18 chars) accepted. Webhook fields messages, messaging_postbacks, messaging_referrals at v27.0; message_reads off. Verify token rotated after setup. Get Started payload GET_STARTED (set earlier by n8n) kept; greeting = none → set during App Review prep. Page is in no portfolio → create "Geo Expert Trade" portfolio (legal name Гео Эксперт Трейд ХХК, reg. 8351384) | APPROVED (PM + Ari) |
+| D-138 | 11-05 | 9.15a-3: «Шалгах» tab (flagged Messenger readings; «Шалгасан» = odometer_readings.reviewed_at, migration 012). Km-check SMS link only when MESSENGER_ENABLED + MESSENGER_PAGE_USERNAME; text keeps «хариу бичнэ үү эсвэл» so SMS replies still work. **Before the first real km check (~day 34): if App Review is not approved, remove MESSENGER_PAGE_USERNAME from .env** (drivers would reach the Page inbox, not the bot). Branded short link app.geoexpert.mn/m/{code} → Later | APPROVED (PM) |
+| D-139 | 11-05 | Artlab: API user has full read+write rights, cannot be restricted (Ider). Connection geoexpert (connId 81188084654280219) has 12 POS bills ever (2025-02-21…03-27) and 0 invoices; daily sales are inventory sales in the financial system with no API endpoint → payment matching blocked on Artlab. Credentials stay only in the sync container (.env, never API); allow-list now incl. GET /invoices + GET /info/branches; probes print counts only; no timers; never Postman with this account. Possible workaround to ask: Account transaction report on the receivables account (per-company Авлага) | APPROVED (PM) |
+| D-140 | 11-05 | 9.16a plate screen as in §1. Payment status will be marked by hand in our app until Artlab works (9.16b); unpaid label = «Авлага», paid = «Төлсөн» | APPROVED by Ari |
+| D-141 | 11-05 | Domain = app.geoexpert.mn (geoexpert.mn registered + DNS at Datacom, nameservers dns.mn). Only an A record app → 168.144.143.203 added; website (@, www → 202.131.4.3) and Google/mail records untouched. DOMAIN in .env switched; Caddy got the certificate; Meta webhook = https://app.geoexpert.mn/messenger/webhook | DONE |
+| D-142 | 11-05 | Migrations: 011 Messenger, 012 reading reviewed_at. Next free = 013 (whichever of 9.16b / 9.2 is built first) | NOTED |
+| D-143 | 11-05 | Process: plans saved as docs/plans/*.md; secrets typed by Ari on the server with nano (not echo, not chat, not screenshots); check .env with name + length only (`awk -F= '/^NAME/{print $1, length($2)}' .env`); Caddyfile change → `restart caddy` | APPROVED (PM) |
 
 ---
 
-## 4. Artlab (9.6) — unchanged from v2.20
+## 4. Artlab (9.6) — blocked
 
-- Гео Эксперт Трейд ХХК (reg. 8351384). Contact Ider Zorigoo (CTO). Base https://api.artlab.mn/v2. Test DB works; real-DB access requested 11-02 (read-only). Need from accountant: OK, bank account codes (ARTLAB_BANK_ACCOUNTS), confirm credit = LOAN. First real run = probe summaries only, no personal data printed.
+- Гео Эксперт Трейд ХХК (reg. 8351384). Contact Ider Zorigoo (CTO), Viber/phone. Base https://api.artlab.mn/v2, login POST /auth/login type "api", token 60 min. Real-DB credentials on server (.env: ARTLAB_URL, ARTLAB_USER, ARTLAB_PASS; length-checked 24/17/8; API container sees none). Password was in an email + screenshot → Artlab asked to change it.
+- Findings: paymethods = Бэлэн (CASH), Карт + Мобайл (NON_CASH), Зээл (LOAN) → credit = LOAN confirmed by data. Bank transfers likely under «Мобайл». POS bills: 12 ever. Invoices: 0. Reports (folder 50) are POST (Trial balance, Account transaction, Fixed asset, Product balance, POS employee rating, Contracts).
+- Accountant's base: admin@geoexpert, base "geoexpert – Geo Expert Trade LLC", company "Geo Expert LLC", app02.artlab.mn, db11.
+- **Questions sent to Ider (Viber):** (1) when will an endpoint for financial-system sales exist? (2) does Account transaction on the receivables account show entity, date, amount, description → per-company Авлага? (3) new password by phone.
+- Probe tooling ready: `deploy/artlab_probe.sh paymethods | bills | acc-txn | months | invoices`, output /root/artlab_probe/, privacy check exits 4 if it cannot run.
 
 ---
 
-## 5. Before real use (checklist)
+## 5. Real use (checklist)
 
-1. ✅ Logins. 2. ✅ CONTACT_PHONE=89069494. 3. ✅ Backups (D-120). 4. ✅ Personal data risk accepted (D-124). 5. ✅ Deploys (9.12, 9.12-3, 9.14a) + OIL_INTERVAL_KM=12000.
-6. ⬜ Demo wipe (9.8) on the morning of the first real truck. Do NOT import old customers.
-7. ⬜ First km checks ~day 34 after first real truck → oil changer sends from «Км шалгах», types replies via «Хариу бүртгэх».
-8. ⬜ Optional: reminder text change (TXT-1).
+1. ✅ Logins, CONTACT_PHONE=89069494, backups (D-120), personal data risk accepted (D-124), deploys, OIL_INTERVAL_KM=12000.
+2. ✅ Demo wipe 11-05. Do NOT import old customers.
+3. ⬜ First real truck recorded (photo → «Шинэ машин» → fill once).
+4. ⬜ Off-server backup (8.2c) — real data now exists.
+5. ⬜ ~Day 34 after first truck: km checks from «Км шалгах»; replies via SMS («Хариу бүртгэх») or Messenger. Check D-138 link rule first.
+6. ⬜ Payments: manual until 9.16b / Artlab.
 
 ---
 
 ## 6. Server & deploy facts
 
-- DigitalOcean Singapore 1 vCPU / 2 GB. `ssh root@168.144.143.203`, repo `~/oil-change-predictor`. `gh` Mac-only.
-- Deploy: `systemctl start ocp-backup.service` (if DB change; check `ls -lt /root/backups | head -3`) → `git pull` → `docker compose -f docker-compose.prod.yml build` → `… run --rm api python -m scripts.migrate` (BEFORE up) → `… up -d` (`--force-recreate api ui` after .env change) → `… ps`.
-- DB shell: `docker compose -f docker-compose.prod.yml exec db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "\dt"'` (user is not "postgres").
-- .env: UI_PASSWORD, AUTH_SECRET, DOMAIN, OLD_DOMAIN, GEO_EXPERT_PHONE/CONTACT_PHONE=89069494, **OIL_INTERVAL_KM=12000**, optional REMINDER_DAYS=75, AT_RISK_DAYS=150, REMINDER_LEAD_DAYS=5, KM_CHECK_DAYS=34. Later sync only: ARTLAB_*. Append only with `>>`.
-- Migrations on server: up to **010**. API contract **v0.19** (docs/api_contract.md is the source of truth).
-- CI runs on ubuntu-24.04 (pinned).
+- DigitalOcean Singapore 1 vCPU / 2 GB, Ubuntu 24.04. `ssh root@168.144.143.203`, repo `~/oil-change-predictor`. `gh` Mac-only. Address https://app.geoexpert.mn.
+- Deploy: `systemctl start ocp-backup.service` (if DB change; `ls -lt /root/backups | head -3`) → `git pull` → `docker compose -f docker-compose.prod.yml build` → `… run --rm api python -m scripts.migrate` (BEFORE up) → `… up -d` (`--force-recreate api` after .env change; **`restart caddy` after a Caddyfile change**) → `… ps`. ("dc" in handoffs = `docker compose -f docker-compose.prod.yml`.)
+- Services: api, caddy, db, ui; artlab-sync only with `--profile sync`.
+- DB shell: `docker compose -f docker-compose.prod.yml exec db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "\dt"'`.
+- .env (names only): UI_PASSWORD, AUTH_SECRET, DOMAIN=app.geoexpert.mn, OLD_DOMAIN, GEO_EXPERT_PHONE/CONTACT_PHONE, OIL_INTERVAL_KM=12000, optional REMINDER_DAYS/AT_RISK_DAYS/REMINDER_LEAD_DAYS/KM_CHECK_DAYS; MESSENGER_ENABLED=true, MESSENGER_OTN_ENABLED (not set = false), MESSENGER_PAGE_USERNAME=WolfCenterMongolia; META_VERIFY_TOKEN (64), META_GRAPH_VERSION=v27.0, META_PAGE_TOKEN (206), META_APP_SECRET (32), META_PAGE_ID (15); ARTLAB_URL/USER/PASS (sync only). Each name exactly once.
+- systemd timers: ocp-backup (19:00 UTC), ocp-messenger-cleanup (19:30 UTC = 03:30 UB). ocp-artlab-* NOT installed.
+- Migrations up to **012**. API contract **v0.21** (docs/api_contract.md = source of truth). CI ubuntu-24.04.
+- Messenger script: `… exec api python -m scripts.messenger_get_started` (prints payload/greeting, never the token).
 
 ---
 
 ## 7. Open questions
 
-1. **First real truck date** → demo wipe day.
-2. **Reminder text (TXT-1):** A «Сайн байна уу! {plate} машины тосыг {date}-нд солиулсан. Дахин солих хугацаа болж байна. Wolf Oil - Гео-Эксперт: {contact}» (2 SMS, drops oil — breaks the plate/date/oil/contact rule) · B «Сайн байна уу! {plate}: {date}-нд {oil} тос солиулсан. Дахин солих хугацаа боллоо. Wolf Oil: {contact}» (2 SMS, keeps oil, drops «Гео-Эксперт»; PM pick if drivers know "Wolf Oil") · or unchanged (3 SMS).
-3. **CallPro:** all operators? 22₮ per part? API docs/test account? deposit refund, sender name, delivery report, minimum contract, how long undelivered SMS are kept.
-4. **Meta:** is Ari admin of the Geo-Expert Facebook Page? Is the Meta Business verified (business.facebook.com → Settings → Security Center)? Marketing Messages available in Mongolia?
-5. **Mine trucks:** engine-hours interval (needed before they get reminders).
-6. OneDrive: personal or company account; copy kept forever or 12 months.
-7. Artlab real access + accountant OK + bank codes + acc-txn sample.
-8. Smartcar email; DNS registrar; 8.0b token.
+1. **Payments (9.16b):** does the driver pay on the spot (A), the company later by invoice/monthly (B), or both (C)? Decides when the unpaid warning shows (per truck vs per company, after X days).
+2. **Backups:** DigitalOcean Droplet Backups on? weekly/daily? Any Spaces bucket? (8.2c)
+3. **Ider:** answers to the 3 Viber questions (§4).
+4. **CallPro:** all operators? 22₮ per SMS part? API docs + test account? (deposit, sender name, delivery report, minimum contract)
+5. **Meta:** portfolio created? verification status? greeting wording (draft: «Сайн байна уу! Wolf Oil. Машиныхаа дугаар болон км-ээ бичээд тос солих өдрөө мэдээрэй.»).
+6. **Mac repo** shows uncommitted changes (✗) → `git status` before the next session.
+7. Upload PROJECT_STATE v2.20 so D-117…D-126 can be copied in.
+8. Smartcar email; 8.0b token; OneDrive (9.2b).
 
 ---
 
@@ -139,47 +158,50 @@ Km-check text (2 SMS): `Сайн байна уу! {plate} машины тосы�
 | ID | Risk | Mitigation |
 |---|---|---|
 | RISK-06 | Shared password shows phones + Excel | Accepted (D-117); change UI_PASSWORD when someone leaves |
-| RISK-22 | Artlab creds have write rights | Allow-list + tests; creds only in sync service; ARTLAB_* never in API env |
-| RISK-23 | Backups in same DO account | 2FA; optional monthly dump to Mac |
-| RISK-27 | Auto SMS reach | CallPro must confirm all operators before signing |
-| RISK-28/29/30 | Artlab matching unproven; wrong account code silent; lump-sum transfers | Probe summaries; 12-zero-run warning; accepted v1 |
-| RISK-31 | Boss estimate (500 km/day) vs Excel history (median return ~104 days) → reminders may come too early | Day-34 km check + real readings decide; review after 2–3 months |
-| RISK-32 | Meta App Review / verification time unknown → 9.15a late | Km replies typed via «Хариу бүртгэх» meanwhile |
-| RISK-33 | Km-check text has 9 chars margin; adding Messenger link → 3 SMS | Decide in 9.15a (shorter text or accept 3 SMS) |
-| RISK-34 | Plausible typo reading moves a reminder | Confirm screen shows km/day + due date; «Буцаах» |
+| RISK-22 | Artlab creds have full write rights (confirmed, cannot restrict) | Allow-list (read endpoints only) + CI tests; creds only in sync container; no Postman; timers off |
+| RISK-23 | **Backups only on the same server/account — now real data** | 8.2c off-server copy (priority); 2FA on DO |
+| RISK-27 | Auto SMS reach | CallPro confirms all operators before signing |
+| RISK-31 | Boss estimate (500 km/day) vs Excel history (~104 days) | Day-34 km check + real readings decide |
+| RISK-32 | Meta verification / App Review time unknown | Start portfolio now; until then bot = testers only; SMS replies via «Хариу бүртгэх» |
 | RISK-35 | m.me ref may not work on some Android | Driver also types plate; mismatch → flagged |
+| RISK-36 | Driver taps the m.me link before App Review → lands in Page inbox, bot silent | D-138: remove MESSENGER_PAGE_USERNAME before first real km check if not approved |
+| RISK-37 | Artlab has no sales endpoint → no automatic payment status | Manual payment (9.16b); ask Ider about receivables report |
+| RISK-38 | Pending Ubuntu restart (security updates) | OPS-1 reboot after backup at a quiet time |
 | RISK-09 | Ultralytics AGPL-3.0 | decide before commercial scaling |
+
+Closed: RISK-33 (km-check + link fits 2 SMS, 130/134). RISK-18 hit again 11-04 (repo on v2.19) → fixed by DOC-1.
 
 ---
 
 ## 9. Ready briefs + Later list
 
-**9.2 STEP 1 brief (ready, migration 011):**
+**9.2 STEP 1 brief (updated: migration 013, D-118 rule written out):**
 ```
 TASK 9.2 — STEP 1 (PLAN ONLY, no code changes)
 GOAL: Keep the photo of every saved service for 12 months and show it
 in the truck card with date, service details and payment status.
 FIRST: git status --short --branch; anything uncommitted → STOP, report.
+Read docs/PROJECT_STATE.md (v2.22) and docs/api_contract.md.
 SCOPE: save only the photo of the saved service (no retakes); resize long
 side 1600 px, JPEG q80; apply EXIF rotation then strip ALL EXIF (GPS).
-Link photo to service: migration 011. Docker volume, never in git, served
-only behind login (D-118). Truck card: newest photo on top with date;
-history rows = date, small photo, service details, payment status (hidden
-until Artlab, as now). Tap = full size. No photo = «Зураггүй».
-Text «Зураг 12 сар хадгалагдана». Daily deletion after 12 months (DB link
-cleared, row kept). Report photo disk use.
+Link photo to service: next free migration (013 unless taken). Docker
+volume, never in git. Photos served ONLY to logged-in users; no public
+URL. Truck card: newest photo on top with date; history rows = date,
+small photo, service details, payment status. Tap = full size. No photo =
+«Зураггүй». Text «Зураг 12 сар хадгалагдана». Daily deletion after 12
+months (DB link cleared, row kept). Report photo disk use.
 PLAN MUST SAY: how the photo travels recognize → save today and your
-change; files/endpoints/migration; where deletion runs (API vs systemd
-timer); tests; storage per 1000 photos; risks.
-DELIVERABLE: plan as text. DO NOT: code, commit, deploy, Artlab, OneDrive,
-edit PROJECT_STATE.
+change; files/endpoints/migration; where deletion runs; tests; storage
+per 1000 photos; backup impact (8.2c); risks.
+DELIVERABLE: docs/plans/9.2_plan.md, committed + pushed, CI green.
+DO NOT: code, deploy, Artlab, OneDrive, edit PROJECT_STATE.
 ```
 
-**9.15a outline (STEP 1 after Meta check):** webhook (verify Meta signature), m.me link with ref per service, parse plate + km in any order (normalize_plate, Latin look-alikes), confirm buttons «Тийм/Үгүй», save to odometer_readings source=messenger via the existing pace engine, store PSID per vehicle, warm scripted reply with km/day + next change, One-Time Notification opt-in, non-km messages → human (Page inbox). New public route needs a D-118 exception (signed Meta requests only).
+**9.16b outline (after Ari's A/B/C):** payment status per service set by hand («Төлсөн» / «Авлага»), plate screen bottom box «Өмнөх үйлчилгээ ({date}) төлөгдөөгүй» + «Төлсөн» + «Үргэлжлүүлэх»; rule depends on A/B/C (per truck now vs per company after X days); dashboard «Төлбөр» uses it; Artlab later can fill it.
 
 **9.11 outline:** daily 10:00 send of due reminders + km checks via CallPro API; Messenger first if permission, else SMS; skip stop list/invalid numbers; daily cap; kill switch; dry-run week; log channel 'sms'; API key only in server .env; manual buttons stay as fallback.
 
-**Later list:** 9.15b AI replies; 9.2b OneDrive; transfers «Төлсөн (дараа)» (9.6b-T); company balances; rename unpaid lookback setting (D-133); «Өмнөх удаа» line still shows old destination; dashboard date/"Дарж шүүнэ" header position (cosmetic); dashboard photo gallery; km from dashboard photo (OCR); hours interval for mine trucks; km/day average over 3+ services; admin edit page; plate-reader retrain with kept photos; read-only demo mode; README polish; drift monitoring; offline mode for mines; cleanup unused prediction.segment_of(); ML model on real data (compare with pace rule, RISK-25).
+**Later list:** branded short link app.geoexpert.mn/m/{code} (nicer iPhone preview); 9.15b AI replies; 9.2b OneDrive; 9.6b-T transfers; company balances (receivables report if Artlab allows); rename unpaid lookback setting (D-133); «Өмнөх удаа» shows old destination; dashboard cosmetic header; dashboard photo gallery; km from dashboard photo (OCR); km/day average over 3+ services; admin edit page; plate-reader retrain with kept photos; read-only demo mode; README polish; drift monitoring; offline mode; cleanup unused prediction.segment_of(); ML model on real data (compare with pace rule, RISK-25); Page action button «Send message» (Ari's choice).
 
 ---
 
