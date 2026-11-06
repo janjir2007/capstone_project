@@ -1,6 +1,6 @@
 # Deploy runbook — one Linux server, HTTPS (tasks 6.1 / 6.3 / 8.3)
 
-- **Version:** 1.3 (2026-10-30, task 8.5r: 30-day login cookie, §13) · 1.2 (2026-10-22, task 8.3: own domain, §11) · 1.1 (2026-10-19, tasks 6.3 + 6.4: deployed, §10 results) · **Owner:** Backend Engineer
+- **Version:** 1.4 (2026-11-06, task 8.2c: off-server copy, §12) · 1.3 (2026-10-30, task 8.5r: 30-day login cookie, §13) · 1.2 (2026-10-22, task 8.3: own domain, §11) · 1.1 (2026-10-19, tasks 6.3 + 6.4: deployed, §10 results) · **Owner:** Backend Engineer
 - **Deployed (6.3):** DigitalOcean droplet, Singapore, Ubuntu 24.04, 1 vCPU / 2 GB → **https://app.geoexpert.mn**
   (task 8.3; the first address https://168.144.143.203.sslip.io now redirects there, §11)
 - **Host-agnostic:** any Linux VPS with Docker.
@@ -288,7 +288,8 @@ the file holds driver names and phones). A backup only counts if the gzip is int
 reached its last line; then files older than **14 days** are deleted (only `oil_change_*.sql.gz`).
 A systemd timer runs it **every day at 03:00 Asia/Ulaanbaatar** (= 19:00 UTC; checked with
 `systemd-analyze calendar` on systemd 255 / Ubuntu 24.04); `Persistent=true` catches up after a
-power-off. Backups stay **on the same server** until an off-server copy is chosen (task 8.2c).
+power-off. An **encrypted copy goes to OneDrive** every night at 03:20 once the
+"Off-server copy" setup below is done (task 8.2c).
 
 Install once (server, repo folder, after `git pull`):
 
@@ -334,8 +335,397 @@ them (found from the foreign keys: today predictions and reminders); ids restart
 destinations and schema_migrations (the script stops if either would be touched). One
 transaction: all or nothing. Undo = "Real restore" above with the backup it names.
 
-**Off-server copy (8.2c, not built):** a fire, a deleted droplet or a lost account takes the
-local backups with it. Options and cost: handoff 8.2 / PROJECT_STATE.
+### Off-server copy to OneDrive (task 8.2c, plan `docs/plans/8.2c_plan.md`)
+
+**Why:** a fire, a deleted droplet or a lost DigitalOcean account would take `/root/backups` with
+it (RISK-23). So every night at **03:20 Ulaanbaatar** (20 min after the backup) the server sends an
+**encrypted** copy of every new dump to Ari's OneDrive, folder **GeoExpert-Backups/db**.
+
+**How, in one picture:**
+
+```
+03:00 backup.sh ──> /root/backups/oil_change_<date>.sql.gz   (plain, stays on the server)
+03:20 offsite_backup.sh:
+        check (dump fresh? keys ok? fence ok?) ──> age -R (2 PUBLIC keys) ──> .sql.gz.age
+        ──> rclone copyto ──> OneDrive GeoExpert-Backups/db/  ──> size check ──> delete > 30 days
+        ──> healthchecks.io ping "ok" (or "/fail" -> email to Ari)
+```
+
+- **Encrypted with age.** The server has only the two **public** keys (they can lock, not unlock).
+  The private keys are on Ari's Mac and on paper. OneDrive never holds readable customer data.
+- **Fence:** the script only ever touches `ocp-offsite:db` (= GeoExpert-Backups/db). The path is
+  fixed in the script; it refuses to run if the rclone remote is not fenced (step B6).
+- **Kept on OneDrive:** 30 days; the newest 7 copies always stay, however old. Other files in the
+  folder are never touched. Deleted copies go to the OneDrive recycle bin.
+- **Size:** today's real dump is **7.8 KB** (after the demo wipe; 15–16 KB with demo data), so
+  30 copies are well under 1 MB.
+- **Catch-up:** if the server was off, the next run uploads every local dump not on OneDrive yet
+  (local dumps are kept 14 days).
+
+**Files and where they live** (none of the secret ones ever go into git or a chat):
+
+| File | Where | Secret? |
+|---|---|---|
+| rclone config (OneDrive token) | server `/root/.config/rclone/rclone.conf`, mode 600 | **yes** |
+| 2 public age keys | server `/root/.config/ocp/age_recipients.txt` | no |
+| healthchecks ping URL | server `/root/.config/ocp/offsite.env`, mode 600 (template `deploy/offsite.env.example`) | a little |
+| Mac private key | Mac `~/ocp-keys/ocp-offsite-ari.key` (600) + password manager | **yes** |
+| Paper private key | printed sheet, offline; no file anywhere | **yes** |
+
+**Time needed:** about 45 minutes, once. You need: the Mac (Terminal), an SSH session to the
+server as root, and your OneDrive with the folder GeoExpert-Backups (already made, not shared).
+Do the parts in order. Each step says what to type, what it does, and how to check it worked.
+If a check does not match, **stop** and send the PM the step number and the error line
+(never a token, key or URL).
+
+#### Part A — on the Mac
+
+**A1. Install the two tools.**
+
+```bash
+brew install rclone age
+```
+
+What it does: installs rclone (talks to OneDrive) and age (encrypts / decrypts).
+Check: `rclone version` prints `rclone v1.…` and `age --version` prints a version.
+
+**A2. Make a private folder for the keys.**
+
+```bash
+mkdir -p ~/ocp-keys && chmod 700 ~/ocp-keys
+```
+
+What it does: a folder only you can open. Check: `ls -ld ~/ocp-keys` starts with `drwx------`.
+
+**A3. Make key 1 (the Mac key).**
+
+```bash
+age-keygen -o ~/ocp-keys/ocp-offsite-ari.key
+```
+
+What it does: writes a new key pair to the file and prints `Public key: age1…`.
+Copy that `age1…` line into a note (it is **not** secret). Then lock the file:
+
+```bash
+chmod 600 ~/ocp-keys/ocp-offsite-ari.key
+```
+
+Check: `ls -l ~/ocp-keys` shows `-rw-------` for the file. Also save the file's content
+(`cat ~/ocp-keys/ocp-offsite-ari.key`, 3 lines) as a secure note in your password manager,
+then press **Cmd+K** to clear the terminal.
+
+**A4. Make key 2 (the paper key).**
+
+```bash
+age-keygen -o ~/ocp-keys/ocp-offsite-paper.key
+```
+
+Copy its `Public key: age1…` line into the same note (now you have **two** `age1…` lines).
+Print the file (the secret is the line starting `AGE-SECRET-KEY-1`), write on the sheet the date,
+"Geo-Expert backup key", and "OneDrive of Ari, folder GeoExpert-Backups/db". Check the print is
+readable, put it in an envelope / safe. Keep the file for now: step C4 tests the paper copy,
+then deletes the file.
+
+**Never** put a private key (`AGE-SECRET-KEY-…`) on the server, in OneDrive, in git or in a chat.
+The server script refuses to run if it finds one.
+
+#### Part B — on the server (SSH as root)
+
+**B1. Check the processor type.**
+
+```bash
+uname -m
+```
+
+Must print `x86_64` (the rclone download below is for that). Anything else: stop and report.
+
+**B2. Install age and unzip from Ubuntu.**
+
+```bash
+apt install -y age unzip
+```
+
+Check: `age --version` prints a version.
+
+**B3. Install rclone from the official release, pinned and checksum-checked** (not `apt`: the
+Ubuntu package is old, PM decision A3). Pinned version: **v1.75.2** (released 2026-10-09; the
+SHA-256 below is the `linux-amd64.zip` line of the release's `SHA256SUMS` file, and a download on
+2026-11-06 gave the same value). Type one line at a time:
+
+```bash
+RCLONE_VERSION=v1.75.2
+RCLONE_SHA256=349ac8fba6ff65d6247043f1750cdcb518ec5d500ef91463a10d37c0ccdf3702
+cd /tmp
+curl -fsSLO "https://downloads.rclone.org/${RCLONE_VERSION}/rclone-${RCLONE_VERSION}-linux-amd64.zip"
+echo "${RCLONE_SHA256}  rclone-${RCLONE_VERSION}-linux-amd64.zip" | sha256sum -c -
+```
+
+What it does: the first two lines remember the version and its fingerprint; `curl` downloads the
+zip; `sha256sum -c` compares the download's fingerprint with the pinned one.
+Check: the last line prints `rclone-v1.75.2-linux-amd64.zip: OK`. If it says `FAILED`: **stop**,
+delete the zip, report. Only after `OK`:
+
+```bash
+unzip -q "rclone-${RCLONE_VERSION}-linux-amd64.zip"
+install -o root -g root -m 755 "rclone-${RCLONE_VERSION}-linux-amd64/rclone" /usr/local/bin/rclone
+rm -rf "rclone-${RCLONE_VERSION}-linux-amd64" "rclone-${RCLONE_VERSION}-linux-amd64.zip"
+cd ~
+rclone version
+```
+
+What it does: unpacks, copies the program to `/usr/local/bin` (owner root, everyone may run it),
+deletes the download. Check: `rclone version` prints `rclone v1.75.2` on the first line.
+(If the SSH session closed in between, type the two `RCLONE_…=` lines again.)
+Upgrading later = change both pinned values here on purpose, then repeat B3.
+
+**B4. Connect rclone to OneDrive** (you need the Mac for one step in the middle).
+
+```bash
+rclone config
+```
+
+Answer the questions like this (wording can differ a little between versions):
+
+| rclone asks | You type |
+|---|---|
+| `n) New remote` … | `n` |
+| name | `ocp-offsite` |
+| Storage | `onedrive` (type the word, or its number from the list) |
+| client_id, client_secret | press Enter (empty) |
+| region | `global` (or its number) |
+| access_scopes (may be under "Edit advanced config? y/n" → `y`) | `Files.Read Files.ReadWrite offline_access` |
+| any other advanced question | press Enter (keep default; `hard_delete` stays `false`) |
+| Use web browser to automatically authenticate? | `n` (the server has no browser) |
+
+rclone now prints a line like `rclone authorize "onedrive" "…"`. On the **Mac**, paste that
+**exact** line into Terminal and press Enter. A browser opens: sign in with your Microsoft
+account, read the permission page (it should list access to your files and "maintain access";
+**not** SharePoint sites; if it does, note it for the report), click **Accept**. The Mac terminal
+prints a block starting `{"access_token":`. Select it with the mouse, copy, paste it into the
+**server** prompt. Then:
+
+| rclone asks | You type |
+|---|---|
+| type of connection | `OneDrive Personal` (or its number) |
+| drive / "Is that okay?" | `y` |
+| keep this remote? | `y` |
+| last menu | `q` |
+
+Then on the Mac: **Cmd+K** (clear the terminal) and copy any other text (clears the clipboard).
+Never use `rclone config create … token=…` (it would save the token in the shell history).
+
+NEEDS VERIFICATION (report the result): where the menu asks for `access_scopes` in v1.75.2, and
+whether rclone works with only these three scopes. If B6 or B10 fails with an "access denied" /
+scope error, run `rclone config` again, edit `ocp-offsite`, set access_scopes to
+`Files.Read Files.ReadWrite Files.Read.All Files.ReadWrite.All offline_access` (rclone's preset
+without SharePoint), redo the browser step, and tell the PM.
+
+**B5. Lock the rclone config.**
+
+```bash
+chmod 600 /root/.config/rclone/rclone.conf
+ls -l /root/.config/rclone/rclone.conf
+```
+
+Check: the line starts with `-rw-------` and shows `root root`. Do **not** `cat` this file.
+
+**B6. Fence rclone into the folder GeoExpert-Backups.** First find the folder's ID:
+
+```bash
+rclone lsjson --dirs-only ocp-offsite: | grep '"Name":"GeoExpert-Backups"'
+```
+
+What it does: lists your OneDrive's top folders (only on your screen) and keeps the line for
+GeoExpert-Backups. Copy the value after `"ID":"` up to the next `"` (looks like
+`ABC123…!101`; not secret). Then (replace `<ID>`):
+
+```bash
+rclone config update ocp-offsite root_folder_id '<ID>'
+rclone lsf ocp-offsite:
+```
+
+Check: `rclone lsf ocp-offsite:` now shows **only** what is inside GeoExpert-Backups (nothing at
+first) — **no** Documents, Pictures, etc. Then make the `db` folder:
+
+```bash
+rclone mkdir ocp-offsite:db
+rclone lsf ocp-offsite:
+```
+
+Check: prints `db/`, and on onedrive.com GeoExpert-Backups now has a `db` folder.
+
+NEEDS VERIFICATION: that `lsjson` shows an `ID` and that root_folder_id works on OneDrive Personal.
+**If it does not** (lsf still shows Documents etc., or an error): use the PM-approved fallback.
+Remove the fence line (`rclone config update ocp-offsite root_folder_id ''`, then check
+`rclone lsf ocp-offsite:` shows your top folders again, including `GeoExpert-Backups/`), then
+`rclone mkdir ocp-offsite:GeoExpert-Backups/db`, and in step B8 add the line
+`OFFSITE_FENCE=fixed_path`. The script then uses only `ocp-offsite:GeoExpert-Backups/db` and
+refuses any other path. Report which way you used.
+
+**B7. Put the two PUBLIC keys on the server.**
+
+```bash
+mkdir -p /root/.config/ocp && chmod 700 /root/.config/ocp
+nano /root/.config/ocp/age_recipients.txt
+```
+
+In nano type (paste) the two `age1…` lines from your note, one per line (a first line
+`# Mac key, paper key` is allowed). Save: **Ctrl+O**, Enter, **Ctrl+X**. Then:
+
+```bash
+chmod 600 /root/.config/ocp/age_recipients.txt
+grep -c '^age1' /root/.config/ocp/age_recipients.txt
+```
+
+Check: prints `2`. (The script refuses anything else, and refuses any `AGE-SECRET-KEY` line.)
+
+**B8. Alert setup (healthchecks.io).** In a browser: sign up at healthchecks.io (free plan; read
+the plan's limits once — NEEDS VERIFICATION), **Add Check** → name `ocp-offsite`, Period **1 day**,
+Grace **2 hours**, email = your address. Copy its ping URL (`https://hc-ping.com/…`). On the server:
+
+```bash
+cd ~/oil-change-predictor && git pull
+cp deploy/offsite.env.example /root/.config/ocp/offsite.env
+chmod 600 /root/.config/ocp/offsite.env
+nano /root/.config/ocp/offsite.env
+```
+
+Put the URL after `OFFSITE_PING_URL=` (no spaces, no quotes). If you used the fallback in B6,
+also remove the `# ` in front of `OFFSITE_FENCE=fixed_path`. Save (Ctrl+O, Enter, Ctrl+X).
+Check: `grep -c '^OFFSITE_PING_URL=https://hc-ping.com/' /root/.config/ocp/offsite.env` prints `1`.
+The URL lives only in this file: not in git, not in the app `.env`, not in a chat.
+
+**B9. Install the timer.**
+
+```bash
+cp deploy/systemd/ocp-offsite.service deploy/systemd/ocp-offsite.timer /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now ocp-offsite.timer
+systemctl list-timers ocp-offsite.timer
+systemd-analyze calendar "*-*-* 03:20:00 Asia/Ulaanbaatar"
+```
+
+What it does: copies the two unit files, makes systemd read them, turns the timer on.
+Check: `list-timers` shows NEXT at 19:20 UTC (03:20 Ulaanbaatar); `systemd-analyze` shows
+"Next elapse" … `19:20:00 UTC`.
+
+**B10. First run now.** The script needs a dump younger than 3 h, so make one first:
+
+```bash
+systemctl start ocp-backup.service
+systemctl start ocp-offsite.service
+journalctl -u ocp-offsite -n 5 --no-pager
+rclone lsf ocp-offsite:db
+```
+
+Check: the journal shows `offsite: OK uploaded N (oil_change_…, 8K) -> ocp-offsite:db, N kept,
+0 deleted` and `offsite: ping sent`; `rclone lsf` lists the `.sql.gz.age` names; healthchecks.io
+shows the check green. Also run once and send the output (one line, names only):
+`rclone backend features ocp-offsite: | grep -i hash` (NEEDS VERIFICATION that OneDrive's
+`QuickXorHash` is listed: then rclone also checks the hash after each upload).
+
+#### Part C — restore test on the Mac (now, then first week of every month)
+
+This proves the copies can really be opened. It needs Docker Desktop running. Nothing readable is
+left behind: temp folder + throw-away database in memory, both deleted at the end.
+
+**C1. Mac rclone remote, read-only (once).** Same as B4, on the Mac, with these differences:
+name `ocp-offsite`, access_scopes **`Files.Read offline_access`** (read-only), "Use web browser"
+**`y`** (the browser opens directly). Then fence it like B6 (same folder ID):
+`rclone config update ocp-offsite root_folder_id '<ID>'` and check `rclone lsf ocp-offsite:`
+prints only `db/`. (Fallback way from B6: skip the fence and run C2 with
+`OFFSITE_FENCE=fixed_path` in front.) No rclone on the Mac? You can also download a
+`.sql.gz.age` file from onedrive.com and pass its path in C2.
+
+**C2. Run the test.**
+
+```bash
+cd ~/Downloads/Capstone/oil-change-predictor
+scripts/offsite_restore_test.sh --key ~/ocp-keys/ocp-offsite-ari.key
+```
+
+(or with a downloaded file: `scripts/offsite_restore_test.sh --key ~/ocp-keys/ocp-offsite-ari.key ~/Downloads/oil_change_<…>.sql.gz.age`)
+
+What it does: downloads the newest copy, decrypts it with your key, loads it into a throw-away
+Postgres 16 container, compares rows per table, deletes everything.
+Check (**pass** = all of these): last line `offsite_restore_test: OK, N tables, every row count
+matches, dump 0 days old`; every table line ends `OK`; the `top level of ocp-offsite:` line shows
+only `db/`; exit code 0 (`echo $?` prints `0`). The output has only table names and numbers:
+send it to the PM as it is. A dump more than 2 days old is **not** a pass (the nightly upload is
+not working).
+
+**C3. Keep one copy offline** (R1): after the monthly test, copy the tested `.age` file from
+onedrive.com to a USB stick. It is encrypted, so this is safe.
+
+**C4. Test the paper key once (now), then delete its file.**
+
+```bash
+scripts/offsite_restore_test.sh --key ~/ocp-keys/ocp-offsite-paper.key
+```
+
+Check: same OK as C2. Now type the `AGE-SECRET-KEY-1…` line **from the printed sheet** into a
+new file and test that too (this proves the print is readable):
+
+```bash
+nano /tmp/paper-test.key
+chmod 600 /tmp/paper-test.key
+scripts/offsite_restore_test.sh --key /tmp/paper-test.key
+```
+
+Check: OK again (if "could not decrypt": a typo, compare with the sheet). Then delete both files:
+
+```bash
+rm /tmp/paper-test.key ~/ocp-keys/ocp-offsite-paper.key
+```
+
+Empty the printer queue. From now on the paper sheet is the only copy of key 2.
+
+#### Part D — test the alert once
+
+```bash
+mv /root/.config/ocp/age_recipients.txt /root/.config/ocp/age_recipients.off
+systemctl start ocp-offsite.service
+journalctl -u ocp-offsite -n 3 --no-pager
+```
+
+Check: `offsite: FAILED step=check recipients file … missing`, and within a few minutes an
+email from healthchecks.io says the check is **down**. Put the file back and run again:
+
+```bash
+mv /root/.config/ocp/age_recipients.off /root/.config/ocp/age_recipients.txt
+systemctl start ocp-offsite.service
+journalctl -u ocp-offsite -n 3 --no-pager
+```
+
+Check: `offsite: OK uploaded 0 …` and healthchecks.io is green again. Only after B10, C2, C4 and
+D all passed is 8.2c done.
+
+#### Day to day: what the log lines mean
+
+`journalctl -u ocp-offsite -n 20 --no-pager` shows one clear line per night.
+
+| Line | Meaning | What to do |
+|---|---|---|
+| `offsite: OK uploaded 1 (…) -> ocp-offsite:db, 30 kept, 1 deleted` | all good | nothing |
+| `FAILED step=check newest dump … h old / is empty - did ocp-backup run?` | the 03:00 backup did not run or failed | `journalctl -u ocp-backup -n 20 --no-pager` |
+| `FAILED step=check … recipients / rclone config / folder fence …` | a setup file was changed | redo that setup step (B5–B7) |
+| `FAILED step=check dump … is damaged` | an old local dump is broken; others were uploaded | report; it ages out after 14 days |
+| `FAILED step=list` or `step=upload` | OneDrive or the token does not work | try `rclone lsf ocp-offsite:db`; if it says the token is invalid or expired: `rclone config reconnect ocp-offsite:` (NEEDS VERIFICATION on a server without a browser), else redo B4 + B6 |
+| `FAILED step=verify remote X bytes, local Y bytes` | the upload arrived broken | nothing is deleted; the next run re-uploads it; report if it repeats |
+| `offsite: WARNING ping failed` | healthchecks.io not reachable | the backup itself is fine |
+
+Nothing is ever deleted from OneDrive in a run that failed. Missed nights are uploaded by the next
+good run (up to 14 days back).
+
+**If the server may have been broken into:** the OneDrive token on it can reach your **whole**
+OneDrive (no folder-only token exists for a personal account, plan §2a). At once: on
+account.microsoft.com → Privacy → apps and services that can access your data (exact menu name
+NEEDS VERIFICATION), remove rclone; change your Microsoft password.
+
+**Restore from the off-site copy** (server gone): on a new server do §1–§4, then on the Mac
+decrypt the newest copy (`age -d -i ~/ocp-keys/ocp-offsite-ari.key -o dump.sql.gz <file>.age`,
+in a local folder, **not** in a OneDrive / iCloud folder), copy `dump.sql.gz` to the server
+(`scp`), and follow "Real restore" above. Delete the Mac copy afterwards.
 
 ## 13. Login: 30-day "remember me" and logging everyone out (task 8.5r, D-117)
 

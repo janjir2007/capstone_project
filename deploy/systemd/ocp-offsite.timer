@@ -1,0 +1,11 @@
+# Every day at 03:20 Ulaanbaatar time (= 19:20 UTC), 20 min after ocp-backup (task 8.2c).
+# Persistent=true: if the server was off at 03:20, the copy runs once as soon as it is back up.
+[Unit]
+Description=Daily encrypted off-server copy at 03:20 Asia/Ulaanbaatar
+
+[Timer]
+OnCalendar=*-*-* 03:20:00 Asia/Ulaanbaatar
+Persistent=true
+
+[Install]
+WantedBy=timers.target

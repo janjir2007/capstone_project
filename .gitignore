@@ -89,3 +89,8 @@ backups/
 
 # Artlab Postman collection: its login example holds a literal username/password (9.12-2 A)
 docs/artlab_collection_v2_new.json
+
+# --- Off-server backup secrets (task 8.2c): encrypted copies, age private keys, rclone token
+*.age
+*.key
+rclone.conf

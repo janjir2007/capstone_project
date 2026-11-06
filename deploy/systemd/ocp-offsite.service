@@ -1,0 +1,20 @@
+# Nightly encrypted off-server copy to OneDrive (task 8.2c), started by ocp-offsite.timer.
+# Install + setup: docs/deploy.md §12 "Off-server copy". One run by hand:
+#   systemctl start ocp-offsite.service && journalctl -u ocp-offsite -n 20 --no-pager
+# After= only ORDERS the jobs: if ocp-backup is still running, this one waits for it. There is
+# deliberately no Wants=/Requires= on ocp-backup (that would start a second backup).
+[Unit]
+Description=Oil change predictor: encrypted off-server copy (scripts/offsite_backup.sh)
+After=ocp-backup.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Holds only OFFSITE_PING_URL (mode 600, never in git). Template: deploy/offsite.env.example
+EnvironmentFile=/root/.config/ocp/offsite.env
+Environment=BACKUP_DIR=/root/backups
+Environment=OFFSITE_KEEP_DAYS=30
+Environment=OFFSITE_MIN_KEEP=7
+Environment=MAX_LOCAL_AGE_H=3
+TimeoutStartSec=30min
+ExecStart=/root/oil-change-predictor/scripts/offsite_backup.sh

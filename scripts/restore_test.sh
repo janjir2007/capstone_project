@@ -28,12 +28,8 @@ echo "restore_test: $file -> scratch database $scratch (live: $live_db, only rea
 dc exec -T db sh -c 'createdb -U "$POSTGRES_USER" "$1"' _ "$scratch"
 gunzip -c "$file" | psql_on "$scratch" > /dev/null
 
-# Rows per table IN THE DUMP: pg_dump writes one "COPY public.t (...) FROM stdin;" block per table
-# (also for empty tables), one line per row (newlines inside values are escaped), ended by "\.".
-expected="$(gunzip -c "$file" | awk '
-  /^COPY / { table = $2; rows = 0; inside = 1; next }
-  inside && /^\\\.$/ { print table, rows; inside = 0; next }
-  inside { rows++ }' | sort)"
+# Rows per table IN THE DUMP (one COPY block per table; rule in dump_row_counts.awk).
+expected="$(gunzip -c "$file" | awk -f "$(dirname "$0")/dump_row_counts.awk" | sort)"
 [[ -n "$expected" ]] || { echo "restore_test: FAILED: no tables in the dump" >&2; exit 1; }
 
 # One count(*) query per table, run on the scratch DB and (for information) on the live DB.
