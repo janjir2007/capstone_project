@@ -257,8 +257,10 @@ a.logout:hover {color: var(--pri-dark);}
 .rec-banner.warn {background: #FFF4E5; color: #7A3E00;}
 .rec-banner.new {background: #EAF0FA; color: #1F4E9D;}
 .rec-banner.phone, .rec-banner.error {background: #F3F4F6; color: #4B5563;}
-/* 9.16a: reserved for the unpaid notice (9.16b); hidden with its wrapper so it takes no gap */
-.st-key-rec_unpaid, [data-testid="stLayoutWrapper"]:has(> .st-key-rec_unpaid) {display: none !important;}
+/* 9.16b: plate screen unpaid notice (drawn only when the truck has an «Авлага» service) */
+.unpaid-box {background: #FFF4E5; color: #7A3E00; border-radius: 12px; padding: 12px 14px;}
+.unpaid-box .t {font-size: 15px; font-weight: 600;} .unpaid-box .a {font-size: 14px; margin-top: 2px;}
+.st-key-rec_unpaid_btns {flex-wrap: nowrap !important; gap: 8px !important;}
 .rec-banner svg {width: 20px; height: 20px; fill: currentColor; flex: none;}
 /* Streamlit 1.64 text input = react-aria: the visible box is stTextInputRootElement */
 [class*="st-key-plate_field"] [data-testid="stTextInputRootElement"] {height: 64px; background: #fff !important;
@@ -299,6 +301,12 @@ a.logout:hover {color: var(--pri-dark);}
 .tl .s {font-size: 14px; color: var(--muted); margin-top: 2px;}
 /* 9.6b-5: payment pill under a service (card timeline, dashboard history) */
 .pill-st.pay {padding: 2px 10px; font-size: 12px; margin-top: 6px;}
+/* 9.16b: payment block of the latest service (truck card, dashboard panel) */
+.payb .top {display: flex; align-items: center; justify-content: space-between; gap: 12px;}
+.payb .pill-st {margin: 0;} .payb .amt {font-size: 18px; font-weight: 600; white-space: nowrap;
+  font-variant-numeric: tabular-nums;}
+.payb .note {font-size: 13px; color: var(--muted); margin-top: 6px;}
+[class*="st-key-pay_btns_"] {flex-wrap: nowrap !important; gap: 8px !important;}
 
 /* reminders / dashboard tiles */
 .tiles {display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 4px;}
@@ -690,15 +698,19 @@ def _history_sub(service: dict) -> str:
 
 
 def payment_pill_html(service: dict) -> str:
-    """Task 9.6b-5: «Төлсөн» / «Төлөөгүй» / «Төлсөн (дараа)» / «Тодорхойгүй» pill; '' while payments
-    are not connected (the API sends null), so the screen stays exactly as before."""
+    """Payment pill of one history row: «Төлсөн» / «Авлага» / «Хүлээгдэж байна» (9.16b), with the price
+    when there is one («Авлага · 60 000₮»); '' for a service saved before 9.16b (the API sends null)."""
     badge = logic.payment_badge(service)
     if badge is None:
         return ""
     label, fg, bg = badge
-    due = logic.money_text(service.get("amount_due")) if service.get("amount_due") else ""
-    text = f"{label} · {due}" if due else label
-    return f'<span class="pill-st pay" style="color:{fg};background:{bg}">{html.escape(text)}</span>'
+    price = service.get("price_mnt")
+    if price is None:
+        price = service.get("amount_due")  # Artlab-era answers (9.6b-5) had only amount_due
+    text = html.escape(label)
+    if price is not None:  # the amount never splits across lines («85 000₮» with a no-break space)
+        text += " · " + html.escape(logic.money_text(price)).replace(" ", "\u00a0")
+    return f'<span class="pill-st pay" style="color:{fg};background:{bg}">{text}</span>'
 
 
 def render_history(history: list[dict]) -> None:
@@ -716,3 +728,118 @@ def render_history(history: list[dict]) -> None:
             for s in history
         )
         html_block(f'<div class="tl">{rows}</div>')
+
+
+# --- 9.16b: manual payment of the latest service (truck card + dashboard panel) --------------
+
+PAY_MSG = "pay_msg"      # (where, level, text): shown once in that block
+PAY_UNDO = "pay_undo"    # service id whose «Буцаах» waits for «Тийм»
+PAY_EDIT = "pay_edit"    # service id whose price field is open
+
+
+def _pay_say(where: str, level: str, text: str) -> None:
+    st.session_state[PAY_MSG] = (where, level, text)
+
+
+def on_payment(service_id: int, action: str, where: str) -> None:
+    """«Төлсөн» / «Авлага» / «Буцаах» (after «Тийм»). The screen reloads the card on the next draw."""
+    st.session_state.pop(PAY_UNDO, None)
+    try:
+        api_client.set_payment(service_id, action)
+    except api_client.ApiError as exc:
+        _pay_say(where, "error", logic.payment_error_text(exc.status, exc.detail))
+    else:
+        _pay_say(where, "success", logic.PAYMENT_DONE[action])
+
+
+def on_undo_ask(service_id: int) -> None:
+    st.session_state[PAY_UNDO] = service_id
+
+
+def on_undo_cancel() -> None:
+    st.session_state.pop(PAY_UNDO, None)
+
+
+def on_price_open(service_id: int, where: str, price: int | None) -> None:
+    st.session_state[PAY_EDIT] = service_id
+    st.session_state[f"pay_price_{where}"] = logic.price_input_text(price)
+
+
+def on_price_close() -> None:
+    st.session_state.pop(PAY_EDIT, None)
+
+
+def on_price_format(where: str) -> None:
+    """Leaving the field: "85000" -> "85 000" (a wrong value stays as typed)."""
+    key = f"pay_price_{where}"
+    value, error = logic.parse_price(st.session_state.get(key))
+    if error is None:
+        st.session_state[key] = logic.price_input_text(value)
+
+
+def on_price_save(service_id: int, where: str) -> None:
+    """PUT /services/{id}/price; an empty field clears the price."""
+    value, error = logic.parse_price(st.session_state.get(f"pay_price_{where}"))
+    if error:
+        _pay_say(where, "error", error)
+        return
+    try:
+        api_client.set_price(service_id, value)
+    except api_client.ApiError as exc:
+        _pay_say(where, "error", logic.payment_error_text(exc.status, exc.detail))
+        return
+    on_price_close()
+    _pay_say(where, "success", "Үнийг хадгаллаа." if value is not None else "Үнийг арилгалаа.")
+
+
+def payment_panel(service: dict | None, where: str, due_hours: int = 24, boxed: bool = True) -> bool:
+    """Status badge + price + buttons of ONE service (the truck's latest). Nothing for a service saved
+    before 9.16b (status null). ``where`` keeps the widget keys apart ("card", "dash"); ``boxed`` False =
+    inside another card (no card of its own). Returns True when something was drawn."""
+    view = logic.payment_view(service, due_hours)
+    msg = st.session_state.get(PAY_MSG)
+    if msg and msg[0] == where:
+        st.session_state.pop(PAY_MSG, None)
+    else:
+        msg = None
+    if view is None:  # e.g. 409 not_tracked: the reloaded service has no status, the message still shows
+        if msg:
+            getattr(st, msg[1])(msg[2])
+        return False
+    sid = service["id"]
+    with st.container(key=f"{'card_' if boxed else ''}pay_{where}_box"):
+        if msg:
+            getattr(st, msg[1])(msg[2])
+        note = f'<div class="note">{html.escape(view["note"])}</div>' if view["note"] else ""
+        html_block(f'<div class="payb"><div class="top"><span class="pill-st" style="color:{view["fg"]};'
+                   f'background:{view["bg"]}">{html.escape(view["label"])}</span>'
+                   f'<span class="amt">{html.escape(view["price"])}</span></div>{note}</div>')
+        if st.session_state.get(PAY_UNDO) == sid:
+            st.warning("«Төлсөн» гэснээ буцаах уу?")
+            with st.container(horizontal=True, key=f"pay_btns_undo_{where}"):
+                st.button("Үгүй", key=f"pay_undo_no_{where}", width="stretch", on_click=on_undo_cancel)
+                st.button("Тийм, буцаах", key=f"pay_undo_yes_{where}", type="primary", width="stretch",
+                          on_click=on_payment, args=(sid, "undo_paid", where))
+        elif view["actions"]:
+            with st.container(horizontal=True, key=f"pay_btns_{where}"):
+                for action in view["actions"]:
+                    label = logic.PAYMENT_ACTION_LABELS[action]
+                    if action == "undo_paid":
+                        st.button(label, key=f"pay_{action}_{where}", width="stretch", on_click=on_undo_ask,
+                                  args=(sid,), icon=":material/undo:")
+                    else:
+                        st.button(label, key=f"pay_{action}_{where}", width="stretch",
+                                  type="primary" if action == "paid" else "secondary",
+                                  on_click=on_payment, args=(sid, action, where))
+        if st.session_state.get(PAY_EDIT) == sid:
+            st.text_input("Нийт үнэ (₮)", key=f"pay_price_{where}", placeholder="Жишээ нь 85 000",
+                          on_change=on_price_format, args=(where,), help="Хоосон бол үнийг арилгана.")
+            with st.container(horizontal=True, key=f"pay_btns_price_{where}"):
+                st.button("Болих", key=f"pay_price_cancel_{where}", width="stretch", on_click=on_price_close)
+                st.button("Хадгалах", key=f"pay_price_save_{where}", type="primary", width="stretch",
+                          on_click=on_price_save, args=(sid, where))
+        else:
+            st.button("Үнэ засах" if service.get("price_mnt") is not None else "Үнэ оруулах",
+                      key=f"pay_price_open_{where}", type="tertiary", icon=":material/edit:",
+                      on_click=on_price_open, args=(sid, where, service.get("price_mnt")))
+    return True

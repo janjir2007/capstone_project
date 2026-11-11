@@ -522,7 +522,7 @@ def picked_row(rows: list[int], cells: list[tuple[int, str]]) -> int | None:
 
 
 FILTER_KEYS = ("date_from", "date_to", "company_id", "route", "oil_grade",
-               "payment_status",  # GET /vehicles/search params; payment_status: 9.6b-5, only when connected
+               "payment_status",  # GET /vehicles/search params; payment_status: 9.6b-5, manual since 9.16b
                "segment")         # 9.12: a segment card or the «Сегмент» filter (?segment=)
 FILTER_ORDER_ERROR = "«Хэднээс» огноо «хэдийг хүртэл»-ээс хойш байна."
 
@@ -557,8 +557,9 @@ def filters_text(query: str, filters: dict[str, Any], company_names: dict[int, s
     return " · ".join(parts) or "Шүүлтүүргүй — бүх машин"
 
 
+PRICE_COLUMN, PAYMENT_COLUMN = "Үнэ (₮)", "Төлбөр"  # 9.16b
 EXPORT_COLUMNS = ("Огноо", "Дугаар", "Компани", "Маршрут", "Тос", "Литр", "Гүйлт (км)", "Моторын цаг",
-                  TARGET_COLUMN, "Жолооч", "Утас")
+                  TARGET_COLUMN, "Жолооч", "Утас", PRICE_COLUMN, PAYMENT_COLUMN)
 
 
 def service_export_rows(vehicles: list[dict]) -> list[dict[str, Any]]:
@@ -579,6 +580,8 @@ def service_export_rows(vehicles: list[dict]) -> list[dict[str, Any]]:
                 "Моторын цаг": s.get("engine_hours"),  # 9.1c: mine trucks record hours, not km (D-006)
                 "Жолооч": s.get("driver_name"),
                 "Утас": phone_text(s.get("driver_phone")) or None,
+                PRICE_COLUMN: s.get("price_mnt"),  # 9.16b: a number (None = no price)
+                PAYMENT_COLUMN: PAYMENT_LABELS.get(s.get("payment_status") or ""),  # None for old services
             })
     rows.sort(key=lambda r: r["Дугаар"] or "")
     rows.sort(key=lambda r: r["Огноо"] or "", reverse=True)  # stable: same date keeps plate order
@@ -684,6 +687,7 @@ FORM_FIELDS = (
     "liters",
     "driver_name",
     "driver_phone",
+    "price_mnt",  # 9.16b: «Нийт үнэ (₮)», optional, never pre-filled (prices change)
 )  # 9.5a: no destination / route (the DB columns and old values stay)
 
 
@@ -788,6 +792,12 @@ def build_service_payload(
     for name in ("driver_name", "driver_phone"):
         if _clean(form.get(name)):
             payload[name] = _clean(form.get(name))
+    # 9.16b: «Нийт үнэ (₮)», optional; typed as text ("85 000"), sent as a whole number
+    price, price_error = parse_price(form.get("price_mnt"))
+    if price_error:
+        errors.append(price_error)
+    elif price is not None:
+        payload["price_mnt"] = price
     return payload, errors
 
 
@@ -823,20 +833,24 @@ def error_messages(status: int, detail: Any) -> list[str]:
     return [f"Серверийн алдаа ({status}). Дахин оролдоно уу."]
 
 
-# ---------------------------------------------------------------- task 9.6b-5: Artlab payments (view only)
-# The API sends payment fields only once payments are connected (first successful Artlab sync);
-# before that every one is null and the screens show NO payment element at all.
+# ---------------------------------------------------------------- payments
+# Task 9.16b (contract v0.22): the API computes each service's MANUAL payment status: paid «Төлсөн»,
+# unpaid «Авлага», pending «Хүлээгдэж байна»; null = saved before 9.16b -> the screens show nothing for it.
+# paid_later / unknown are the Artlab values (9.6b-5), not produced while Artlab is off.
 
 PAYMENT_LABELS: dict[str, str] = {
     "paid": "Төлсөн",
-    "unpaid": "Төлөөгүй",
+    "unpaid": "Авлага",  # D-140 (was «Төлөөгүй»)
+    "pending": "Хүлээгдэж байна",
     "paid_later": "Төлсөн (дараа)",
     "unknown": "Тодорхойгүй",
 }
+PAYMENT_FILTER = ("unpaid", "pending", "paid")  # dashboard «Төлбөр» filter (the manual values only)
 # (text color, tint): the same AA pairs as the status pills; paid later = the blue segment color.
 PAYMENT_COLORS: dict[str, tuple[str, str]] = {
     "paid": STATUS_COLORS["ok"],
     "unpaid": STATUS_COLORS["overdue"],
+    "pending": PENDING_COLORS,
     "paid_later": ("#1F4E9D", "#E8EEF9"),
     "unknown": PENDING_COLORS,
 }
@@ -853,7 +867,7 @@ UB = timezone(timedelta(hours=8), name="Asia/Ulaanbaatar")
 
 
 def payment_badge(service: dict | None) -> tuple[str, str, str] | None:
-    """(label, color, tint) for a service's payment, or None when payments are not connected."""
+    """(label, color, tint) for a service's payment, or None (saved before 9.16b: show nothing)."""
     status = (service or {}).get("payment_status")
     if status not in PAYMENT_LABELS:
         return None
@@ -861,7 +875,7 @@ def payment_badge(service: dict | None) -> tuple[str, str, str] | None:
 
 
 def payments_shown(history: list[dict]) -> bool:
-    """True when the API sent payment fields (connected); False -> the card looks exactly as before."""
+    """True when at least one service has a payment status; False -> the card looks exactly as before."""
     return any(s.get("payment_status") for s in history)
 
 
@@ -1023,3 +1037,163 @@ def preview_rows(preview: dict) -> list[tuple[str, str]]:
         if pace.get("reminder_on"):
             rows.append(("Сануулга", pace["reminder_on"]))
     return rows
+
+
+# ---------------------------------------------------------------- task 9.16b: manual payment
+
+MAX_PRICE_MNT = 100_000_000  # the API's limit (contract v0.22): catches extra zeros
+PRICE_NOT_GIVEN = "Үнэ оруулаагүй"
+PRICE_NOT_WHOLE = "Үнийг бүхэл тоогоор оруулна уу (жишээ нь 85 000)."
+PRICE_TOO_BIG = "Үнэ хэт их байна (100 000 000₮ хүртэл)."
+
+
+def parse_price(raw: Any) -> tuple[int | None, str | None]:
+    """«Нийт үнэ (₮)» field -> (whole tugrik or None, Mongolian error or None).
+
+    Spaces (also no-break / thin), commas, apostrophes and «₮» are thousands decoration: "85 000",
+    "85,000", "85000₮" -> 85000. Empty -> (None, None). A decimal or a minus is refused, not rounded.
+    """
+    if raw is None:
+        return None, None
+    if isinstance(raw, int) and not isinstance(raw, bool):
+        value = raw
+    else:
+        text = str(raw)
+        for mark in (" ", "\u00a0", "\u202f", "\u2009", ",", "'", "₮", "т", "Т"):
+            text = text.replace(mark, "")
+        if not text:
+            return None, None
+        if not text.isdigit():
+            return None, PRICE_NOT_WHOLE
+        value = int(text)
+    if value < 0:
+        return None, PRICE_NOT_WHOLE
+    if value > MAX_PRICE_MNT:
+        return None, PRICE_TOO_BIG
+    return value, None
+
+
+def price_input_text(value: int | None) -> str:
+    """The value as the price field shows it: 85000 -> '85 000' (thousands spaced), None -> ''."""
+    return "" if value is None else format_number(value)
+
+
+def price_text(price: int | float | None) -> str:
+    """85000 -> '85 000₮'; None -> «Үнэ оруулаагүй»."""
+    return PRICE_NOT_GIVEN if price is None else money_text(price)
+
+
+def _local(moment: str | None) -> str | None:
+    """API datetime -> 'YYYY-MM-DD HH:MM' in Ulaanbaatar; None when missing or unreadable."""
+    when = _when(moment)
+    return when.astimezone(UB).strftime("%Y-%m-%d %H:%M") if when else None
+
+
+def payment_view(service: dict | None, due_hours: int = 24) -> dict[str, Any] | None:
+    """The truck card's payment block for one service; None when the service has no status (old rows).
+
+    Keys: status, label, fg, bg, price («85 000₮» / «Үнэ оруулаагүй»), note (the small line), actions (the
+    buttons, in order: "paid" «Төлсөн», "unpaid" «Авлага», "undo_paid" «Буцаах»).
+    Price 0 = nothing owed: «Төлсөн», no button at all (the API refuses «Авлага» / «Буцаах» for it).
+    """
+    badge = payment_badge(service)
+    if service is None or badge is None:
+        return None
+    status = service["payment_status"]
+    label, fg, bg = badge
+    price = service.get("price_mnt")
+    note, actions = "", []
+    if status == "pending":
+        note, actions = f"{due_hours} цагийн дараа Авлага болно", ["paid", "unpaid"]
+    elif status == "unpaid":
+        since = _local(service.get("unpaid_since"))
+        note, actions = (f"{since[:10]}-наас" if since else ""), ["paid"]
+    elif status == "paid":
+        if price == 0:
+            note = "Үнэ 0₮ · төлөх зүйлгүй"
+        else:
+            paid = _local(service.get("paid_at"))
+            note = f"Төлсөн: {paid}" if paid else ""
+            actions = ["undo_paid"] if service.get("paid_at") else []
+    return {"status": status, "label": label, "fg": fg, "bg": bg, "price": price_text(price),
+            "note": note, "actions": actions}
+
+
+PAYMENT_ACTION_LABELS: dict[str, str] = {"paid": "Төлсөн", "unpaid": "Авлага", "undo_paid": "Буцаах"}
+PAYMENT_DONE: dict[str, str] = {"paid": "Төлсөн гэж тэмдэглэлээ.", "unpaid": "Авлага гэж тэмдэглэлээ.",
+                                "undo_paid": "«Төлсөн»-ийг буцаалаа."}
+PAYMENT_CONFLICTS: dict[str, str] = {
+    "not_tracked": "Энэ үйлчилгээ төлбөрийн бүртгэл эхлэхээс өмнө хадгалагдсан тул төлбөр тэмдэглэх боломжгүй.",
+    "price_zero": "Үнэ 0₮ тул төлөх зүйлгүй. Авлага болгох бол эхлээд үнээ засна уу.",
+}
+
+
+def payment_error_text(status: int, detail: Any) -> str:
+    """One friendly Mongolian sentence for an error of POST /services/{id}/payment or PUT .../price."""
+    if status == 409 and isinstance(detail, dict) and detail.get("code") in PAYMENT_CONFLICTS:
+        return PAYMENT_CONFLICTS[detail["code"]]
+    if status == 404:
+        return "Үйлчилгээ олдсонгүй. Хуудсаа шинэчилнэ үү."
+    if status == 422:
+        return "Үнийг бүхэл тоогоор оруулна уу (0 – 100 000 000₮)."
+    return " ".join(error_messages(status, detail))
+
+
+def unpaid_notice(card: dict | None) -> dict[str, Any] | None:
+    """Plate screen (9.16b): the truck's «Авлага» services, or None when it has none.
+
+    Keys: text «Өмнөх үйлчилгээ (2026-11-12) төлөгдөөгүй» (the OLDEST unpaid date), amount line
+    («80 000₮» / «Үнэ оруулаагүй»; several: «нийт 2 үйлчилгээ · 160 000₮»), service_ids (to pay them all).
+    """
+    owed = [s for s in (card or {}).get("history") or [] if s.get("payment_status") == "unpaid"]
+    if not owed:
+        return None
+    oldest = min(owed, key=lambda s: (s.get("service_date") or "", s.get("id") or 0))
+    total = sum(s.get("price_mnt") or 0 for s in owed)
+    no_price = sum(1 for s in owed if s.get("price_mnt") is None)
+    if len(owed) == 1:
+        amount = price_text(oldest.get("price_mnt"))
+    else:
+        amount = f"нийт {len(owed)} үйлчилгээ · {money_text(total)}"
+        if no_price:
+            amount += f" · {PRICE_NOT_GIVEN}: {no_price}"
+    return {"text": f"Өмнөх үйлчилгээ ({oldest.get('service_date') or NOT_GIVEN}) төлөгдөөгүй",
+            "amount": amount, "service_ids": [s["id"] for s in sorted(owed, key=lambda s: s["id"])]}
+
+
+def receivable_tiles(body: dict | None) -> list[tuple[str, str, str]]:
+    """Dashboard «Төлбөр» tiles (value, unit, label): «Авлага ₮» total + how many services."""
+    body = body or {}
+    return [(format_number(body.get("total_mnt") or 0), "₮", "Авлага"),
+            (str(body.get("count") or 0), "", "Авлагатай үйлчилгээ")]
+
+
+def receivable_rows(body: dict | None) -> list[dict[str, Any]]:
+    """GET /payments/receivables trucks -> rows of the «Төлбөр» list (biggest amount first, as sent)."""
+    rows = []
+    for t in (body or {}).get("trucks") or []:
+        n, no_price = t.get("services") or 0, t.get("services_no_price") or 0
+        all_unpriced = n > 0 and no_price == n  # nothing to add up: show «Үнэ оруулаагүй», not «0₮»
+        what = f"{n} үйлчилгээ" + (f" · {PRICE_NOT_GIVEN}: {no_price}" if no_price and not all_unpriced else "")
+        since = _local(t.get("oldest_unpaid_since"))
+        rows.append({
+            "vehicle_id": t.get("vehicle_id"),
+            "plate": t.get("identifier") or NOT_GIVEN,
+            "company": t.get("company_name") or "",
+            "amount": PRICE_NOT_GIVEN if all_unpriced else money_text(t.get("amount_mnt") or 0),
+            "what": what,
+            "since": f"{since[:10]}-наас" if since else "",
+            "phone": phone_text(t.get("driver_phone")),
+            "tel": tel_url(t.get("driver_phone")),
+        })
+    return rows
+
+
+def saved_payment_text(service: dict | None) -> str:
+    """Success screen line: «Үнэ: 85 000₮ · Хүлээгдэж байна» / «Үнэ оруулаагүй · Хүлээгдэж байна»; '' without a status."""
+    status = (service or {}).get("payment_status")
+    if status not in PAYMENT_LABELS:
+        return ""
+    price = service.get("price_mnt")
+    head = PRICE_NOT_GIVEN if price is None else f"Үнэ: {money_text(price)}"
+    return f"{head} · {PAYMENT_LABELS[status]}"

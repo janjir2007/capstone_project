@@ -664,7 +664,8 @@ def _run(kind: str, started: str, ok: bool | None, last_ok: str | None) -> dict:
 @pytest.mark.parametrize(
     ("service", "expected"),
     [({"payment_status": "paid"}, ("Төлсөн", "#1E7A4C", "#E8F5EE")),
-     ({"payment_status": "unpaid"}, ("Төлөөгүй", "#B42318", "#FDECEC")),
+     ({"payment_status": "unpaid"}, ("Авлага", "#B42318", "#FDECEC")),       # 9.16b (was «Төлөөгүй», D-140)
+     ({"payment_status": "pending"}, ("Хүлээгдэж байна", "#4B5563", "#F3F4F6")),
      ({"payment_status": "paid_later"}, ("Төлсөн (дараа)", "#1F4E9D", "#E8EEF9")),
      ({"payment_status": "unknown"}, ("Тодорхойгүй", "#4B5563", "#F3F4F6")),
      ({"payment_status": None}, None), ({}, None), (None, None), ({"payment_status": "late"}, None)],
@@ -852,3 +853,107 @@ def test_km_api_errors_in_mongolian() -> None:
     assert logic.error_messages(422, "reading_date must be after the latest service (2026-09-01)") == \
         ["Огноо нь сүүлийн тос солилтоос хойш байх ёстой."]
     assert logic.error_messages(422, [{"msg": "Input should be greater than 0"}]) == ["0-ээс их тоо оруулна уу."]
+
+
+
+# ---------------------------------------------------------------- task 9.16b: manual payment
+
+
+@pytest.mark.parametrize(("raw", "expected"), [
+    (None, (None, None)), ("", (None, None)), ("   ", (None, None)),
+    ("85000", (85000, None)), ("85 000", (85000, None)), ("85\u00a0000", (85000, None)), ("85,000₮", (85000, None)),
+    ("0", (0, None)), (120000, (120000, None)), ("100 000 000", (100_000_000, None)),
+    ("85.5", (None, logic.PRICE_NOT_WHOLE)), ("-5", (None, logic.PRICE_NOT_WHOLE)), ("abc", (None, logic.PRICE_NOT_WHOLE)),
+    ("100000001", (None, logic.PRICE_TOO_BIG)), (-1, (None, logic.PRICE_NOT_WHOLE)),
+])
+def test_parse_price(raw, expected):
+    assert logic.parse_price(raw) == expected
+
+
+def test_price_texts():
+    assert logic.price_input_text(85000) == "85 000" and logic.price_input_text(None) == ""
+    assert logic.price_text(85000) == "85 000₮" and logic.price_text(0) == "0₮"
+    assert logic.price_text(None) == "Үнэ оруулаагүй"
+
+
+def test_build_payload_sends_price_only_when_given():
+    form = {**logic.empty_form(), "odometer_km": 1000, "oil_grade": "15W-40", "liters": 30.0}
+    payload, errors = logic.build_service_payload("plate", "1234 УБА", True, {**form, "price_mnt": "85 000"})
+    assert not errors and payload["price_mnt"] == 85000
+    payload, errors = logic.build_service_payload("plate", "1234 УБА", True, form)
+    assert not errors and "price_mnt" not in payload
+    _, errors = logic.build_service_payload("plate", "1234 УБА", True, {**form, "price_mnt": "1.5"})
+    assert errors == [logic.PRICE_NOT_WHOLE]
+
+
+def test_prefill_never_copies_the_price():
+    card = {"last_service": {"oil_grade": "15W-40", "liters": 30.0, "price_mnt": 85000}, "company": {"name": "x"}}
+    assert logic.prefill_from_card(card)["price_mnt"] is None
+
+
+def _svc(status, price=80000, **more):
+    return {"id": 7, "payment_status": status, "price_mnt": price, **more}
+
+
+def test_payment_view_null_shows_nothing():
+    assert logic.payment_view(_svc(None)) is None and logic.payment_view(None) is None
+
+
+def test_payment_view_per_status():
+    pending = logic.payment_view(_svc("pending"), due_hours=24)
+    assert (pending["label"], pending["price"], pending["actions"]) == ("Хүлээгдэж байна", "80 000₮", ["paid", "unpaid"])
+    assert pending["note"] == "24 цагийн дараа Авлага болно"
+    unpaid = logic.payment_view(_svc("unpaid", None, unpaid_since="2026-11-12T18:00:00Z"))
+    assert (unpaid["label"], unpaid["price"], unpaid["actions"]) == ("Авлага", "Үнэ оруулаагүй", ["paid"])
+    assert unpaid["note"] == "2026-11-13-наас"                         # UTC 18:00 = next day in UB
+    paid = logic.payment_view(_svc("paid", paid_at="2026-11-14T07:20:00Z"))
+    assert (paid["actions"], paid["note"]) == (["undo_paid"], "Төлсөн: 2026-11-14 15:20")
+
+
+def test_payment_view_price_zero_has_no_buttons():
+    """PM Q3: price 0 = «Төлсөн», no «Авлага» and no «Буцаах» (the API refuses both)."""
+    view = logic.payment_view(_svc("paid", 0))
+    assert view["actions"] == [] and view["price"] == "0₮" and "төлөх зүйлгүй" in view["note"]
+
+
+def test_payment_error_text():
+    assert logic.payment_error_text(409, {"code": "not_tracked"}) == logic.PAYMENT_CONFLICTS["not_tracked"]
+    assert logic.payment_error_text(409, {"code": "price_zero"}).startswith("Үнэ 0₮")
+    assert logic.payment_error_text(404, "x") == "Үйлчилгээ олдсонгүй. Хуудсаа шинэчилнэ үү."
+    assert "бүхэл тоо" in logic.payment_error_text(422, [{"msg": "x"}])
+    assert logic.payment_error_text(0, "down").startswith("Сервертэй холбогдож")
+
+
+def test_unpaid_notice():
+    assert logic.unpaid_notice(None) is None
+    assert logic.unpaid_notice({"history": [_svc("pending"), _svc(None)]}) is None
+    one = logic.unpaid_notice({"history": [{**_svc("unpaid"), "service_date": "2026-11-12"}]})
+    assert one == {"text": "Өмнөх үйлчилгээ (2026-11-12) төлөгдөөгүй", "amount": "80 000₮", "service_ids": [7]}
+    two = logic.unpaid_notice({"history": [
+        {"id": 9, "payment_status": "unpaid", "price_mnt": None, "service_date": "2026-11-20"},
+        {"id": 7, "payment_status": "unpaid", "price_mnt": 80000, "service_date": "2026-11-12"}]})
+    assert two["text"] == "Өмнөх үйлчилгээ (2026-11-12) төлөгдөөгүй" and two["service_ids"] == [7, 9]
+    assert two["amount"] == "нийт 2 үйлчилгээ · 80 000₮ · Үнэ оруулаагүй: 1"
+
+
+def test_receivable_tiles_and_rows():
+    body = {"total_mnt": 340000, "count": 6, "count_no_price": 1, "trucks": [
+        {"vehicle_id": 3, "identifier": "1234 УБА", "company_name": "Говь", "services": 2, "amount_mnt": 160000,
+         "services_no_price": 1, "oldest_unpaid_since": "2026-11-13T10:00:00+08:00", "driver_phone": "99112233"}]}
+    assert logic.receivable_tiles(body) == [("340 000", "₮", "Авлага"), ("6", "", "Авлагатай үйлчилгээ")]
+    assert logic.receivable_tiles(None) == [("0", "₮", "Авлага"), ("0", "", "Авлагатай үйлчилгээ")]
+    (row,) = logic.receivable_rows(body)
+    assert row == {"vehicle_id": 3, "plate": "1234 УБА", "company": "Говь", "amount": "160 000₮",
+                   "what": "2 үйлчилгээ · Үнэ оруулаагүй: 1", "since": "2026-11-13-наас", "phone": "9911 2233",
+                   "tel": "tel:99112233"}
+    (only_unpriced,) = logic.receivable_rows({"trucks": [{"identifier": "9012 УБТ", "services": 1, "amount_mnt": 0,
+                                                          "services_no_price": 1}]})
+    assert (only_unpriced["amount"], only_unpriced["what"]) == ("Үнэ оруулаагүй", "1 үйлчилгээ")
+
+
+def test_saved_payment_text_and_export_columns():
+    assert logic.saved_payment_text({"payment_status": "pending", "price_mnt": 85000}) == "Үнэ: 85 000₮ · Хүлээгдэж байна"
+    assert logic.saved_payment_text({"payment_status": "pending", "price_mnt": None}) == "Үнэ оруулаагүй · Хүлээгдэж байна"
+    assert logic.saved_payment_text({"payment_status": None}) == ""
+    assert logic.EXPORT_COLUMNS[-2:] == ("Үнэ (₮)", "Төлбөр")
+    assert logic.PAYMENT_FILTER == ("unpaid", "pending", "paid")

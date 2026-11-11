@@ -14,6 +14,11 @@ Task 9.14a-3 (contract v0.18/v0.19; every number comes from the API, src/api/pac
   «Сануулга» opens the card with it open. km + date (default today) -> «Үргэлжлүүлэх» -> confirm step with
   the new km/day, due day and reminder day from POST .../readings/preview (nothing stored yet) ->
   «Хадгалах» = POST /vehicles/{id}/readings.
+
+Task 9.16b (contract v0.22): «Төлбөр» under the fact rows for the LATEST service: status badge
+(«Төлсөн» / «Авлага» / «Хүлээгдэж байна»), price, and «Төлсөн» / «Авлага» / «Буцаах» (asks first) +
+«Үнэ засах» (common.payment_panel). A service saved before 9.16b (status null) shows no block. Every
+history row has its status pill.
 """
 
 import html
@@ -175,6 +180,9 @@ if card:
     common.html_block(f'<div class="line">{html.escape(" · ".join(f for f in facts if f))}</div>')
     common.render_target(card)
     common.render_tiles(card)
+    if logic.payment_view(card.get("last_service")):  # 9.16b: nothing for a service saved before 9.16b
+        st.subheader("Төлбөр")
+    common.payment_panel(card.get("last_service"), "card")  # (shows a pending message even then)
     if card.get("last_service"):  # a reading counts from the latest service (9.14a)
         readings_section(card)
     common.render_history(card.get("history") or [])

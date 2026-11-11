@@ -57,9 +57,11 @@ class FakeApi:
         # 8.5r login: False = API without UI_PASSWORD (local dev). True = only GOOD_TOKEN passes.
         self.login_required = False
         self.auth_status = 200                      # 503 -> the login check itself fails
-        # 9.6b-5: None -> 404 like an API without payments; set both to "connect" payments
-        self.sync_status: dict | None = None        # GET /payments/sync-status
-        self.unpaid: dict | None = None             # GET /payments/unpaid
+        # 9.16b: manual payment. Seeded services (add_vehicle) have no status = saved before 9.16b;
+        # services saved through POST /services get "pending" (or "paid" for price 0), like the API.
+        self.payments: list[tuple[int, str]] = []   # (service_id, action) of every POST /services/{id}/payment
+        self.prices: list[tuple[int, int | None]] = []  # (service_id, price) of every PUT /services/{id}/price
+        self.receivables_status = 200               # != 200 -> GET /payments/receivables fails
         self.periods: list[str] = []                # period of every GET /stats/period (9.12)
         # 9.14a-3: pace per vehicle (None = the API's "no usable pace"), readings, km checks
         self.paces: dict[int, dict] = {}
@@ -257,10 +259,12 @@ class FakeApi:
                                 request.url.params.get("segment"))
         if path == "/vehicles/lookup":
             return self._lookup(request.url.params["q"])
-        if path == "/payments/sync-status" and self.sync_status is not None:
-            return httpx.Response(200, json=self.sync_status)
-        if path == "/payments/unpaid" and self.unpaid is not None:
-            return httpx.Response(200, json=self.unpaid)
+        if path == "/payments/receivables":
+            return self._receivables(int(request.url.params.get("limit", 200)))
+        if path.startswith("/services/") and path.endswith("/payment") and request.method == "POST":
+            return self._payment(int(path.split("/")[2]), json.loads(request.content).get("action"))
+        if path.startswith("/services/") and path.endswith("/price") and request.method == "PUT":
+            return self._price(int(path.split("/")[2]), json.loads(request.content).get("price_mnt"))
         if path == "/plates/recognize" and request.method == "POST":
             self.uploads.append(request.read())
             status, body = self.recognize
@@ -333,10 +337,82 @@ class FakeApi:
                 "existing_service_id": existing["id"],
             }})
         service = self._add_service(vehicle["id"], body)
+        price = body.get("price_mnt")  # 9.16b: a new service is tracked
+        service.update(price_mnt=price, paid_at=None, marked_unpaid_at=None, unpaid_since=None,
+                       amount_due=None, payment_status="paid" if price == 0 else "pending")
         return httpx.Response(201, json={
             "service": service, "vehicle_id": vehicle["id"],
             "vehicle_created": created, "company_created": created,
         })
+
+
+def _service_or_error(fake: "FakeApi", sid: int, action: str | None = None) -> tuple[dict | None, httpx.Response | None]:
+    service = next((s for s in fake.services if s["id"] == sid), None)
+    if service is None:
+        return None, httpx.Response(404, json={"detail": f"service {sid} not found"})
+    if service.get("payment_status") is None:
+        return None, httpx.Response(409, json={"detail": {"code": "not_tracked", "message": "saved before 9.16b"}})
+    if action in ("unpaid", "undo_paid") and service.get("price_mnt") == 0:
+        return None, httpx.Response(409, json={"detail": {"code": "price_zero", "message": "price 0"}})
+    return service, None
+
+
+def _fake_payment(self: "FakeApi", sid: int, action: str) -> httpx.Response:
+    """POST /services/{id}/payment (simplified rule: undo -> pending)."""
+    if action not in ("paid", "unpaid", "undo_paid"):
+        return httpx.Response(422, json={"detail": [{"msg": "Input should be 'paid', 'unpaid' or 'undo_paid'"}]})
+    service, error = _service_or_error(self, sid, action)
+    if error is not None:
+        return error
+    self.payments.append((sid, action))
+    if action == "paid":
+        service.update(payment_status="paid", paid_at=service.get("paid_at") or f"{TODAY}T15:20:00+08:00",
+                       amount_due=None, unpaid_since=None)
+    elif action == "unpaid":
+        service.update(payment_status="unpaid", paid_at=None, marked_unpaid_at=f"{TODAY}T11:00:00+08:00",
+                       unpaid_since=f"{TODAY}T11:00:00+08:00", amount_due=service.get("price_mnt"))
+    else:
+        service.update(payment_status="pending", paid_at=None, amount_due=None, unpaid_since=None)
+    return httpx.Response(200, json=service)
+
+
+def _fake_price(self: "FakeApi", sid: int, price: int | None) -> httpx.Response:
+    service, error = _service_or_error(self, sid)
+    if error is not None:
+        return error
+    self.prices.append((sid, price))
+    service["price_mnt"] = price
+    if price == 0:
+        service.update(payment_status="paid", amount_due=None, unpaid_since=None)
+    elif service["payment_status"] == "unpaid":
+        service["amount_due"] = price
+    return httpx.Response(200, json=service)
+
+
+def _fake_receivables(self: "FakeApi", limit: int) -> httpx.Response:
+    """GET /payments/receivables from the services' statuses (biggest amount first)."""
+    if self.receivables_status != 200:
+        return httpx.Response(self.receivables_status, json={"detail": "service unavailable"})
+    trucks = []
+    for v in self.vehicles:
+        owed = [s for s in self.services if s["vehicle_id"] == v["id"] and s.get("payment_status") == "unpaid"]
+        if owed:
+            trucks.append({"vehicle_id": v["id"], "identifier": v["identifier"], "company_name": v["company"]["name"],
+                           "services": len(owed), "amount_mnt": sum(s.get("price_mnt") or 0 for s in owed),
+                           "services_no_price": sum(1 for s in owed if s.get("price_mnt") is None),
+                           "oldest_service_date": min(s["service_date"] for s in owed),
+                           "oldest_unpaid_since": min(s.get("unpaid_since") or f"{TODAY}T10:00:00+08:00" for s in owed),
+                           "driver_phone": owed[-1].get("driver_phone"), "service_ids": [s["id"] for s in owed]})
+    trucks.sort(key=lambda t: -t["amount_mnt"])
+    return httpx.Response(200, json={
+        "due_hours": 24, "total_mnt": sum(t["amount_mnt"] for t in trucks),
+        "count": sum(t["services"] for t in trucks), "count_no_price": sum(t["services_no_price"] for t in trucks),
+        "total_trucks": len(trucks), "trucks": trucks[:limit]})
+
+
+FakeApi._payment = _fake_payment
+FakeApi._price = _fake_price
+FakeApi._receivables = _fake_receivables
 
 
 def no_pace(last: dict) -> dict:
@@ -1171,7 +1247,7 @@ def test_home_dashboard_button(fake_api) -> None:
     assert at.button(key="home_dashboard").label == "Хяналтын самбар"
     at.button(key="home_dashboard").click().run()
     assert not at.exception
-    assert texts(at.subheader) == ["Ажил", "Машинууд", "Машин хайх"]
+    assert texts(at.subheader) == ["Ажил", "Машинууд", "Төлбөр", "Машин хайх"]  # 9.16b: «Төлбөр»
     assert '<div class="tiles kpi">' in html_blocks(at)
 
 
@@ -1563,36 +1639,20 @@ def test_dashboard_table_toolbar_hidden(fake_api) -> None:
 
 
 # ==========================================================================
-# Task 9.6b-5: Artlab payments (view only). Not connected = the screens look exactly as before.
+# Task 9.16b-3: manual payment (contract v0.22). Services saved before 9.16b (status null) show nothing.
 # ==========================================================================
 
-def _fresh_sync(minutes_ago: int = 10, ok: bool = True) -> dict:
-    from datetime import datetime, timedelta
-    from src.ui import logic
-    done = (datetime.now(logic.UB) - timedelta(minutes=minutes_ago)).isoformat()
-    return {"connected": True, "runs": [{"kind": "bills", "account_code": None, "started_at": done,
-                                         "finished_at": done, "ok": ok, "bills_seen": 3, "transfers_seen": 0,
-                                         "error_class": None if ok else "ArtlabError",
-                                         "last_ok_at": done if ok else None, "zero_row_streak": None}]}
-
-
-UNPAID = {"connected": True, "total": 2, "total_due": 105000.0, "items": [
-    {"artlab_id": "12", "bill_date": "2026-08-24", "days_waiting": 49, "amount_due": 60000.0,
-     "total_gross": 80000.0, "match_confidence": "phone", "match_note": None, "service_id": 1, "vehicle_id": 1,
-     "identifier": "0002 ТЕС", "company_name": "Говь Тест ХХК", "plates": [], "phones": ["88119900"]},
-    {"artlab_id": "104400000000000001", "bill_date": "2026-10-07", "days_waiting": 5, "amount_due": 45000.0,
-     "total_gross": None, "match_confidence": None, "match_note": "multiple", "service_id": None,
-     "vehicle_id": None, "identifier": None, "company_name": None, "plates": ["7777ТЕС"], "phones": []},
-]}
-
-
-def connect_payments(fake: FakeApi, *, minutes_ago: int = 10, ok: bool = True) -> None:
-    """Payments connected: every service gets an API payment status (first = unpaid 60 000)."""
-    fake.sync_status = _fresh_sync(minutes_ago, ok)
-    fake.unpaid = UNPAID
-    for i, s in enumerate(fake.services):
-        s.update(payment_status="unpaid" if i == 0 else "paid", amount_due=60000.0 if i == 0 else None,
-                 match_confidence="phone" if i == 0 else "both")
+def set_payment(fake: FakeApi, sid: int, status: str | None, price: int | None = None, **more) -> dict:
+    """Give a seeded service an API payment status (as the API would answer)."""
+    service = next(s for s in fake.services if s["id"] == sid)
+    service.update(payment_status=status, price_mnt=price, paid_at=None, marked_unpaid_at=None, unpaid_since=None,
+                   amount_due=price if status == "unpaid" else None)
+    if status == "unpaid":
+        service["unpaid_since"] = "2026-10-11T10:00:00+08:00"
+    if status == "paid" and price != 0:
+        service["paid_at"] = "2026-10-11T15:20:00+08:00"
+    service.update(more)
+    return service
 
 
 def open_card(vehicle_id: int = 1) -> AppTest:
@@ -1601,77 +1661,284 @@ def open_card(vehicle_id: int = 1) -> AppTest:
     return at.switch_page(CARD).run()
 
 
-def test_not_connected_card_and_dashboard_unchanged(fake_api) -> None:
-    """No sync yet (API null / 404): no pill, no «Төлбөр», no payment filter; the search sends no payment_status."""
-    seed_two(fake_api)
-    for s in fake_api.services:
-        s.update(payment_status=None, amount_due=None, match_confidence=None)
-    card = open_card()
-    assert not card.exception and "pill-st pay" not in html_blocks(card)
-    at = run_app(DASHBOARD)
+def pay_buttons(at: AppTest, where: str = "card") -> list[str]:
+    return [b.label for b in at.button if b.key and b.key.startswith("pay_") and b.key.endswith(f"_{where}")
+            and not b.key.startswith("pay_price")]
+
+
+# --- record form + success ------------------------------------------------------------------
+
+def test_record_form_sends_price_spaced_by_thousands(fake_api) -> None:
+    at = to_form(run_app(RECORD), "1234 УБА")
+    at = fill_new_vehicle(at)
+    field = at.text_input(key="f_price_mnt")
+    assert field.label == "Нийт үнэ (₮)" and field.value == ""      # optional, never pre-filled
+    field.set_value("85000").run()
+    assert at.text_input(key="f_price_mnt").value == "85 000"         # spaced when the field is left
+    at = click(on(at, RECORD), "Хадгалах")
+    assert not at.exception and fake_api.posts[-1][0]["price_mnt"] == 85000
+    assert "Үнэ: 85 000₮ · Хүлээгдэж байна" in html_blocks(at)
+
+
+def test_record_form_without_price_sends_none(fake_api) -> None:
+    at = fill_new_vehicle(to_form(run_app(RECORD), "1234 УБА"))
+    at = click(on(at, RECORD), "Хадгалах")
+    assert "price_mnt" not in fake_api.posts[-1][0]
+    assert "Үнэ оруулаагүй · Хүлээгдэж байна" in html_blocks(at)
+
+
+def test_record_form_price_zero_is_paid(fake_api) -> None:
+    at = fill_new_vehicle(to_form(run_app(RECORD), "1234 УБА"))
+    at.text_input(key="f_price_mnt").set_value("0").run()
+    at = click(on(at, RECORD), "Хадгалах")
+    assert fake_api.posts[-1][0]["price_mnt"] == 0 and "Үнэ: 0₮ · Төлсөн" in html_blocks(at)
+
+
+@pytest.mark.parametrize("typed", ["85.5", "-100", "abc", "100000001"])
+def test_record_form_bad_price_is_not_sent(fake_api, typed) -> None:
+    at = fill_new_vehicle(to_form(run_app(RECORD), "1234 УБА"))
+    at.text_input(key="f_price_mnt").set_value(typed).run()
+    assert "warn-note" in html_blocks(at)                             # note under the field at once
+    at = click(on(at, RECORD), "Хадгалах")
+    assert not fake_api.posts and any("Үн" in e.value for e in at.error)
+
+
+def test_recognized_layout_has_the_price_field_too(fake_api, phone) -> None:
+    seed_existing(fake_api)
+    fake_api.recognize = (200, RECOGNIZED)
+    at = phone(run_app(RECORD))
+    at = click(at, "Үйлчилгээ бүртгэх")
+    assert at.session_state["rec_recognized"] and at.text_input(key="f_price_mnt").value == ""
+
+
+# --- plate screen ---------------------------------------------------------------------------
+
+def plate_screen(fake: FakeApi, plate: str = "0002 ТЕС") -> AppTest:
+    at = click(run_app(RECORD), "Гараар бичих")
+    at.text_input(key="rec_manual").set_value(plate).run()
+    return at
+
+
+def test_plate_screen_warns_about_an_unpaid_service_above_the_buttons(fake_api) -> None:
+    seed_existing(fake_api)
+    set_payment(fake_api, 1, "unpaid", 80000)
+    at = plate_screen(fake_api)
     page = html_blocks(at)
-    assert not at.exception and "Төлбөр" not in texts(at.subheader) and "Сүүлд шинэчилсэн" not in page
-    assert "dash_f_payment_status" not in [w.key for w in at.selectbox]
-    assert "payment_status" not in fake_api.search_params[-1]
+    assert "Өмнөх үйлчилгээ (2026-09-01) төлөгдөөгүй" in page and "80 000₮" in page
+    labels = [b.label for b in at.button]
+    assert labels.index("Төлсөн") < labels.index("Үйлчилгээ бүртгэх")    # PM Q4: above the buttons
+    assert labels.index("Үргэлжлүүлэх") < labels.index("Үйлчилгээ бүртгэх")
+    lookups = len(fake_api.lookups)
+    at = click(on(at, RECORD), "Төлсөн")
+    assert fake_api.payments == [(1, "paid")]
+    assert "Төлбөр бүртгэгдлээ." in texts(at.success) and "төлөгдөөгүй" not in html_blocks(at)
+    assert len(fake_api.lookups) == lookups + 1                       # looked up again: fresh status
 
 
-def test_card_shows_a_payment_pill_per_service(fake_api) -> None:
+def test_plate_screen_several_unpaid_paid_together(fake_api) -> None:
     seed_existing(fake_api)
     fake_api._add_service(1, {"service_date": "2026-10-01", "odometer_km": 215000, "oil_grade": "10W-40", "liters": 32.0})
-    connect_payments(fake_api)
+    set_payment(fake_api, 1, "unpaid", 80000)
+    set_payment(fake_api, 2, "unpaid", None)
+    at = plate_screen(fake_api)
+    page = html_blocks(at)
+    assert "Өмнөх үйлчилгээ (2026-09-01) төлөгдөөгүй" in page            # the oldest date
+    assert "нийт 2 үйлчилгээ · 80 000₮ · Үнэ оруулаагүй: 1" in page
+    click(on(at, RECORD), "Төлсөн")
+    assert fake_api.payments == [(1, "paid"), (2, "paid")]
+
+
+def test_plate_screen_continue_hides_it_without_writing(fake_api) -> None:
+    seed_existing(fake_api)
+    set_payment(fake_api, 1, "unpaid", 80000)
+    at = click(on(plate_screen(fake_api), RECORD), "Үргэлжлүүлэх")
+    assert "төлөгдөөгүй" not in html_blocks(at) and not fake_api.payments
+    assert at.button(key="btn_continue").label == "Үйлчилгээ бүртгэх"
+
+
+@pytest.mark.parametrize("status", [None, "pending", "paid"])
+def test_plate_screen_no_warning_without_unpaid(fake_api, status) -> None:
+    seed_existing(fake_api)
+    if status:
+        set_payment(fake_api, 1, status, 80000)
+    page = html_blocks(plate_screen(fake_api))
+    assert "төлөгдөөгүй" not in page and 'class="unpaid-box"' not in page
+
+
+def test_plate_screen_no_warning_for_a_new_truck_or_a_phone(fake_api) -> None:
+    seed_existing(fake_api)
+    set_payment(fake_api, 1, "unpaid", 80000)
+    assert "төлөгдөөгүй" not in html_blocks(plate_screen(fake_api, "9999 УБА"))
+    assert "төлөгдөөгүй" not in html_blocks(plate_screen(fake_api, "99110002"))
+
+
+def test_plate_screen_paid_error_is_friendly(fake_api) -> None:
+    seed_existing(fake_api)
+    set_payment(fake_api, 1, "unpaid", 80000)
+    at = plate_screen(fake_api)
+    fake_api.services[0]["payment_status"] = None                    # the API now says: saved before 9.16b
+    at = click(on(at, RECORD), "Төлсөн")
+    assert texts(at.error) == [logic.PAYMENT_CONFLICTS["not_tracked"]]
+
+
+# --- truck card -----------------------------------------------------------------------------
+
+def test_card_old_service_shows_no_payment(fake_api) -> None:
+    seed_existing(fake_api)                                           # status null (saved before 9.16b)
+    at = open_card()
+    assert not at.exception and "Төлбөр" not in texts(at.subheader)
+    assert "pill-st pay" not in html_blocks(at) and not pay_buttons(at)
+
+
+def test_card_pending_shows_badge_price_and_both_buttons(fake_api) -> None:
+    seed_existing(fake_api)
+    set_payment(fake_api, 1, "pending", 85000)
+    at = open_card()
+    page = html_blocks(at)
+    assert "Төлбөр" in texts(at.subheader) and "Хүлээгдэж байна" in page and "85 000₮" in page
+    assert "24 цагийн дараа Авлага болно" in page
+    assert pay_buttons(at) == ["Төлсөн", "Авлага"]
+    at = at.button(key="pay_unpaid_card").click().run()
+    assert fake_api.payments == [(1, "unpaid")] and "Авлага гэж тэмдэглэлээ." in texts(at.success)
+    assert pay_buttons(at) == ["Төлсөн"]                              # Авлага can still become Төлсөн
+    at = at.button(key="pay_paid_card").click().run()
+    assert fake_api.payments[-1] == (1, "paid") and pay_buttons(at) == ["Буцаах"]
+    assert "Төлсөн: 2026-10-12 15:20" in html_blocks(at)
+
+
+def test_card_undo_paid_asks_first(fake_api) -> None:
+    seed_existing(fake_api)
+    set_payment(fake_api, 1, "paid", 60000)
+    at = open_card().button(key="pay_undo_paid_card").click().run()
+    assert "«Төлсөн» гэснээ буцаах уу?" in texts(at.warning) and not fake_api.payments
+    at = at.button(key="pay_undo_no_card").click().run()
+    assert not fake_api.payments and pay_buttons(at) == ["Буцаах"]
+    at = at.button(key="pay_undo_paid_card").click().run().button(key="pay_undo_yes_card").click().run()
+    assert fake_api.payments == [(1, "undo_paid")] and "«Төлсөн»-ийг буцаалаа." in texts(at.success)
+
+
+def test_card_price_zero_has_no_unpaid_button(fake_api) -> None:
+    seed_existing(fake_api)
+    set_payment(fake_api, 1, "paid", 0)
+    at = open_card()
+    assert "Үнэ 0₮ · төлөх зүйлгүй" in html_blocks(at) and pay_buttons(at) == []
+
+
+def test_card_unpaid_shows_since_and_history_pills(fake_api) -> None:
+    seed_existing(fake_api)
+    fake_api._add_service(1, {"service_date": "2026-10-01", "odometer_km": 215000, "oil_grade": "10W-40", "liters": 32.0})
+    set_payment(fake_api, 1, "paid", 70000)
+    set_payment(fake_api, 2, "unpaid", 60000)
     page = html_blocks(open_card())
-    assert "Төлөөгүй · 60 000₮" in page and "Төлсөн</span>" in page
-    assert page.count('class="pill-st pay"') == 2                 # one per service
+    assert "2026-10-11-наас" in page
+    assert "Авлага · 60\u00a0000₮" in page and "Төлсөн · 70\u00a0000₮" in page
+    assert page.count('class="pill-st pay"') == 2                     # one per service
+    assert "Төлөөгүй" not in page                                     # the old label is gone
 
 
-def test_dashboard_unpaid_list_and_fresh_sync(fake_api) -> None:
+def test_card_price_edit(fake_api) -> None:
+    seed_existing(fake_api)
+    set_payment(fake_api, 1, "unpaid", None)
+    at = open_card()
+    assert "Үнэ оруулаагүй" in html_blocks(at)
+    at = at.button(key="pay_price_open_card").click().run()
+    at.text_input(key="pay_price_card").set_value("120000").run()
+    assert at.text_input(key="pay_price_card").value == "120 000"
+    at = at.button(key="pay_price_save_card").click().run()
+    assert fake_api.prices == [(1, 120000)] and "Үнийг хадгаллаа." in texts(at.success)
+    assert "120 000₮" in html_blocks(at)
+    at = at.button(key="pay_price_open_card").click().run()
+    assert at.text_input(key="pay_price_card").value == "120 000"     # opens with the current price
+    at.text_input(key="pay_price_card").set_value("").run()
+    at = at.button(key="pay_price_save_card").click().run()
+    assert fake_api.prices[-1] == (1, None)
+
+
+def test_card_price_edit_bad_value_not_sent(fake_api) -> None:
+    seed_existing(fake_api)
+    set_payment(fake_api, 1, "pending", 1000)
+    at = open_card().button(key="pay_price_open_card").click().run()
+    at.text_input(key="pay_price_card").set_value("12.5").run()
+    at = at.button(key="pay_price_save_card").click().run()
+    assert not fake_api.prices and texts(at.error) == [logic.PRICE_NOT_WHOLE]
+
+
+@pytest.mark.parametrize(("code", "price"), [("not_tracked", 1000), ("price_zero", 0)])
+def test_card_409_is_a_friendly_message(fake_api, code, price) -> None:
+    seed_existing(fake_api)
+    set_payment(fake_api, 1, "pending", 1000)
+    at = open_card()
+    if code == "not_tracked":
+        fake_api.services[0]["payment_status"] = None
+    else:
+        fake_api.services[0]["price_mnt"] = 0                         # changed elsewhere meanwhile
+    at = at.button(key="pay_unpaid_card").click().run()
+    assert not at.exception and texts(at.error) == [logic.PAYMENT_CONFLICTS[code]]
+
+
+# --- dashboard ------------------------------------------------------------------------------
+
+def test_dashboard_receivables_tiles_and_trucks_biggest_first(fake_api) -> None:
     seed_two(fake_api)
-    connect_payments(fake_api)
+    fake_api._add_service(1, {"service_date": "2026-10-01", "odometer_km": 215000, "oil_grade": "10W-40",
+                              "liters": 32.0, "driver_phone": "88119900"})
+    set_payment(fake_api, 1, "unpaid", 50000)
+    set_payment(fake_api, 3, "unpaid", None)
+    set_payment(fake_api, 2, "unpaid", 90000)
     at = run_app(DASHBOARD)
     page = html_blocks(at)
     assert not at.exception and "Төлбөр" in texts(at.subheader)
-    assert '<span class="sync">Сүүлд шинэчилсэн' in page          # fresh: not red
-    assert "Төлөөгүй (2) · нийт <b>105 000₮</b>" in page
-    assert page.index('<span class="plate">0002 ТЕС</span>') < page.index('<span class="plate">7777ТЕС</span>')  # oldest first
-    assert "49 хоног хүлээж байна" in page and "60 000₮" in page and "45 000₮" in page
-    assert '<a class="call" href="tel:88119900">Залгах</a>' in page and "8811 9900" in page
-    assert "Хэд хэдэн машин таарсан" in page                       # unlinked receipt says why
-    assert page.count('class="call"') == 1                         # no phone -> no «Залгах»
+    assert '<div class="v">140 000<small>₮</small></div><div class="k">Авлага</div>' in page
+    assert '<div class="v">3</div><div class="k">Авлагатай үйлчилгээ</div>' in page
+    assert "Үнэ оруулаагүй: 1" in page
+    assert page.index('<span class="plate">0003 ТЕС</span>') < page.index('<span class="plate">0002 ТЕС</span>')
+    assert "2 үйлчилгээ · Үнэ оруулаагүй: 1" in page
+    assert '<a class="call" href="tel:88119900">Залгах</a>' in page
+    at = at.button(key="dash_owed_open_1").click().run()             # tap = that truck's history
+    assert at.session_state["dash_vid"] == 1
 
 
-@pytest.mark.parametrize(("minutes_ago", "ok"), [(150, True), (10, False)])
-def test_dashboard_sync_line_red_when_old_or_failed(fake_api, monkeypatch, minutes_ago, ok) -> None:
-    from src.ui import logic
-    monkeypatch.setattr(logic, "QUIET_FROM_HOUR", 24)  # no quiet hours: the result must not depend on
-    monkeypatch.setattr(logic, "QUIET_TO_HOUR", 0)     # the clock when the tests run (quiet hours: test_ui_logic)
-    connect_payments(fake_api, minutes_ago=minutes_ago, ok=ok)
-    page = html_blocks(run_app(DASHBOARD))
-    assert '<span class="sync red">' in page
-
-
-def test_dashboard_payment_filter_sent_and_listed_in_excel_line(fake_api) -> None:
+def test_dashboard_no_receivables(fake_api) -> None:
     seed_two(fake_api)
-    connect_payments(fake_api)
+    at = run_app(DASHBOARD)
+    page = html_blocks(at)
+    assert "Авлага алга." in page and '<div class="v">0<small>₮</small></div>' in page
+    assert "Үнэ оруулаагүй" not in page
+
+
+def test_dashboard_receivables_error_leaves_the_rest(fake_api) -> None:
+    seed_two(fake_api)
+    fake_api.receivables_status = 503
+    at = run_app(DASHBOARD)
+    assert not at.exception and at.error and len(at.dataframe[0].value) == 2
+
+
+def test_dashboard_payment_filter_always_there(fake_api) -> None:
+    seed_two(fake_api)
     at = run_app(DASHBOARD)
     widget = at.selectbox(key="dash_f_payment_status")
-    assert widget.options == ["Төлсөн", "Төлөөгүй", "Төлсөн (дараа)", "Тодорхойгүй"]
+    assert widget.options == ["Авлага", "Хүлээгдэж байна", "Төлсөн"]
     at = set_filters(at, payment_status="unpaid")
-    assert not at.exception
-    assert fake_api.search_params[-1]["payment_status"] == "unpaid"
-    assert at.expander[0].label == "Шүүлтүүр (1)"
-    from src.ui import logic
-    assert logic.filters_text("", {"payment_status": "unpaid"}, {}) == "Төлбөр: Төлөөгүй"
+    assert not at.exception and fake_api.search_params[-1]["payment_status"] == "unpaid"
+    assert logic.filters_text("", {"payment_status": "unpaid"}, {}) == "Төлбөр: Авлага"
 
 
-def test_dashboard_history_shows_payment_pills(fake_api) -> None:
+def test_dashboard_history_has_the_payment_block(fake_api) -> None:
     seed_two(fake_api)
-    connect_payments(fake_api)
+    set_payment(fake_api, 1, "pending", 85000)
     at = on(run_app(DASHBOARD), DASHBOARD).button(key="dash_open_1").click().run()
-    assert "Төлөөгүй · 60 000₮" in html_blocks(at)
+    assert pay_buttons(at, "dash") == ["Төлсөн", "Авлага"] and "Хүлээгдэж байна · 85\u00a0000₮" in html_blocks(at)
+    at = on(at, DASHBOARD).button(key="pay_paid_dash").click().run()
+    assert fake_api.payments == [(1, "paid")] and not at.exception
 
 
-def test_dashboard_payments_view_only_and_phones_not_in_excel(fake_api) -> None:
-    """PM 9.6b-4: unpaid-list phones are on screen only. The Excel file (all cells read back) has none."""
+def test_dashboard_history_old_service_no_block(fake_api) -> None:
+    seed_two(fake_api)
+    at = on(run_app(DASHBOARD), DASHBOARD).button(key="dash_open_1").click().run()
+    assert not pay_buttons(at, "dash") and "pill-st pay" not in html_blocks(at)
+
+
+def test_dashboard_excel_has_price_and_status_but_no_list_phone(fake_api) -> None:
     import io
     from datetime import date
 
@@ -1679,24 +1946,27 @@ def test_dashboard_payments_view_only_and_phones_not_in_excel(fake_api) -> None:
 
     from src.ui import export
     seed_two(fake_api)
-    connect_payments(fake_api)
-    posts_before = len(fake_api.posts)
-    run_app(DASHBOARD)
-    assert len(fake_api.posts) == posts_before and not fake_api.sent
+    fake_api._add_service(1, {"service_date": "2026-10-01", "odometer_km": 215000, "oil_grade": "10W-40",
+                              "liters": 32.0})
+    set_payment(fake_api, 3, "unpaid", 60000)
     vehicles = fake_api._search("", 1000, None, True).json()["vehicles"]
     sheet = openpyxl.load_workbook(io.BytesIO(export.search_workbook(vehicles, date(2026, 10, 12), "x"))).active
-    cells = " ".join(str(c) for row in sheet.iter_rows(values_only=True) for c in row if c is not None)
-    assert "0002 ТЕС" in cells                                    # the sheet really has the trucks
-    assert "88119900" not in cells and "8811 9900" not in cells   # the unpaid-list phone is not
+    header = [c.value for c in sheet[export.HEADER_ROW]]
+    assert header[-2:] == ["Үнэ (₮)", "Төлбөр"]
+    rows = list(sheet.iter_rows(min_row=export.HEADER_ROW + 1, values_only=True))
+    assert rows[0][-2:] == (60000, "Авлага")                       # newest service first
+    assert all(r[-2:] == (None, None) for r in rows[1:])             # old services: empty cells
+    cells = " ".join(str(c) for r in rows for c in r if c is not None)
+    assert "88119900" not in cells                                   # only the per-service «Утас» column
 
 
-def test_payments_api_error_hides_payments_only(fake_api) -> None:
-    """sync-status works but unpaid fails -> a message in the «Төлбөр» block; the rest still works."""
-    seed_two(fake_api)
-    connect_payments(fake_api)
-    fake_api.unpaid = None                                        # -> 404
-    at = run_app(DASHBOARD)
-    assert not at.exception and len(at.dataframe[0].value) == 2
+@pytest.mark.parametrize("width", [390])
+def test_payment_rows_fit_a_phone(width) -> None:
+    """390 px phone: the payment buttons stay in one row and the badge/price line does not wrap the price."""
+    css = common.CSS
+    assert '[class*="st-key-pay_btns_"] {flex-wrap: nowrap !important; gap: 8px !important;}' in css
+    assert ".st-key-rec_unpaid_btns {flex-wrap: nowrap !important; gap: 8px !important;}" in css
+    assert "white-space: nowrap;" in css.split(".payb .amt")[1].split("}")[0]
 
 
 # --- «Хяналтын самбар» 9.12: period KPIs, segment cards, history below the list ----------------
@@ -1798,7 +2068,7 @@ def test_dashboard_period_error_keeps_the_rest(fake_api) -> None:
     api_client.set_transport(httpx.MockTransport(lambda r: fake_api.handle(r)))
     at = run_app(DASHBOARD)
     assert not at.exception and texts(at.error) and len(at.dataframe[0].value) == 2
-    assert '<div class="tiles kpi">' not in html_blocks(at)
+    assert html_blocks(at).count('<div class="tiles kpi">') == 1   # only «Төлбөр»'s (9.16b), not «Ажил»'s
 
 
 # ---------------------------------------------------------------- task 9.14a-3: km/day on the card + «Км шалгах»

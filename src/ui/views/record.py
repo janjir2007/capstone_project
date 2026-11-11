@@ -26,7 +26,13 @@ Steps (st.session_state["rec_step"]):
   than the last one -> orange note under the field and, on «Хадгалах», «Гүйлт зөв үү?» with
   «Ингээд хадгалах» / «Гүйлтээ засах» (a warning, not a block: meters do get replaced).
   «Хадгалах» -> POST /services; 409 duplicate -> «Ингээд хадгалах» (force=true).
-- success: «Хадгалагдлаа» -> «Дараагийн машин» / «Машины карт үзэх».
+  9.16b: optional «Нийт үнэ (₮)» in «Энэ удаа» (both layouts): typed as text, spaced by thousands when
+  the field is left ("85000" -> "85 000"), sent as price_mnt; never pre-filled.
+- success: «Хадгалагдлаа» (+ 9.16b «Үнэ: 85 000₮ · Хүлээгдэж байна») -> «Дараагийн машин» / «Машины карт үзэх».
+- 9.16b plate screen: a known truck with an «Авлага» service gets a warning ABOVE the buttons:
+  «Өмнөх үйлчилгээ ({date}) төлөгдөөгүй» + amount, «Төлсөн» (POST /services/{id}/payment paid for each
+  of its «Авлага» services) and «Үргэлжлүүлэх» (hides it for this plate; nothing is written). The data
+  comes from the lookup the status line already made (no extra call).
 
 The photo is kept only in this browser session (st.session_state) for the preview; it is
 never stored and never sent anywhere except POST /plates/recognize (D-070).
@@ -61,6 +67,7 @@ def _apply_form(values: dict) -> None:
     """Write form values into the widget keys (f_<field>, oil/model choice widgets)."""
     for name in PLAIN_FIELDS:
         st.session_state[f"f_{name}"] = values.get(name)
+    st.session_state["f_price_mnt"] = logic.price_input_text(values.get("price_mnt"))  # 9.16b: a text field
     oil_choice, oil_other = logic.split_choice(values.get("oil_grade"), logic.OIL_GRADES, logic.DEFAULT_OIL_GRADE)
     st.session_state["f_oil_choice"], st.session_state["f_oil_other"] = oil_choice, oil_other
     model = (values.get("vehicle_model") or "").strip() or None
@@ -81,7 +88,7 @@ def _reset() -> None:
     """Forget the current truck (and its photo); start again at the camera."""
     for key in ("rec_checked", "rec_choice", "rec_dup", "rec_odo", "rec_saved", "rec_manual", "rec_photo", "rec_photo_name",
                 "rec_box", "rec_recognized", "rec_read", "rec_read_plate", "rec_photo_size", "rec_photo_error",
-                "rec_status"):
+                "rec_status", "rec_unpaid_dismissed", "rec_unpaid_msg"):
         st.session_state.pop(key, None)
     st.session_state["rec_type"] = "plate"
     _apply_form(logic.empty_form())
@@ -202,8 +209,53 @@ def _plate_status(identifier_type: str, typed: str) -> tuple[str, str] | None:
     except api_client.ApiError:
         result = None  # status says «шалгаж чадсангүй»; «Үйлчилгээ бүртгэх» still shows the real error
     status = logic.plate_status(result, identifier_type)
-    st.session_state["rec_status"] = {"q": (identifier_type, typed), "status": status}
+    # 9.16b: the one truck of this type (if exactly one) is kept for the unpaid notice
+    same = [v for v in (result or {}).get("vehicles") or [] if v.get("identifier_type") == identifier_type]
+    card = same[0] if status[0] == "known" and len(same) == 1 else None
+    st.session_state["rec_status"] = {"q": (identifier_type, typed), "status": status, "card": card}
     return status
+
+
+def _status_card() -> dict | None:
+    """The looked-up truck of the plate screen (9.16b), from the cache _plate_status filled."""
+    return (st.session_state.get("rec_status") or {}).get("card")
+
+
+def on_unpaid_paid(service_ids: list[int]) -> None:
+    """Plate screen «Төлсөн»: mark every «Авлага» service of this truck paid, then look it up again."""
+    for sid in service_ids:
+        try:
+            api_client.set_payment(sid, "paid")
+        except api_client.ApiError as exc:
+            st.session_state["rec_unpaid_msg"] = ("error", logic.payment_error_text(exc.status, exc.detail))
+            break
+    else:
+        st.session_state["rec_unpaid_msg"] = ("success", "Төлбөр бүртгэгдлээ.")
+    st.session_state.pop("rec_status", None)  # the next draw asks the API again (fresh statuses)
+
+
+def on_unpaid_continue(q: tuple[str, str]) -> None:
+    """«Үргэлжлүүлэх»: hide the warning for this plate (nothing is written; it stays «Авлага»)."""
+    st.session_state["rec_unpaid_dismissed"] = q
+
+
+def unpaid_box(identifier_type: str, typed: str) -> None:
+    """9.16b: «Өмнөх үйлчилгээ (…) төлөгдөөгүй» + «Төлсөн» / «Үргэлжлүүлэх», above the buttons."""
+    msg = st.session_state.pop("rec_unpaid_msg", None)
+    if msg:
+        getattr(st, msg[0])(msg[1])
+    q = (identifier_type, typed)
+    notice = logic.unpaid_notice(_status_card())
+    if notice is None or st.session_state.get("rec_unpaid_dismissed") == q:
+        return
+    with st.container(key="rec_unpaid"):
+        common.html_block(f'<div class="unpaid-box"><div class="t">{html.escape(notice["text"])}</div>'
+                          f'<div class="a">{html.escape(notice["amount"])}</div></div>')
+        with st.container(horizontal=True, key="rec_unpaid_btns"):
+            st.button("Төлсөн", key="btn_unpaid_paid", type="primary", width="stretch",
+                      on_click=on_unpaid_paid, args=(notice["service_ids"],))
+            st.button("Үргэлжлүүлэх", key="btn_unpaid_continue", width="stretch",
+                      on_click=on_unpaid_continue, args=(q,))
 
 
 def on_continue() -> None:
@@ -238,8 +290,10 @@ def _send(payload: dict, force: bool) -> None:
         for message in logic.error_messages(exc.status, exc.detail):
             _say("error", message)
         return
+    service = result.get("service") or {}
     saved = {"identifier": payload["identifier"], "vehicle_id": result.get("vehicle_id"),
-             "vehicle_created": result.get("vehicle_created", False)}
+             "vehicle_created": result.get("vehicle_created", False),
+             "payment": logic.saved_payment_text(service)}  # 9.16b
     _reset()
     st.session_state["rec_saved"] = saved
     _goto("success")
@@ -347,6 +401,22 @@ def _liters_input(card: dict | None) -> None:
                         label_visibility="collapsed", width=170)
 
 
+def _format_price() -> None:
+    """When the price field is left: "85000" -> "85 000" (a wrong value stays as typed, with its note)."""
+    value, error = logic.parse_price(st.session_state.get("f_price_mnt"))
+    if error is None:
+        st.session_state["f_price_mnt"] = logic.price_input_text(value)
+
+
+def _price_input() -> None:
+    """9.16b: «Нийт үнэ (₮)», optional; whole tugrik, thousands spaced."""
+    st.text_input("Нийт үнэ (₮)", key="f_price_mnt", placeholder="Жишээ нь 85 000", on_change=_format_price,
+                  help="Заавал биш. Үнэ 0 бол «Төлсөн» болно.")
+    _, error = logic.parse_price(st.session_state.get("f_price_mnt"))
+    if error:
+        common.html_block(f'<div class="warn-note">{html.escape(error)}</div>')
+
+
 def _driver_inputs() -> None:
     st.text_input("Нэр", key="f_driver_name")
     st.text_input("Утас", key="f_driver_phone", placeholder="9911 2233")
@@ -393,6 +463,7 @@ def form_recognized(card: dict, checked: dict) -> None:
     common.section("Энэ удаагийн мэдээлэл")
     with st.container(key="card_fresh"):
         _meter_inputs(checked["identifier_type"] == "fleet_no", card, "Одоогийн гүйлт (км)", show_prev=False)
+        _price_input()
         form = _form_values()
         oil = f"{form['oil_grade'] or logic.NOT_GIVEN} · {logic.format_number(form['liters'], 'л')}"
         common.html_block(common.kv_rows([("Тос", oil),
@@ -442,6 +513,7 @@ def form_full(card: dict | None, checked: dict) -> None:
         _meter_inputs(is_fleet, card, "Гүйлт (км)", show_prev=True)
         _oil_inputs()
         _liters_input(card)
+        _price_input()
 
     st.subheader("Жолооч")
     with st.container(key="card_driver"):
@@ -499,6 +571,7 @@ elif step == "result":
                 common.html_block(f'<div class="sub-note" style="margin-top:0">{label}: '
                                   f'{html.escape(st.session_state[key])}</div>')
     is_phone = plate_status is not None and plate_status[0] == "phone"
+    unpaid_box(rec_type, (st.session_state.get("rec_manual") or "").strip())  # 9.16b: above the buttons (PM Q4)
     st.button("Үйлчилгээ бүртгэх", key="btn_continue", on_click=on_continue, type="primary", width="stretch",
               disabled=is_phone)  # a phone finds trucks; it cannot be the truck being serviced
     if st.button("Хайх", key="btn_find", width="stretch", icon=":material/search:"):
@@ -508,8 +581,6 @@ elif step == "result":
             st.switch_page(common.SEARCH_PAGE)
         st.error("Дугаар эсвэл утсаа оруулна уу.")
     st.button("Дахин зураг авах", key="btn_retake", on_click=_reset, width="stretch", icon=":material/refresh:")
-    # 9.16b: unpaid notice goes here. Hidden by CSS until it has data (an empty box would add a gap).
-    st.container(key="rec_unpaid")
 
 elif step == "confirm" and checked:
     matches = checked["matches"]
@@ -543,6 +614,8 @@ elif step == "success" and st.session_state.get("rec_saved"):
         common.html_block(f'<div class="center"><span class="plate lg">{html.escape(saved["identifier"])}</span></div>')
         if saved["vehicle_created"]:
             common.html_block('<div class="muted" style="text-align:center">Шинэ машин бүртгэгдлээ</div>')
+        if saved.get("payment"):  # 9.16b
+            common.html_block(f'<div class="muted" style="text-align:center">{html.escape(saved["payment"])}</div>')
     st.button("Дараагийн машин", on_click=_reset, type="primary", width="stretch", icon=":material/photo_camera:")
     if saved.get("vehicle_id") and st.button("Машины карт үзэх", width="stretch"):
         common.go_card(saved["vehicle_id"])

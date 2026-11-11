@@ -24,15 +24,17 @@ the 480 px phone column (common.CSS). Below 768 px this screen is one column too
 - Filters (step 2): date range, company, route, oil grade, sent with the search. «Excel татах»
   downloads one row per matching service (src/ui/export.py, built in memory, nothing stored).
 - Due list from GET /reminders/due, read only (sending stays on «Сануулга»).
-- 9.6b-5 (Artlab payments, only once payments are connected — before that the screen is exactly as
-  in 9.5c): «Сүүлд шинэчилсэн HH:MM» (red if the last run failed or is older than 2 h), the
-  «Төлөөгүй» list (total, days waiting, receipt phone + «Залгах»), a «Төлбөр» filter, and a payment
-  pill on each service in the history. Phones of the unpaid list are on screen only, never in Excel.
-Nothing here writes to the API.
+- 9.16b «Төлбөр» (manual payment, contract v0.22; replaces the hidden Artlab block of 9.6b-5, which stays
+  off with Artlab): «Авлага ₮» + «Авлагатай үйлчилгээ» tiles, «Үнэ оруулаагүй: N», and the trucks with
+  «Авлага» from GET /payments/receivables, biggest amount first (tap = its history; phone + «Залгах»,
+  on screen only, never in Excel). The «Төлбөр» filter (Авлага / Хүлээгдэж байна / Төлсөн) is always there.
+  The opened truck's history has the latest service's payment block (common.payment_panel) and a
+  status pill on every service.
+The only writes on this screen are those payment buttons (POST /services/{id}/payment, PUT .../price).
 """
 
 import html
-from datetime import date, datetime
+from datetime import date
 from functools import partial
 
 import streamlit as st
@@ -125,10 +127,12 @@ WIDE_CSS = f"""
 .hist tr:last-child td {{border-bottom: none;}}
 .hist td.n, .hist .ph {{font-variant-numeric: tabular-nums;}}
 .hist .ph {{color: var(--muted); margin-top: 2px;}}
+/* 9.16b: the payment pill goes under the date (own line, may wrap), so the date column stays narrow */
+.hist td .pill-st.pay {{display: table; margin-top: 4px; white-space: normal;}}
 @media (max-width: {WIDE_PX - 0.02}px) {{
   .hist thead {{display: none;}}
   .hist, .hist tbody, .hist tr, .hist td {{display: block; width: 100%;}}
-  .hist tr {{display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; padding: 12px 0; border-bottom: 1px solid var(--line);}}
+  .hist tr {{display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 4px 12px; padding: 12px 0; border-bottom: 1px solid var(--line);}}
   .hist tr:first-child {{padding-top: 0;}} .hist tr:last-child {{border-bottom: none; padding-bottom: 0;}}
   .hist td {{padding: 0; border: none; white-space: normal; font-size: 14px;}}
   .hist td::before {{content: attr(data-l); display: block; font-size: 12px; color: var(--muted);}}
@@ -244,54 +248,47 @@ def scroll_to_history() -> None:
 </script>""", unsafe_allow_javascript=True)
 
 
-def load_sync_view() -> dict | None:
-    """«Сүүлд шинэчилсэн» view, or None = payments not connected (or the call failed): then every
-    payment element stays hidden and the dashboard looks exactly as before 9.6b-5."""
-    try:
-        return logic.sync_view(api_client.payments_sync_status(), datetime.now(logic.UB))
-    except api_client.ApiError:
-        return None
-
-
-def payments_section(sync: dict) -> None:
-    """«Төлбөр»: freshness line + «Төлөөгүй» list, oldest receipt first (view only)."""
+def payments_section() -> int:
+    """«Төлбөр» (9.16b): «Авлага ₮» tiles, «Үнэ оруулаагүй: N», trucks with «Авлага» (biggest first).
+    Returns the API's PAYMENT_DUE_HOURS (24 when the call failed) for the history panel's note."""
     st.subheader("Төлбөр")
-    common.html_block(f'<span class="sync{" red" if sync["red"] else ""}">{html.escape(sync["text"])}</span>')
     try:
-        unpaid = api_client.payments_unpaid()
+        owed = api_client.receivables(limit=PHONE_CARDS_MAX)
     except api_client.ApiError as exc:
         common.show_api_error(exc)
-        return
-    rows = logic.unpaid_rows(unpaid.get("items") or [])
+        return 24
+    tiles = "".join(
+        f'<div><div class="v">{html.escape(value)}{f"<small>{unit}</small>" if unit else ""}</div>'
+        f'<div class="k">{html.escape(label)}</div></div>'
+        for value, unit, label in logic.receivable_tiles(owed))
+    common.html_block(f'<div class="tiles kpi">{tiles}</div>')
+    if owed.get("count_no_price"):
+        common.html_block(f'<span class="muted">{logic.PRICE_NOT_GIVEN}: {owed["count_no_price"]}</span>')
+    rows = logic.receivable_rows(owed)
     with st.container(key="card_dash_unpaid"):
-        common.html_block(f'<div class="unpaid-sum">Төлөөгүй ({unpaid.get("total", 0)}) · '
-                          f'нийт <b>{html.escape(logic.money_text(unpaid.get("total_due", 0)))}</b></div>')
         if not rows:
-            common.html_block('<span class="muted">Төлөөгүй баримт алга.</span>')
-            return
-        items = []
+            common.html_block('<span class="muted">Авлага алга.</span>')
+            return owed.get("due_hours") or 24
         for i, r in enumerate(rows):
-            call = f'<a class="call" href="{html.escape(r["tel"])}">Залгах</a>' if r["tel"] else ""
-            meta = " · ".join(p for p in (r["waiting"], r["date"], r["phone"]) if p)
-            title_cls = "plate" if r["has_plate"] else "noplate"  # «Дугааргүй баримт» is text, not a plate
-            items.append(
-                f'<div class="pay{"" if i == 0 else " sep"}"><div class="top">'
-                f'<span class="{title_cls}">{html.escape(r["title"])}</span>'
-                f'<span class="amt">{html.escape(r["amount"])}</span></div>'
-                f'<div class="n">{html.escape(r["who"])}</div><div class="m">{html.escape(meta)}</div>{call}</div>'
-            )
-        common.html_block(f'<div class="unpaid">{"".join(items)}</div>')
-        if unpaid.get("total", 0) > len(rows):
-            common.html_block(f'<span class="muted">Эхний {len(rows)} баримт.</span>')
+            with st.container(key=f"dash_owed_{r['vehicle_id']}"):
+                call = f'<a class="call" href="{html.escape(r["tel"])}">Залгах</a>' if r["tel"] else ""
+                meta = " · ".join(x for x in (r["what"], r["since"], r["phone"]) if x)
+                common.html_block(
+                    f'<div class="unpaid"><div class="pay{"" if i == 0 else " sep"}"><div class="top">'
+                    f'<span class="plate">{html.escape(r["plate"])}</span>'
+                    f'<span class="amt">{html.escape(r["amount"])}</span></div>'
+                    f'<div class="n">{html.escape(r["company"])}</div><div class="m">{html.escape(meta)}</div>'
+                    f'{call}</div></div>')
+                st.button(f"{r['plate']} · түүх", key=f"dash_owed_open_{r['vehicle_id']}", type="tertiary",
+                          on_click=open_history, args=(r["vehicle_id"],))
+        if (owed.get("total_trucks") or 0) > len(rows):
+            common.html_block(f'<span class="muted">Эхний {len(rows)} машин ({owed["total_trucks"]}-аас).</span>')
+    return owed.get("due_hours") or 24
 
 
-def current_filters(payments_on: bool = False) -> dict:
-    """Filter values as the API wants them (None = not used), from the form's widgets.
-    The payment filter only counts while payments are connected (its widget is shown)."""
-    values = {name: st.session_state.get(key) for name, key in FILTER_WIDGETS.items()}
-    if not payments_on:
-        values["payment_status"] = None
-    return values
+def current_filters() -> dict:
+    """Filter values as the API wants them (None = not used), from the form's widgets."""
+    return {name: st.session_state.get(key) for name, key in FILTER_WIDGETS.items()}
 
 
 def clear_filters() -> None:
@@ -299,9 +296,9 @@ def clear_filters() -> None:
         st.session_state[key] = None
 
 
-def search_form(options: dict, active: int, payments_on: bool = False, expand: bool = False) -> None:
+def search_form(options: dict, active: int, expand: bool = False) -> None:
     """Search field + «Хайх»; filters in «Шүүлтүүр» (open while ``expand``). One submit applies all.
-    «Төлбөр» (9.6b-5) only while payments are connected. «Сегмент» (9.12) is also set by a card tap."""
+    «Төлбөр» (9.16b: Авлага / Хүлээгдэж байна / Төлсөн). «Сегмент» (9.12) is also set by a card tap."""
     companies = {c["id"]: c["name"] for c in options.get("companies") or []}
     with st.container(key="card_dash_search"):
         with st.form("dash_search_form", border=False):  # Enter in the field searches too
@@ -322,9 +319,8 @@ def search_form(options: dict, active: int, payments_on: bool = False, expand: b
                                placeholder="Бүгд")
                 f[5].selectbox("Сегмент", list(logic.SEGMENT_ORDER), key=SEGMENT_KEY, index=None,
                                format_func=logic.segment_label, placeholder="Бүгд")
-                if payments_on:
-                    f[6].selectbox("Төлбөр", list(logic.PAYMENT_LABELS), key=FILTER_WIDGETS["payment_status"],
-                                   index=None, format_func=logic.PAYMENT_LABELS.get, placeholder="Бүгд")
+                f[6].selectbox("Төлбөр", list(logic.PAYMENT_FILTER), key=FILTER_WIDGETS["payment_status"],
+                               index=None, format_func=logic.PAYMENT_LABELS.get, placeholder="Бүгд")
                 common.html_block('<span class="muted">Огноо, маршрут, тос нэг үйлчилгээнд хамт таарах ёстой. '
                                   'Мөрөнд машины хамгийн сүүлийн үйлчилгээ харагдана.</span>')
     if active:
@@ -374,7 +370,7 @@ def results_cards(vehicles: list[dict]) -> None:
         common.html_block(f'<span class="muted">Эхний {PHONE_CARDS_MAX} машин. Хайлтаа нарийсгана уу.</span>')
 
 
-def history_panel(vehicle_id: int) -> None:
+def history_panel(vehicle_id: int, due_hours: int = 24) -> None:
     """The selected truck's every service, newest first."""
     try:
         card = api_client.get_vehicle(vehicle_id)
@@ -391,6 +387,8 @@ def history_panel(vehicle_id: int) -> None:
         if not history:
             common.html_block('<span class="muted">Түүх алга.</span>')
             return
+        # 9.16b: the latest service's payment block (nothing for a service saved before 9.16b)
+        common.payment_panel(history[0], "dash", due_hours, boxed=False)
         # 7 values in 4 cells so the panel fits beside the table: «Гүйлт» = odometer with the target
         # under it (9.5a), «Тос» = grade · liters, «Жолооч» = name with the phone under it.
         head = "".join(f"<th>{c}</th>" for c in ("Огноо", "Гүйлт → дараагийн", "Тос", "Жолооч"))
@@ -443,15 +441,13 @@ period_section()
 st.subheader("Машинууд")
 segment_cards()
 
-sync = load_sync_view()  # 9.6b-5: None -> no payment element anywhere on this screen
-if sync is not None:
-    payments_section(sync)
+due_hours = payments_section()  # 9.16b
 
 st.subheader("Машин хайх")
 # Search BEFORE drawing the form: the form's values are already in session_state (last submit),
 # and the answer brings the filter choices (companies, oil grades) the form needs.
 query = (st.session_state.get(DASH_QUERY) or "").strip()
-filters = current_filters(payments_on=sync is not None)
+filters = current_filters()
 problems = logic.filter_errors(filters)
 found, error = None, None
 if not problems:
@@ -464,7 +460,7 @@ if not problems:
 # (only «Давтан», which has no card, opens it).
 in_panel = {k: v for k, v in filters.items() if k != "segment" or v not in logic.SEGMENT_CARDS}
 search_form((found or {}).get("options") or st.session_state.get(DASH_OPTIONS) or {},
-            logic.active_filter_count(filters), payments_on=sync is not None,
+            logic.active_filter_count(filters),
             expand=logic.active_filter_count(in_panel) > 0)
 if found is not None:
     st.session_state[DASH_OPTIONS] = found.get("options")  # keeps the lists while a filter is invalid
@@ -498,7 +494,7 @@ if found is not None:
             results_table(vehicles, f"{query}|{sorted(filters.items(), key=lambda kv: kv[0])}")
             results_cards(vehicles)
     if selected is not None:
-        history_panel(selected)
+        history_panel(selected, due_hours)
         if st.session_state.pop(DASH_SCROLL, False):
             scroll_to_history()
 

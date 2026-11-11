@@ -247,3 +247,22 @@ def payments_unpaid(limit: int = 200) -> dict:
 def payments_sync_status() -> dict:
     """GET /payments/sync-status -> {connected, runs} (task 9.6b-5, read only)."""
     return _request("GET", "/payments/sync-status")
+
+
+# ---------------------------------------------------------------- task 9.16b: manual payment (contract v0.22)
+
+
+def set_payment(service_id: int, action: str) -> dict:
+    """POST /services/{id}/payment -> the updated service. action: paid «Төлсөн» · unpaid «Авлага» ·
+    undo_paid «Буцаах». 409 detail.code: not_tracked (saved before 9.16b) · price_zero (price 0)."""
+    return _request("POST", f"/services/{service_id}/payment", json={"action": action})
+
+
+def set_price(service_id: int, price_mnt: int | None) -> dict:
+    """PUT /services/{id}/price -> the updated service. None clears the price."""
+    return _request("PUT", f"/services/{service_id}/price", json={"price_mnt": price_mnt})
+
+
+def receivables(limit: int = 200) -> dict:
+    """GET /payments/receivables -> {due_hours, total_mnt, count, count_no_price, total_trucks, trucks}."""
+    return _request("GET", "/payments/receivables", params={"limit": limit})

@@ -207,3 +207,27 @@ def test_flagged_readings_and_mark_reviewed(requests_seen) -> None:
     set_reply(httpx.Response(200, json={"reading_id": 7, "reviewed_at": "2026-11-05T10:00:00+08:00"}))
     assert api_client.mark_reading_reviewed(7)["reading_id"] == 7
     assert (seen[1].method, seen[1].url.path) == ("POST", "/readings/7/reviewed")
+
+
+def test_manual_payment_calls(requests_seen) -> None:
+    """9.16b (contract v0.22): payment action, price change, receivables."""
+    seen, set_reply = requests_seen
+    set_reply(httpx.Response(200, json={"id": 7, "payment_status": "paid"}))
+    assert api_client.set_payment(7, "paid")["payment_status"] == "paid"
+    api_client.set_price(7, 85000)
+    api_client.set_price(7, None)
+    api_client.receivables(limit=50)
+    assert [(r.method, r.url.path) for r in seen] == [
+        ("POST", "/services/7/payment"), ("PUT", "/services/7/price"), ("PUT", "/services/7/price"),
+        ("GET", "/payments/receivables")]
+    assert json.loads(seen[0].content) == {"action": "paid"}
+    assert json.loads(seen[1].content) == {"price_mnt": 85000} and json.loads(seen[2].content) == {"price_mnt": None}
+    assert seen[3].url.params["limit"] == "50"
+
+
+def test_payment_409_keeps_the_code(requests_seen) -> None:
+    seen, set_reply = requests_seen
+    set_reply(httpx.Response(409, json={"detail": {"code": "price_zero", "message": "x"}}))
+    with pytest.raises(api_client.ApiError) as err:
+        api_client.set_payment(7, "unpaid")
+    assert err.value.status == 409 and err.value.detail["code"] == "price_zero"

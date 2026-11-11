@@ -40,12 +40,12 @@ def test_one_row_per_service_newest_first() -> None:
     assert ws["A1"].value == "Гео-Эксперт · үйлчилгээ · 2026-10-28"
     assert [c.value for c in ws[export.HEADER_ROW]] == [
         "Огноо", "Дугаар", "Компани", "Маршрут", "Тос", "Литр", "Гүйлт (км)", "Моторын цаг",
-        "Дараагийн солилт (км)", "Жолооч", "Утас"]
+        "Дараагийн солилт (км)", "Жолооч", "Утас", "Үнэ (₮)", "Төлбөр"]  # 9.16b: price + status
     rows = data_rows(ws)
     assert [(r[0].date().isoformat(), r[1]) for r in rows] == [
         ("2026-09-01", "0001 ТЕС"), ("2026-07-01", "0002 ТЕС"), ("2026-06-10", "0001 ТЕС")]
     assert rows[0][1:] == ["0001 ТЕС", "Туршилт ХХК", "Монгол – Хятад", "15W-40", 30.0, 205000, None,
-                           220000, "Тест Д.", "9911 0001"]  # 9.5a: target km after the meters
+                           220000, "Тест Д.", "9911 0001", None, None]  # 9.5a target; 9.16b: old service -> empty
     assert rows[2][8] == 197000  # each service has its own target
     assert rows[1][3] is None and rows[1][6] is None and rows[1][8] is None and rows[1][10] is None  # missing -> empty
     assert rows[2][3] == "Монгол – Орос"
@@ -55,7 +55,7 @@ def test_header_bold_frozen_with_excel_filter() -> None:
     ws = sheet([ROW])
     assert ws.cell(export.HEADER_ROW, 1).font.bold
     assert ws.freeze_panes == "A5"
-    assert ws.auto_filter.ref == "A4:K6"
+    assert ws.auto_filter.ref == "A4:M6"
 
 
 @pytest.mark.parametrize("evil", ["=1+1", '=HYPERLINK("http://example.test","x")', "=cmd|' /C calc'!A0"])
@@ -97,3 +97,15 @@ def test_empty_list_still_valid_file() -> None:
 def test_file_name_is_ascii() -> None:
     name = export.file_name(TODAY)
     assert name == "geo_expert_uilchilgee_2026-10-28.xlsx" and name.isascii()
+
+
+def test_price_and_payment_status_columns() -> None:
+    """9.16b: «Үнэ (₮)» is a real number with a thousands format; «Төлбөр» the Mongolian status."""
+    paid = {**S1, "price_mnt": 85000, "payment_status": "paid"}
+    owed = {**S2, "price_mnt": None, "payment_status": "unpaid"}
+    ws = sheet([{**ROW, "services": [paid, owed]}])
+    rows = data_rows(ws)
+    assert [r[-2:] for r in rows] == [[85000, "Төлсөн"], [None, "Авлага"]]
+    assert ws.cell(export.HEADER_ROW + 1, 12).number_format == "#,##0"
+    pending = sheet([{**ROW, "services": [{**S1, "price_mnt": 0, "payment_status": "pending"}]}])
+    assert data_rows(pending)[0][-2:] == [0, "Хүлээгдэж байна"]
