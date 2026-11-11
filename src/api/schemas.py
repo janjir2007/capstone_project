@@ -20,8 +20,11 @@ from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_valida
 
 Route = Literal["ub_city", "mn_china", "mn_russia", "mine_site", "mixed"]
 Segment = Literal["new", "returning", "loyal", "at_risk"]
-# Task 9.6b-4: Artlab payment of a service (labels: Төлсөн / Төлөөгүй / Төлсөн (дараа) / Тодорхойгүй).
-PaymentStatus = Literal["paid", "unpaid", "paid_later", "unknown"]
+# Payment of a service. Task 9.16b: manual (paid «Төлсөн» / unpaid «Авлага» / pending «Хүлээгдэж байна»).
+# paid_later / unknown are the Artlab values (task 9.6b-4), kept for a later Artlab fill, not produced now.
+PaymentStatus = Literal["paid", "unpaid", "pending", "paid_later", "unknown"]
+PaymentAction = Literal["paid", "unpaid", "undo_paid"]
+MAX_PRICE_MNT = 100_000_000  # 9.16b: catches a typo of extra zeros (plan R3)
 MatchConfidence = Literal["both", "plate", "phone"]
 
 PHONE_SEPARATORS = re.compile(r"[\s\-().]")
@@ -100,6 +103,10 @@ class ServiceCreate(BaseModel):
     oil_changer: OptionalText = None
     photo_ref: OptionalText = None
 
+    # Task 9.16b: «Нийт үнэ (₮)», optional, whole tugrik. 0 = nothing owed («Төлсөн» at once).
+    price_mnt: int | None = Field(default=None, ge=0, le=MAX_PRICE_MNT, strict=True,
+                                  description="Total price in MNT (whole number, 0-100 000 000); optional")
+
     @field_validator("driver_phone")
     @classmethod
     def _phone_is_mongolian(cls, value: str | None) -> str | None:
@@ -156,14 +163,21 @@ class ServiceOut(BaseModel):
     oil_changer: str | None
     photo_ref: str | None
     created_at: datetime
-    # Task 9.6b-4 (filled by the API from artlab_bills, not stored on the service). All null while
-    # payments are not connected (no successful Artlab sync yet).
+    # Task 9.16b (migration 013): manual payment, computed by the API when read (src/api/payments.py
+    # manual_status). Was the Artlab roll-up (9.6b-4); Artlab is not connected (D-139).
     payment_status: PaymentStatus | None = Field(
-        None, description="paid «Төлсөн» · unpaid «Төлөөгүй» · paid_later «Төлсөн (дараа)» · "
-                          "unknown «Тодорхойгүй» (no Artlab receipt linked); null = payments not connected")
-    amount_due: float | None = Field(None, description="Credit still owed (MNT); only when payment_status = unpaid")
+        None, description="paid «Төлсөн» (paid_at set, or price 0) · unpaid «Авлага» («Авлага» pressed, or saved "
+                          "PAYMENT_DUE_HOURS (24) h ago and not paid) · pending «Хүлээгдэж байна»; "
+                          "null = saved before 9.16b (no payment status)")
+    amount_due: float | None = Field(None, description="= price_mnt while payment_status = unpaid (null without a price)")
     match_confidence: MatchConfidence | None = Field(
-        None, description="How the receipt was linked: plate + phone, plate only, phone only (weakest of its receipts)")
+        None, description="Artlab only (task 9.6b-4); always null while Artlab is not connected")
+    price_mnt: int | None = Field(None, description="Total price in MNT; null = no price entered")
+    paid_at: datetime | None = Field(None, description="When «Төлсөн» was pressed")
+    marked_unpaid_at: datetime | None = Field(None, description="When «Авлага» was pressed")
+    unpaid_since: datetime | None = Field(
+        None, description="When it became «Авлага» (earlier of «Авлага» pressed and saved + PAYMENT_DUE_HOURS); "
+                          "only when payment_status = unpaid")
     # Task 9.14a (migration 010): STORED when the service is saved (was computed when shown, 9.5a).
     interval_km: int | None = Field(None, description="OIL_INTERVAL_KM in force when the service was saved "
                                                       "(15000 for services saved before 9.14a); null for mine trucks")
@@ -605,6 +619,52 @@ class KmCheckOut(BaseModel):
     check_on: date
     sent_at: datetime
     already_sent: bool = Field(default=False, description="true = it was marked before; nothing changed")
+
+
+# ---------------------------------------------------------------- task 9.16b: manual payment
+
+
+class PaymentIn(BaseModel):
+    """Body of POST /services/{id}/payment: «Төлсөн» = paid, «Авлага» = unpaid, «Буцаах» = undo_paid."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    action: PaymentAction
+
+
+class PriceIn(BaseModel):
+    """Body of PUT /services/{id}/price (PM Q2: the price can be changed after saving). null = no price."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    price_mnt: int | None = Field(ge=0, le=MAX_PRICE_MNT, strict=True,
+                                  description="Total price in MNT (whole number); null clears it")
+
+
+class TruckReceivableOut(BaseModel):
+    """One truck with «Авлага» services (GET /payments/receivables)."""
+
+    vehicle_id: int
+    identifier: str
+    company_name: str
+    services: int = Field(description="Its «Авлага» services")
+    amount_mnt: int = Field(description="Sum of their prices (a service without a price adds 0)")
+    services_no_price: int = Field(description="Of these, services without a price")
+    oldest_service_date: date
+    oldest_unpaid_since: datetime
+    driver_phone: str | None = Field(description="Newest «Авлага» service with a phone (on screen only, never Excel)")
+    service_ids: list[int] = Field(description="Oldest first")
+
+
+class ReceivablesOut(BaseModel):
+    """GET /payments/receivables: every «Авлага» service, per truck (biggest amount first)."""
+
+    due_hours: int = Field(description="PAYMENT_DUE_HOURS in force")
+    total_mnt: int = Field(description="Sum of prices of every «Авлага» service (no price = 0)")
+    count: int = Field(description="«Авлага» services, with or without a price")
+    count_no_price: int = Field(description="«Авлага» services without a price («Үнэ оруулаагүй: N»)")
+    total_trucks: int
+    trucks: list[TruckReceivableOut]
 
 
 # ---------------------------------------------------------------- task 9.6b-4: payments (read only)

@@ -22,7 +22,7 @@ SQL_FILES = ["schema.sql", "migrations/001_destinations.up.sql", "migrations/002
              "migrations/006_reminder_stages.up.sql", "migrations/007_single_reminder.up.sql",
              "migrations/008_artlab.up.sql", "migrations/009_sync_runs_account.up.sql",
              "migrations/010_km_readings.up.sql", "migrations/011_messenger.up.sql", "migrations/012_reading_reviewed.up.sql",
-             "sample_data.sql"]
+             "migrations/013_service_payment.up.sql", "sample_data.sql"]
 # artlab_bills (9.6b-4): found through its foreign key to service_records, like predictions / reminders.
 # 9.15a: messenger_refs / _links / _otn reference vehicles (PSIDs of demo testers go with the demo data).
 EMPTIED = ["artlab_bills", "companies", "km_checks", "messenger_links", "messenger_otn", "messenger_refs",

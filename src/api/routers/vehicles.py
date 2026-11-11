@@ -13,7 +13,7 @@ when the model is not loaded).
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated
 
@@ -21,14 +21,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from src.api.clock import get_today
-from src.api.config import reminder_rules
+from src.api.clock import get_now, get_today
+from src.api.config import payment_due_hours, reminder_rules
 from src.api.db import get_session
 from src.api.history import (driver_readings, pace_out, records_as_of, schedule_of, service_records, to_visit,
                              visits_oldest_first)
 from src.api.matching import clean_company_name, company_key, fleet_no_key, search_matches
 from src.api.models import OdometerReading, ServiceRecord, Vehicle
-from src.api.payments import ServicePayment, connected, payment_of, service_payments
+from src.api.payments import manual_payment
 from src.api.prediction import Predictor
 from src.api.reminders import segment_of
 from src.api.schemas import (CompanyOut, LookupResult, PaymentStatus, PredictionOut, ReadingOut, Route, SearchOptions,
@@ -47,6 +47,7 @@ def get_predictor(request: Request) -> Predictor | None:
 
 SessionDep = Annotated[Session, Depends(get_session)]
 TodayDep = Annotated[date, Depends(get_today)]
+NowDep = Annotated[datetime, Depends(get_now)]
 PredictorDep = Annotated[Predictor | None, Depends(get_predictor)]
 
 
@@ -72,19 +73,23 @@ def predict(predictor: Predictor | None, vehicle_id: int, records: Sequence[Serv
                                         from_attributes=True)
 
 
-def service_out(record: ServiceRecord, payments: dict[int, ServicePayment], is_connected: bool) -> ServiceOut:
-    """One service for the API, with its Artlab payment fields (task 9.6b-4; null when not connected)."""
-    pay = payment_of(record.id, payments, is_connected)
+def service_out(record: ServiceRecord, now: datetime, due_hours: int) -> ServiceOut:
+    """One service for the API, with its manual payment fields (task 9.16b; was Artlab, 9.6b-4).
+    price_mnt / paid_at / marked_unpaid_at are read from the record; status + amount + since are computed."""
+    pay = manual_payment(record, now, due_hours)
     return ServiceOut.model_validate(record).model_copy(update={
-        "payment_status": pay.payment_status, "amount_due": pay.amount_due, "match_confidence": pay.match_confidence})
+        "payment_status": pay.payment_status, "amount_due": None if pay.amount_due is None else float(pay.amount_due),
+        "unpaid_since": pay.unpaid_since})
 
 
-def build_card(session: Session, vehicle: Vehicle, today: date, predictor: Predictor | None = None) -> VehicleCard:
-    """Assemble the vehicle card from the vehicle row and its service records."""
+def build_card(session: Session, vehicle: Vehicle, today: date, predictor: Predictor | None = None,
+               now: datetime | None = None) -> VehicleCard:
+    """Assemble the vehicle card from the vehicle row and its service records.
+    ``now`` (9.16b): the moment the payment status is computed for; None = the real clock."""
     records = service_records(session, vehicle.id)
-    is_connected = connected(session)
-    payments = service_payments(session, [r.id for r in records]) if is_connected else {}
-    history = [service_out(record, payments, is_connected) for record in records]
+    now = get_now() if now is None else now
+    due_hours = payment_due_hours()
+    history = [service_out(record, now, due_hours) for record in records]
     liters = usual_liters([record.liters for record in records])
     prediction = predict(predictor, vehicle.id, records, today)
     # One rule everywhere (src/api/reminders.py): at_risk = AT_RISK_DAYS (150)+ days since the latest service.
@@ -155,6 +160,7 @@ def lookup(
     session: SessionDep,
     today: TodayDep,
     predictor: PredictorDep,
+    now: NowDep,
     q: Annotated[str, Query(min_length=1, description="Plate or fleet number (any spacing/case) or 8-digit phone")],
 ) -> LookupResult:
     """Find vehicles by plate, fleet number or driver phone.
@@ -189,7 +195,7 @@ def lookup(
         query=q,
         match_type=match_type,
         normalized=normalized,
-        vehicles=[build_card(session, vehicle, today, predictor) for vehicle in vehicles],
+        vehicles=[build_card(session, vehicle, today, predictor, now) for vehicle in vehicles],
     )
 
 
@@ -206,7 +212,7 @@ class SearchFilters:
     company_id: int | None = None
     route: str | None = None
     oil_grade: str | None = None
-    # Task 9.6b-4: service filter on the Artlab payment; `payments` = {service_id: status} of the run.
+    # Task 9.6b-4 / 9.16b: service filter on the payment status; `payments` = {service_id: status} of the run.
     payment_status: str | None = None
     payments: dict[int, str | None] = field(default_factory=dict)
     # Task 9.12-1: the truck's segment today (same rule as the row's `segment`); a truck filter like company_id.
@@ -249,7 +255,7 @@ def search_options(vehicles: Sequence[Vehicle], records: dict[int, list[ServiceR
 
 def search_rows(session: Session, query: str, today: date, predictor: Predictor | None,
                 filters: SearchFilters = SearchFilters(),
-                with_services: bool = False) -> tuple[list[VehicleRow], SearchOptions]:
+                with_services: bool = False, now: datetime | None = None) -> tuple[list[VehicleRow], SearchOptions]:
     """Every truck matching ``query`` (blank = all) and ``filters``, newest service first (task 9.1),
     plus the filter choices.
 
@@ -259,10 +265,11 @@ def search_rows(session: Session, query: str, today: date, predictor: Predictor 
     """
     vehicles = session.scalars(select(Vehicle).options(selectinload(Vehicle.company))).all()
     records = records_as_of(session, today)  # {vehicle_id: services oldest first}
-    is_connected = connected(session)
-    payments = service_payments(session) if is_connected else {}  # one query for every linked service
-    filters = replace(filters, payments={r.id: payment_of(r.id, payments, is_connected).payment_status
-                                         for rows_ in records.values() for r in rows_})
+    now = get_now() if now is None else now
+    due_hours = payment_due_hours()
+    # 9.16b: every service's payment, computed once (the filter and the rows use the same answers)
+    paid = {r.id: service_out(r, now, due_hours) for rows_ in records.values() for r in rows_}
+    filters = replace(filters, payments={sid: out.payment_status for sid, out in paid.items()})
     rows: list[tuple[Vehicle, list[str]]] = []
     rules = reminder_rules()
     for vehicle in vehicles:
@@ -291,12 +298,12 @@ def search_rows(session: Session, query: str, today: date, predictor: Predictor 
             vehicle_model=vehicle.vehicle_model,
             company=CompanyOut.model_validate(vehicle.company),
             service_count=len(own),
-            last_service=service_out(own[-1], payments, is_connected) if own else None,
+            last_service=paid[own[-1].id] if own else None,
             segment=segment_of(len(own), own[-1].service_date, today, rules) if own else None,
             status=prediction.status if prediction else None,
             days_left=prediction.days_left if prediction else None,
             matched_on=matched,
-            services=[service_out(r, payments, is_connected) for r in reversed(filters.passing_services(own))]
+            services=[paid[r.id] for r in reversed(filters.passing_services(own))]
             if with_services else None,
         ))
     # Newest service first; trucks without a service last; id keeps the order stable.
@@ -310,6 +317,7 @@ def search(
     session: SessionDep,
     today: TodayDep,
     predictor: PredictorDep,
+    now: NowDep,
     q: Annotated[str, Query(max_length=100, description="Plate, fleet number, company or phone — any part. "
                                                         "Blank = every truck")] = "",
     limit: Annotated[int, Query(ge=1, le=1000, description="Rows returned (total counts all matches)")] = 200,
@@ -321,9 +329,9 @@ def search(
                                                                       "(case and spaces ignored)")] = None,
     with_services: Annotated[bool, Query(description="Add each truck's services that pass the filters "
                                                      "(one Excel row per service)")] = False,
-    payment_status: Annotated[PaymentStatus | None, Query(description="Has a service with this Artlab payment "
-                                                                      "status (task 9.6b-4); nothing matches while "
-                                                                      "payments are not connected")] = None,
+    payment_status: Annotated[PaymentStatus | None, Query(description="Has a service with this payment status "
+                                                                      "(task 9.16b: paid · unpaid · pending; "
+                                                                      "paid_later / unknown match nothing)")] = None,
     segment: Annotated[Segment | None, Query(description="Truck's segment today (task 9.12-1): new · returning · "
                                                           "loyal · at_risk, the same rule as each row's segment")] = None,
 ) -> VehicleSearch:
@@ -337,17 +345,18 @@ def search(
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "date_from is after date_to")
     filters = SearchFilters(date_from, date_to, company_id, route, (oil_grade or "").strip() or None, payment_status,
                             segment=segment)
-    rows, options = search_rows(session, q, today, predictor, filters, with_services)
+    rows, options = search_rows(session, q, today, predictor, filters, with_services, now)
     return VehicleSearch(query=q, total=len(rows), vehicles=rows[:limit], options=options)
 
 
 @router.get("/{vehicle_id}", response_model=VehicleCard)
-def get_vehicle(vehicle_id: int, session: SessionDep, today: TodayDep, predictor: PredictorDep) -> VehicleCard:
+def get_vehicle(vehicle_id: int, session: SessionDep, today: TodayDep, predictor: PredictorDep,
+                now: NowDep) -> VehicleCard:
     """The vehicle card. 404 if the id does not exist."""
     vehicle = session.get(Vehicle, vehicle_id)
     if vehicle is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"vehicle {vehicle_id} not found")
-    return build_card(session, vehicle, today, predictor)
+    return build_card(session, vehicle, today, predictor, now)
 
 
 @router.get("/{vehicle_id}/prediction", response_model=PredictionOut)

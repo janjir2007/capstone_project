@@ -67,6 +67,8 @@ services:
       # Task 9.14a: reminder this many days before the km/day due day; km check this many days after the service.
       REMINDER_LEAD_DAYS: ${REMINDER_LEAD_DAYS:-5}
       KM_CHECK_DAYS: ${KM_CHECK_DAYS:-34}
+      # Task 9.16b: an unpaid service becomes «Авлага» this many hours after it was saved.
+      PAYMENT_DUE_HOURS: ${PAYMENT_DUE_HOURS:-24}
       # Task 9.15a: Messenger km bot. Both switches off by default (safe to deploy before Meta).
       # The META_* values live ONLY in the server .env (never in git, never logged); empty defaults
       # so `compose config` works before Meta is set up. MESSENGER_ENABLED=true with any of them

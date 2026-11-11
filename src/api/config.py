@@ -194,6 +194,26 @@ def unpaid_lookback_days(env: Mapping[str, str] | None = None) -> int:
     return _whole_days(env, "ARTLAB_UNPAID_LOOKBACK_DAYS", DEFAULT_UNPAID_LOOKBACK_DAYS)
 
 
+# Task 9.16b: a tracked service not marked «Төлсөн» becomes «Авлага» this many hours after it was saved.
+# Its own setting: ARTLAB_UNPAID_LOOKBACK_DAYS (D-133) is the Artlab re-check window, a different thing.
+DEFAULT_PAYMENT_DUE_HOURS = 24
+
+
+def payment_due_hours(env: Mapping[str, str] | None = None) -> int:
+    """PAYMENT_DUE_HOURS (default 24). Not a whole number > 0 -> ConfigError (the API does not start)."""
+    env = os.environ if env is None else env
+    raw = env.get("PAYMENT_DUE_HOURS", "").strip()
+    if not raw:
+        return DEFAULT_PAYMENT_DUE_HOURS
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 0
+    if value <= 0:
+        raise ConfigError(f"PAYMENT_DUE_HOURS must be a whole number of hours > 0, got {raw!r}")
+    return value
+
+
 def reminder_contact(env: Mapping[str, str] | None = None) -> Contact:
     """Contact at the end of every reminder (needs no database settings).
 

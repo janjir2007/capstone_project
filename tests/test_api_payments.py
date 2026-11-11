@@ -1,8 +1,10 @@
-"""Tests for task 9.6b-4: Artlab payments in the API (read only).
+"""Tests for task 9.6b-4: Artlab payments in the API (read only), as changed by task 9.16b.
 
-Card history / search rows get payment_status, amount_due, match_confidence; GET /vehicles/search
-gets ?payment_status=; GET /payments/unpaid and GET /payments/sync-status.
-Postgres (sample data + migrations up to 009, TODAY = 2026-09-30, tests/test_api_data.py);
+9.16b: card history / search rows get payment_status + amount_due from the MANUAL columns (migration 013),
+no longer from the Artlab receipts; GET /vehicles/search ?payment_status= filters on that. Unchanged:
+GET /payments/unpaid and GET /payments/sync-status (Artlab copy). The manual rule itself:
+tests/test_payment_status.py and tests/test_api_payments_manual.py.
+Postgres (sample data + migrations up to 013, TODAY = 2026-09-30, tests/test_api_data.py);
 SKIPPED without a database. Artlab rows below are SYNTHETIC.
 """
 
@@ -74,25 +76,47 @@ def test_a_failed_first_sync_is_not_connected(client: TestClient, pg: Connection
     assert status["connected"] is False and status["runs"][0]["error_class"] == "ArtlabError"
 
 
-# ---------------------------------------------------------------- card
+# ---------------------------------------------------------------- card (9.16b: manual status, not Artlab)
 
 
-def test_card_history_rolls_up_receipts_per_service(client: TestClient, pg: Connection) -> None:  # noqa: F811
+def track(pg: Connection) -> None:  # noqa: F811
+    """Task 9.16b: service 3 (vehicle 1) = «Авлага» 60,000₮ (saved long ago, not paid); service 6 (vehicle 3)
+    = «Төлсөн». The other sample services stay "saved before 9.16b" (payment_tracked false -> null)."""
+    pg.execute(text("UPDATE service_records SET payment_tracked = true, price_mnt = 60000, "
+                    "created_at = '2026-08-10 10:00+08' WHERE id = 3"))
+    pg.execute(text("UPDATE service_records SET payment_tracked = true, price_mnt = 90000, "
+                    "created_at = '2026-09-20 10:00+08', paid_at = '2026-09-20 11:00+08' WHERE id = 6"))
+
+
+def test_artlab_receipts_no_longer_set_the_service_status(client: TestClient, pg: Connection) -> None:  # noqa: F811
+    """9.16b: ServiceOut payment comes from our own columns. Linked Artlab receipts (connected sync) change
+    nothing there; old services have no status at all."""
     seed(pg)
     card = client.get("/vehicles/1").json()
+    assert all((s["payment_status"], s["amount_due"], s["match_confidence"]) == (None, None, None)
+               for s in card["history"])
+    assert client.get("/payments/unpaid").json()["connected"] is True  # the Artlab list itself is unchanged
+
+
+def test_card_history_carries_the_manual_status(client: TestClient, pg: Connection) -> None:  # noqa: F811
+    seed(pg)
+    track(pg)
+    card = client.get("/vehicles/1").json()
     s3 = service(card, 3)
-    assert (s3["payment_status"], s3["amount_due"], s3["match_confidence"]) == ("unpaid", 60000.0, "phone")
+    assert (s3["payment_status"], s3["amount_due"], s3["price_mnt"], s3["match_confidence"]) == \
+        ("unpaid", 60000.0, 60000, None)
+    assert datetime.fromisoformat(s3["unpaid_since"]) == datetime.fromisoformat("2026-08-11T10:00:00+08:00")
     assert card["last_service"]["id"] == 3 and card["last_service"]["payment_status"] == "unpaid"
-    for sid in (1, 2):  # no receipt linked -> unknown («Тодорхойгүй»)
-        assert (service(card, sid)["payment_status"], service(card, sid)["amount_due"]) == ("unknown", None)
+    for sid in (1, 2):  # saved before 9.16b -> no status
+        assert (service(card, sid)["payment_status"], service(card, sid)["amount_due"]) == (None, None)
     s6 = service(client.get("/vehicles/3").json(), 6)
-    assert (s6["payment_status"], s6["amount_due"], s6["match_confidence"]) == ("paid_later", None, "both")
+    assert (s6["payment_status"], s6["amount_due"], s6["unpaid_since"]) == ("paid", None, None)
 
 
 def test_lookup_cards_carry_the_same_fields(client: TestClient, pg: Connection) -> None:  # noqa: F811
-    seed(pg)
+    track(pg)
     card = client.get("/vehicles/lookup", params={"q": "1234 УБА"}).json()["vehicles"][0]
-    assert service(card, 3)["payment_status"] == "unpaid"
+    assert (service(card, 3)["payment_status"], service(card, 3)["amount_due"]) == ("unpaid", 60000.0)
 
 
 # ---------------------------------------------------------------- search
@@ -104,26 +128,28 @@ def ids(body: dict) -> set[int]:
 
 def test_search_filter_by_payment_status(client: TestClient, pg: Connection) -> None:  # noqa: F811
     seed(pg)
+    track(pg)
     assert ids(client.get("/vehicles/search", params={"payment_status": "unpaid"}).json()) == {1}
-    assert ids(client.get("/vehicles/search", params={"payment_status": "paid_later"}).json()) == {3}
-    assert client.get("/vehicles/search", params={"payment_status": "paid"}).json()["total"] == 0
-    unknown = ids(client.get("/vehicles/search", params={"payment_status": "unknown"}).json())
-    assert 1 in unknown and 3 not in unknown                      # vehicle 1 also has services 1, 2
+    assert ids(client.get("/vehicles/search", params={"payment_status": "paid"}).json()) == {3}
+    assert client.get("/vehicles/search", params={"payment_status": "pending"}).json()["total"] == 0
+    for artlab_only in ("paid_later", "unknown"):  # still valid values, never produced now
+        assert client.get("/vehicles/search", params={"payment_status": artlab_only}).json()["total"] == 0
     assert client.get("/vehicles/search", params={"payment_status": "late"}).status_code == 422
 
 
 def test_search_rows_and_excel_services_carry_payment(client: TestClient, pg: Connection) -> None:  # noqa: F811
-    seed(pg)
+    track(pg)
     body = client.get("/vehicles/search", params={"payment_status": "unpaid", "with_services": True}).json()
     row = body["vehicles"][0]
     assert row["last_service"]["payment_status"] == "unpaid"
-    assert [(s["id"], s["payment_status"]) for s in row["services"]] == [(3, "unpaid")]  # only passing services
+    assert [(s["id"], s["payment_status"], s["price_mnt"]) for s in row["services"]] == [(3, "unpaid", 60000)]
 
 
 def test_payment_filter_combines_with_other_service_filters(client: TestClient, pg: Connection) -> None:  # noqa: F811
-    seed(pg)
+    track(pg)
     params = {"payment_status": "unpaid", "date_to": "2026-08-01"}  # service 3 (unpaid) is on 08-10
     assert client.get("/vehicles/search", params=params).json()["total"] == 0
+    assert client.get("/vehicles/search", params={**params, "date_to": "2026-08-10"}).json()["total"] == 1
 
 
 # ---------------------------------------------------------------- GET /payments/unpaid

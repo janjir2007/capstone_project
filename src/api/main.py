@@ -20,7 +20,8 @@ from fastapi import FastAPI
 from sqlalchemy import Engine
 
 from src.api.auth import LoginLimiter, load_auth_config
-from src.api.config import load_settings, messenger_settings, oil_interval_km, reminder_rules, unpaid_lookback_days
+from src.api.config import (load_settings, messenger_settings, oil_interval_km, payment_due_hours, reminder_rules,
+                            unpaid_lookback_days)
 from src.api.config import model_dir as model_dir_from_env
 from src.api.db import create_db_engine
 from src.api.messenger.logs import install_log_filter
@@ -57,6 +58,7 @@ def create_app(engine: Engine | None = None, model_dir: Path | None = None) -> F
         oil_interval_km()  # 9.5a: a bad OIL_INTERVAL_KM stops the start here, not every card request
         reminder_rules()   # 9.5c/9.14a: bad REMINDER_DAYS / AT_RISK_DAYS / REMINDER_LEAD_DAYS / KM_CHECK_DAYS stop it too
         unpaid_lookback_days()  # 9.12-3: a bad ARTLAB_UNPAID_LOOKBACK_DAYS stops it too
+        payment_due_hours()  # 9.16b: a bad PAYMENT_DUE_HOURS stops it too
         # 8.5r: UI_PASSWORD + AUTH_SECRET read once; UI_PASSWORD set without AUTH_SECRET stops the start
         app.state.auth = load_auth_config()
         # 9.15a: MESSENGER_ENABLED=true with an empty META_* value stops the start here

@@ -50,7 +50,9 @@ SQL_FILES = ["schema.sql", "migrations/001_destinations.up.sql", "migrations/002
              # interval_km (15000) and the 'service' readings of the sample services
              "migrations/010_km_readings.up.sql",
              # 9.15a: one ref per sample service (POST /services adds one for new ones)
-             "migrations/011_messenger.up.sql", "migrations/012_reading_reviewed.up.sql"]
+             "migrations/011_messenger.up.sql", "migrations/012_reading_reviewed.up.sql",
+             # 9.16b: AFTER the sample data: the sample services count as saved before 9.16b
+             "migrations/013_service_payment.up.sql"]
 TODAY = date(2026, 9, 30)
 
 

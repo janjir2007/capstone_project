@@ -57,6 +57,12 @@ def test_api_gets_the_reminder_settings() -> None:
     assert "OIL_INTERVAL_KM=12000" in ENV_EXAMPLE.splitlines()
 
 
+def test_api_gets_the_payment_due_hours() -> None:
+    """Task 9.16b: the «Авлага» waiting time reaches the API (default 24 h) and is documented."""
+    assert SERVICES["api"]["environment"]["PAYMENT_DUE_HOURS"] == "${PAYMENT_DUE_HOURS:-24}"
+    assert "PAYMENT_DUE_HOURS=24" in ENV_EXAMPLE.splitlines()
+
+
 def test_models_mounted_read_only_into_api() -> None:
     """D-069 / D-089: ./models (with plate_ocr/char_cnn_version.json) is mounted, not baked in."""
     assert "./models:/app/models:ro" in SERVICES["api"]["volumes"]

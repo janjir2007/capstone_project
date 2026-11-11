@@ -1,6 +1,6 @@
 # API contract — data, model and reminder endpoints (tasks 4.2, 4.2b, 4.3, 4.4)
 
-- **Version:** 0.21 (task 9.15a-3, 2026-11-05) · **Owner:** Backend Engineer
+- **Version:** 0.22 (task 9.16b-2, 2026-11-11) · **Owner:** Backend Engineer
 - Extends PROJECT_STATE §8 "API contract" with exact fields. The live, always
   current version is the OpenAPI page of the running API: `http://localhost:8000/docs`.
 - Field names follow [`data_dictionary.md`](data_dictionary.md). Code:
@@ -29,9 +29,25 @@
 | `destination_raw` | string \| null | |
 | `driver_name`, `driver_phone`, `oil_changer`, `photo_ref` | string \| null | phone = 8 digits |
 | `created_at` | datetime with offset | |
-| `payment_status` | `paid` \| `unpaid` \| `paid_later` \| `unknown` \| null | v0.16 (task 9.6b-4): Artlab payment of this service, rolled up from every Artlab receipt linked to it (any `unpaid` → unpaid; else any `unknown` → unknown; else any `paid_later` → paid_later; else paid). `unknown` = no receipt linked. Labels: Төлсөн / Төлөөгүй / Төлсөн (дараа) / Тодорхойгүй. **null** = payments not connected (no successful Artlab sync yet) and in the `POST /services` answer |
-| `amount_due` | number \| null | v0.16: credit still owed (MNT) = credit part of its unpaid receipts; only with `unpaid` |
-| `match_confidence` | `both` \| `plate` \| `phone` \| null | v0.16: how its receipts were linked (the weakest one when several) |
+| `payment_status` | `paid` \| `unpaid` \| `pending` \| null (`paid_later` \| `unknown` reserved) | **v0.22 (task 9.16b, meaning change):** the MANUAL payment of this service, computed when read (no timer, rule below). `paid` «Төлсөн» · `unpaid` «Авлага» · `pending` «Хүлээгдэж байна». **null** = saved before migration 013 (`payment_tracked` false): no payment status. Also filled in the `POST /services` answer. `paid_later` / `unknown` (v0.16 Artlab roll-up) are no longer produced; kept in the type for a later Artlab fill |
+| `amount_due` | number \| null | v0.22: = `price_mnt` while `unpaid` (null without a price, or when not unpaid). Was the Artlab credit (v0.16) |
+| `match_confidence` | `both` \| `plate` \| `phone` \| null | v0.16 Artlab only; always null since v0.22 (Artlab not connected) |
+| `price_mnt` | int \| null | v0.22: total price in MNT (whole number); null = no price entered |
+| `paid_at` | datetime with offset \| null | v0.22: when «Төлсөн» was pressed |
+| `marked_unpaid_at` | datetime with offset \| null | v0.22: when «Авлага» was pressed (kept after a later «Төлсөн») |
+| `unpaid_since` | datetime with offset \| null | v0.22: only with `unpaid`: the earlier of «Авлага» pressed and saved + `PAYMENT_DUE_HOURS` |
+
+**Payment rule (v0.22, task 9.16b, `src/api/payments.py` `manual_status`)**, in this order:
+1. saved before migration 013 (`payment_tracked` false) → **null**
+2. `paid_at` set, **or `price_mnt` = 0** (nothing owed) → `paid`
+3. «Авлага» pressed (`marked_unpaid_at` set) → `unpaid`
+4. now − `created_at` ≥ `PAYMENT_DUE_HOURS` (default **24**; exactly 24 h counts) → `unpaid`
+5. else → `pending`
+
+The clock starts at `created_at` (when the service was saved), not `service_date`. Both moments are
+timezone-aware, so the server / DB timezone (UTC) vs Ulaanbaatar (+08:00) does not change the answer.
+A service without a price can be `unpaid` (counted, adds 0 ₮). Setting `PAYMENT_DUE_HOURS`: whole number
+> 0, else the API does not start (not the Artlab `ARTLAB_UNPAID_LOOKBACK_DAYS`, D-133).
 
 **VehicleCard**
 
@@ -151,9 +167,10 @@ separators allowed). A valid phone is searched as a phone; anything else as a pl
   Excel export (one row per service). Without it `services` is null.
 - `options: {companies: [{id, name}], oil_grades: [str]}` = choices for the filter lists, from the
   whole database (they do not shrink while filtering).
-- `payment_status` (v0.16, task 9.6b-4), optional: `paid` \| `unpaid` \| `paid_later` \| `unknown` — a fifth
-  SERVICE filter (one service must pass it together with the others). Nothing matches while payments
-  are not connected. Rows' `last_service` / `services` carry the ServiceOut payment fields.
+- `payment_status` (v0.16, task 9.6b-4; **v0.22 manual status**), optional: `paid` \| `unpaid` \| `pending`
+  (`paid_later` \| `unknown` accepted, match nothing) — a fifth SERVICE filter (one service must pass it
+  together with the others). Rows' `last_service` / `services` carry the ServiceOut payment fields
+  (incl. `price_mnt`: the Excel export's price + status).
 - `segment` (v0.17, task 9.12-1), optional: `new` \| `returning` \| `loyal` \| `at_risk` — a TRUCK filter (like
   `company_id`): the truck's segment today, the same rule as each row's `segment` and `GET /stats/segments`
   (trucks without a service never match). The dashboard's segment cards use it.
@@ -205,18 +222,39 @@ Body:
 | `route` | with `destination_raw`: **yes** · otherwise no | D-039: with `destination_id` the route is taken from the destination; a different route → 422 |
 | `driver_name`, `oil_changer`, `photo_ref` | no | blank → null |
 | `driver_phone` | no | normalized to 8 digits; invalid → 422 |
+| `price_mnt` | no | v0.22 (task 9.16b): «Нийт үнэ (₮)», whole number 0–100 000 000 (a JSON integer: `1.5`, `85000.0`, `"85000"` → 422). 0 = nothing owed → `paid` at once |
 
 Unknown fields → 422 (typo protection).
 
 Query parameter: `force` (bool, default `false`) — see 409 duplicate below.
 
-- **201** `{service: ServiceOut, vehicle_id, vehicle_created, company_created}`
+- **201** `{service: ServiceOut, vehicle_id, vehicle_created, company_created}` — v0.22: `service.payment_status`
+  = `pending` (or `paid` for price 0), `payment_tracked` true for every new service
 - **422** a rule above is broken, or `destination_id` does not exist
 - **409 duplicate** — the vehicle already has a service on the same `service_date`; nothing saved.
   `detail` = `{code: "duplicate_service", message, existing_service_id}`. Send again with
   `?force=true` to save a second service that day.
 - **409 conflict** — other conflict with existing data (e.g. the same new plate saved twice at
   the same moment); nothing saved, retry. `detail` = string
+
+### `POST /services/{id}/payment` · `PUT /services/{id}/price` (v0.22, task 9.16b)
+Manual payment of ONE service (any of the truck's services, not only the newest). Behind the login like
+every data route. No user name is stored (one shared password, D-117).
+
+`POST /services/{id}/payment` body `{"action": "paid" | "unpaid" | "undo_paid"}` (unknown fields → 422):
+
+| action | Button | Effect | Second call |
+|---|---|---|---|
+| `paid` | «Төлсөн» | `paid_at` = now, if not set | no change |
+| `unpaid` | «Авлага» | `marked_unpaid_at` = now, if not set; `paid_at` cleared (corrects a «Төлсөн») | no change |
+| `undo_paid` | «Буцаах» | `paid_at` cleared → the rule decides again (`pending`, or `unpaid` after 24 h) | no change |
+
+`PUT /services/{id}/price` body `{"price_mnt": int | null}` (field required; null clears the price; same
+limits as `POST /services`). Clicks are kept: a paid service stays paid; price 0 → `paid`.
+
+Both: **200** = the updated ServiceOut · **404** unknown service · **409** `detail.code = "not_tracked"`
+(saved before 9.16b) · **409** `detail.code = "price_zero"` (`unpaid` / `undo_paid` on a price-0 service:
+nothing owed, change the price first) · **422** bad body.
 
 ### `GET /destinations`
 List for the "where are you heading next?" picker; send the chosen `id` as `destination_id`.
@@ -414,6 +452,19 @@ Phones that asked for no more messages (`reminder_stops`, migration 006).
 - `POST {phone}` (8 digits, +976 optional, normalized) → **201** stored · **200** already there · **422** not a phone
 - `DELETE /reminders/stops/{phone}` → **204** (also when it was not there) · **422** not a phone
 
+### `GET /payments/receivables?limit=` (v0.22, task 9.16b — read only)
+Dashboard «Төлбөр»: every service whose payment rule gives `unpaid` («Авлага»), grouped per truck.
+`limit` 1–1000 (default 200) trucks; the totals count all.
+- **200** `{due_hours, total_mnt, count, count_no_price, total_trucks, trucks: TruckReceivable[]}`
+  - `total_mnt` = sum of prices of every «Авлага» service (a service without a price adds 0)
+  - `count` = «Авлага» services, with or without price · `count_no_price` = of these, without a price
+    (UI: «Үнэ оруулаагүй: N») · `due_hours` = `PAYMENT_DUE_HOURS` in force
+- TruckReceivable: `vehicle_id, identifier, company_name, services, amount_mnt, services_no_price,
+  oldest_service_date, oldest_unpaid_since, driver_phone` (newest «Авлага» service with a phone; on screen
+  only, never in Excel), `service_ids` (oldest first). Order: biggest `amount_mnt` first, then the oldest
+  `oldest_unpaid_since`, then `vehicle_id`.
+- **422** `limit` out of range
+
 ### `GET /payments/unpaid?limit=` (v0.16, task 9.6b-4 — read only)
 Unpaid Artlab receipts (`payment_status = unpaid`, credit sale «Зээл»), **oldest first**. Data =
 the sync's copy in our database (`artlab_bills`); the API never calls Artlab. `limit` 1–1000, default 200.
@@ -476,3 +527,4 @@ The only API routes besides `/health` that Caddy makes public. Not used by the U
 | 0.19 | 2026-11-04 | Task 9.14a-3: `POST /vehicles/{id}/readings/preview` (additive): what a reading would give, nothing stored — for the UI's confirm step |
 | 0.20 | 2026-11-04 | Task 9.15a-2: Messenger km bot, **additive, off by default**. New `GET/POST /messenger/webhook` (public via Caddy, signed only) and `POST /reminders/{service_id}/messenger` (OTN, behind `MESSENGER_OTN_ENABLED`). `messenger_ready` in `GET /reminders/due` items. Reading `source` `messenger` now written; `flag_reason` + `plate_mismatch`; reminder `channel` + `messenger`. `DELETE /readings/{id}` also removes `messenger` readings. Settings `MESSENGER_ENABLED`, `MESSENGER_OTN_ENABLED`, `META_*`. Needs migration 011 (run `scripts.migrate` before the new API starts). KmCheck `message_mn` **unchanged** (the m.me text is 9.15a-3) |
 | 0.21 | 2026-11-05 | Task 9.15a-3: new `GET /readings/flagged`, `POST /readings/{id}/reviewed` (needs migration 012, `reviewed_at`). Reminder `message_mn` = TXT-1 B (2 SMS, no «Гео-Эксперт»). KmCheck `message_mn` with the m.me link when `MESSENGER_ENABLED=true` + `MESSENGER_PAGE_USERNAME` (new optional setting), else the dated text ending «Wolf Oil: {contact}». Bot reply for an unknown plate: «Энэ дугаар манай бүртгэлд олдсонгүй. … {contact} руу залгана уу.» |
+| 0.22 | 2026-11-11 | Task 9.16b-2: manual payment per service. Needs **migration 013** (`price_mnt`, `paid_at`, `marked_unpaid_at`, `payment_tracked`; run `scripts.migrate` before the new API starts). ServiceOut `payment_status` now the manual status (**meaning change**: + `pending`; null = saved before 013; `paid_later` / `unknown` no longer produced), `amount_due` = price while `unpaid`, `match_confidence` always null; new `price_mnt`, `paid_at`, `marked_unpaid_at`, `unpaid_since` (additive); also in the `POST /services` answer. `POST /services` + optional `price_mnt`. New `POST /services/{id}/payment`, `PUT /services/{id}/price`, `GET /payments/receivables`. `GET /vehicles/search?payment_status=` on the manual status (+ `pending`). New setting `PAYMENT_DUE_HOURS` (24). `GET /payments/unpaid` + `/sync-status` (Artlab) unchanged |

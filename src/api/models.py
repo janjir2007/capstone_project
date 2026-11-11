@@ -16,7 +16,7 @@ so SQLAlchemy leaves them out of the INSERT and reads them back.
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, Numeric, Text, func
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, Numeric, Text, func, true
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -89,6 +89,12 @@ class ServiceRecord(Base):
     # Task 9.14a (migration 010): the interval in force when saved, and odometer_km + it. None for mine trucks.
     interval_km: Mapped[int | None] = mapped_column(Integer)
     target_km: Mapped[int | None] = mapped_column(Integer)
+    # Task 9.16b (migration 013): manual payment. The status is computed when read (src/api/payments.py).
+    price_mnt: Mapped[int | None] = mapped_column(Integer)
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    marked_unpaid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # False = saved before 9.16b (no payment status). The DB default is true for new rows.
+    payment_tracked: Mapped[bool] = mapped_column(Boolean, server_default=true())
 
     vehicle: Mapped[Vehicle] = relationship()
     destination: Mapped[Destination | None] = relationship()

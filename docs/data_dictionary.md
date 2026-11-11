@@ -1,6 +1,6 @@
 # Data Dictionary — Oil Change Predictor
 
-- **Version:** 0.5 (Task 6.1) · **Owner:** Data Engineer · **Date:** 2026-10-17
+- **Version:** 0.8 (Task 9.16b-2) · **Owner:** Data Engineer · **Date:** 2026-11-11
 - **Schema file:** [`src/data/schema.sql`](../src/data/schema.sql) (PostgreSQL 16)
   + migrations in [`src/data/migrations/`](../src/data/migrations/) (§8)
 - **This file is a contract.** Backend (SQLAlchemy models), ML (features) and
@@ -131,6 +131,10 @@ erDiagram
 | `created_at` | TIMESTAMPTZ | no | Asia/Ulaanbaatar | default `now()`; differs from `service_date` for late entries | system |
 | `interval_km` | INTEGER | yes | km | > 0. The `OIL_INTERVAL_KM` in force when the service was saved (12000 since task 9.14a; services saved before: 15000, migration 010 backfill). NULL for mine trucks. *Migration 010* | API |
 | `target_km` | INTEGER | yes | km | `odometer_km` + `interval_km`; both set or both NULL (CHECK). Stored, so changing the setting never moves an old target. *Migration 010* | API |
+| `price_mnt` | INTEGER | yes | MNT | ≥ 0 (CHECK). «Нийт үнэ (₮)», optional on the form; NULL = no price. 0 = nothing owed (status «Төлсөн»). *Migration 013* | user |
+| `paid_at` | TIMESTAMPTZ | yes | | When «Төлсөн» was pressed; «Буцаах» clears it. *Migration 013* | API |
+| `marked_unpaid_at` | TIMESTAMPTZ | yes | | When «Авлага» was pressed. *Migration 013* | API |
+| `payment_tracked` | BOOLEAN | no | | false = saved before migration 013 (no payment status); default true for every new row. The status (paid / unpaid / pending) is NOT stored: the API computes it when read (`src/api/payments.py`, `PAYMENT_DUE_HOURS`). *Migration 013* | DB default |
 
 Driver + phone are stored here, not on the vehicle, because drivers change between trips (D-004).
 
@@ -339,6 +343,7 @@ databases use synthetic rows only.
 | 0.5 | 2026-10-17 | Task 6.1, migration 004: `name_mn` for `Ulaanbaatar city (local work)` (`Улаанбаатар хот`) and `Other / several / unknown` (`Бусад`). New bookkeeping table `schema_migrations` + runner `scripts/migrate.py` (§8) |
 | 0.6 | 2026-11-02 | Task 9.5c, migration 007: `reminders_sent.stage` `'single'`, new column `channel`; §2.6 updated for 006 + 007. API `at_risk` = `AT_RISK_DAYS` (150)+ days (§5 lists the SQL function `vehicle_segments()`, D-007, now marked deprecated in §3 / §5) |
 | 0.7 | 2026-11-04 | Task 9.14a, migration 010: `service_records.interval_km` + `target_km` (stored, was computed when shown); new tables `odometer_readings` (§2.7) and `km_checks` (§2.8); `reminders_sent.send_on` follows the km/day reminder day |
+| 0.8 | 2026-11-11 | Task 9.16b-2, migration 013: `service_records.price_mnt`, `paid_at`, `marked_unpaid_at`, `payment_tracked` (manual payment; status computed by the API) |
 
 ## 8. Migrations
 
@@ -363,6 +368,7 @@ A second run changes nothing. `--dry-run` lists what would run. A database migra
 | 004 | `004_destinations_name_mn_rest.up.sql` / `.down.sql` | `name_mn` for UB city + Other (task 6.1); stops if one is missing. Tested by `tests/test_migrate.py` |
 | 005 | `005_destinations_cross_border.up.sql` / `.down.sql` | 4 cross-border destinations (task 1.6, D-081). Tested by `tests/test_migration_005.py` |
 | 010 | `010_km_readings.up.sql` / `.down.sql` | Task 9.14a: `service_records.interval_km` + `target_km` (CHECK both or none, target = odometer + interval; backfill 15000 for every service with an odometer); new tables `odometer_readings` (backfill: one `service` reading per service, flagged by the same rules as `src/api/pace.py` against the service before it) and `km_checks`. Down drops both tables and both columns. Tested by `tests/test_migration_010.py` (up → down → up, backfill = Python rule, constraints) |
+| 013 | `013_service_payment.up.sql` / `.down.sql` | Task 9.16b: `service_records.price_mnt` (CHECK ≥ 0), `paid_at`, `marked_unpaid_at`, `payment_tracked` (existing rows false, new rows true) + partial index `service_records_not_paid_idx`. Down drops them (prices and clicks lost). Tested by `tests/test_migration_013.py` (up → down → up, old rows untracked, CHECK) |
 
 - **New dev DB** (`docker compose down -v && docker compose up -d db`): docker-compose runs
   only `schema.sql` (same as production, task 7.2); then
